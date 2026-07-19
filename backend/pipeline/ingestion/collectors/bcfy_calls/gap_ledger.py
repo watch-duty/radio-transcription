@@ -88,7 +88,6 @@ class _ObligationRecord:
     feed_name: str
     audio_url: str = dataclasses.field(repr=False)
     provider_ts: datetime.datetime | None
-    source_order: int
     state: MissingCallState = MissingCallState.DRAFT
     identity: feed_work_scheduler.CohortRecordIdentity | None = None
     gap_stage: telemetry.MissingCallStage | None = None
@@ -129,7 +128,6 @@ class MissingCallLedger:
         "_local_sequences",
         "_page_sequence",
         "_records",
-        "_source_orders",
     )
 
     def __init__(
@@ -144,7 +142,6 @@ class MissingCallLedger:
         self._grant = grant
         self._page_sequence = page_sequence
         self._records: list[_ObligationRecord] = []
-        self._source_orders: set[int] = set()
         self._local_sequences: set[tuple[uuid.UUID, int]] = set()
         self._closed = False
 
@@ -164,7 +161,6 @@ class MissingCallLedger:
         *,
         audio_url: str,
         provider_ts: datetime.datetime | None,
-        source_order: int,
     ) -> MissingCallObligation:
         """Create one unbound draft before scheduler admission."""
         self._require_open()
@@ -198,10 +194,6 @@ class MissingCallLedger:
             MISSING_CALL_AUDIO_URL_MAX_LENGTH,
         )
         _require_utc_timestamp(provider_ts, "provider_ts")
-        _require_nonnegative_integer(source_order, "source_order")
-        if source_order in self._source_orders:
-            message = "draft source_order is already owned by this page"
-            raise MissingCallIntegrityError(message)
 
         slot = len(self._records)
         handle = MissingCallObligation(
@@ -216,10 +208,8 @@ class MissingCallLedger:
                 feed_name=feed_name,
                 audio_url=audio_url,
                 provider_ts=provider_ts,
-                source_order=source_order,
             )
         )
-        self._source_orders.add(source_order)
         return handle
 
     def admit(
@@ -240,12 +230,6 @@ class MissingCallLedger:
             raise MissingCallIntegrityError(message)
         if len({id(value) for value in identities}) != len(identities):
             message = "admission repeats a record identity object"
-            raise MissingCallIntegrityError(message)
-        source_orders = tuple(
-            self._require_record(value).source_order for value in obligations
-        )
-        if source_orders != tuple(sorted(source_orders)):
-            message = "admission obligations crossed provider source order"
             raise MissingCallIntegrityError(message)
         local_sequences = tuple(value.local_sequence for value in identities)
         if local_sequences != tuple(
@@ -768,10 +752,9 @@ class MissingCallLedger:
             or identity.page_sequence != self._page_sequence
             or identity.member is not record.member.identity
             or identity.feed_id != record.member.identity.feed_id
-            or identity.source_order != record.source_order
             or identity.cohort_timestamp != record.provider_ts
         ):
-            message = "record identity crossed grant/member/Feed/page/order"
+            message = "record identity crossed grant/member/Feed/page"
             raise MissingCallIntegrityError(message)
 
     @staticmethod
@@ -847,7 +830,6 @@ def _validate_scheduled_entry(
     obligation: MissingCallObligation,
     *,
     member: ingestion_lease_store.LeaseMember,
-    source_order: int,
     audio_url: str,
     provider_ts: datetime.datetime | None,
 ) -> MissingCallLedger:
@@ -855,7 +837,6 @@ def _validate_scheduled_entry(
     record = owner._require_record(obligation)  # noqa: SLF001
     if (
         record.member is not member
-        or record.source_order != source_order
         or record.audio_url != audio_url
         or record.provider_ts != provider_ts
     ):

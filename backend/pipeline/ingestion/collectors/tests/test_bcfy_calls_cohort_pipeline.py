@@ -108,10 +108,8 @@ def _entry(
         member,
         audio_url=url,
         provider_ts=timestamp,
-        source_order=source_order,
     )
     return pipeline.ScheduledCohortEntry(
-        source_order,
         url,
         raw_call,
         _NOW,
@@ -128,7 +126,7 @@ def _execution(
     grant_lost: asyncio.Event | None = None,
 ) -> tuple[
     feed_work_scheduler.CohortExecution,
-    list[_types._ExecutorOutcome],
+    list[feed_work_scheduler.CohortTerminalFacts],
     list[feed_work_scheduler.OutcomeUnknownRetentionRequest],
 ]:
     identities = tuple(
@@ -138,30 +136,16 @@ def _execution(
             page_sequence=3,
             feed_id=payload.member.identity.feed_id,
             cohort_timestamp=timestamp,
-            source_order=entry.source_order,
             local_sequence=80 + index,
         )
         for index, entry in enumerate(payload.entries)
     )
     payload.admission_hook(identities)
-    known: list[_types._ExecutorOutcome] = []
+    known: list[feed_work_scheduler.CohortTerminalFacts] = []
     retained: list[feed_work_scheduler.OutcomeUnknownRetentionRequest] = []
 
     def observe_known(outcome: object) -> None:
-        if not isinstance(
-            outcome,
-            (
-                feed_work_scheduler.CallCompleted,
-                feed_work_scheduler.CallFinalClosurePending,
-                feed_work_scheduler.CallReplayableDirectFailure,
-                feed_work_scheduler.CallRetryable,
-                feed_work_scheduler.CallStopped,
-                feed_work_scheduler.CallAuthorityLost,
-                feed_work_scheduler.CallMembershipRejected,
-                feed_work_scheduler.CallIntegrityFailure,
-                feed_work_scheduler.CallOutcomeUnknown,
-            ),
-        ):
+        if type(outcome) is not feed_work_scheduler.CohortTerminalFacts:
             message = "test received an invalid cancellation outcome"
             raise TypeError(message)
         known.append(outcome)
@@ -188,9 +172,8 @@ def _execution(
 
 def _observe_terminal_outcome(
     payload: pipeline.ScheduledCohortPayload,
-    outcome: _types._ExecutorOutcome,
+    facts: feed_work_scheduler.CohortTerminalFacts,
 ) -> None:
-    facts = outcome.facts
     for entry, fact in zip(payload.entries, facts.records, strict=True):
         settlement = (
             feed_work_scheduler.CallSettlement.COMPLETED
@@ -198,7 +181,7 @@ def _observe_terminal_outcome(
             is feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
             else feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
         )
-        payload.settlement_observer(entry.source_order)(settlement)
+        payload.settlement_observer(entry)(settlement)
 
 
 class _Committer:
@@ -358,7 +341,9 @@ async def test_equal_timestamp_siblings_stage_commit_then_publish() -> None:
 
     outcome = await _executor(operations, committer).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     assert operations.created == [
         payload.entries[0].audio_url,
         payload.entries[1].audio_url,
@@ -377,7 +362,7 @@ async def test_equal_timestamp_siblings_stage_commit_then_publish() -> None:
         payload.entries[1].audio_url,
     ]
     assert all(
-        record.full_pipeline_completed for record in outcome.facts.records
+        record.full_pipeline_completed for record in outcome.records
     )
     assert known == []
     assert retained == []
@@ -415,16 +400,31 @@ def test_producer_deduplicates_before_payload_construction() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("timestamp", "skip_all", "expected_fields", "expected_type"),
+    ("timestamp", "skip_all", "expected_fields", "expected_disposition"),
     [
-        (_NOW, False, (True, True), feed_work_scheduler.CallCompleted),
-        (None, False, (True, False), feed_work_scheduler.CallCompleted),
-        (_NOW, True, (False, True), feed_work_scheduler.CallCompleted),
+        (
+            _NOW,
+            False,
+            (True, True),
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        ),
+        (
+            None,
+            False,
+            (True, False),
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        ),
+        (
+            _NOW,
+            True,
+            (False, True),
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        ),
         (
             None,
             True,
             (False, False),
-            feed_work_scheduler.CallFinalClosurePending,
+            feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
         ),
     ],
     ids=(
@@ -438,7 +438,7 @@ async def test_physical_commit_evidence_matrix(
     timestamp: datetime.datetime | None,
     skip_all: bool,  # noqa: FBT001
     expected_fields: tuple[bool, bool],
-    expected_type: type[object],
+    expected_disposition: feed_work_scheduler.CohortTerminalDisposition,
 ) -> None:
     grant = _grant()
     member = _member(grant)
@@ -455,7 +455,7 @@ async def test_physical_commit_evidence_matrix(
 
     outcome = await _executor(operations, committer).execute(execution)
 
-    assert isinstance(outcome, expected_type)
+    assert outcome.disposition is expected_disposition
     if expected_fields == (False, False):
         assert committer.commits == []
         assert ledger.state(entry.obligation) is (
@@ -512,7 +512,9 @@ async def test_terminal_skip_event_reports_actual_media_attempts() -> None:
             ),
         ).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     emit.assert_called_once()
     assert emit.call_args.kwargs["extra"]["json_fields"]["attempt_count"] == 3
 
@@ -530,10 +532,12 @@ async def test_terminal_skip_and_success_share_durable_commit() -> None:
 
     outcome = await _executor(operations, committer).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     assert len(committer.commits) == 1
     assert operations.published == [entries[1].audio_url]
-    reasons = tuple(record.terminal_reason for record in outcome.facts.records)
+    reasons = tuple(record.terminal_reason for record in outcome.records)
     assert reasons == (
         feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
         feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
@@ -559,13 +563,15 @@ async def test_publication_exhaustion_does_not_suppress_later_sibling() -> None:
 
     outcome = await _executor(operations, _Committer()).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     assert operations.published == [entry.audio_url for entry in entries]
-    assert outcome.facts.records[0].terminal_reason is (
+    assert outcome.records[0].terminal_reason is (
         feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
     )
-    assert outcome.facts.records[0].direct_failure is not None
-    assert outcome.facts.records[1].full_pipeline_completed
+    assert outcome.records[0].direct_failure is not None
+    assert outcome.records[1].full_pipeline_completed
     assert tuple(ledger.state(entry.obligation) for entry in entries) == (
         gap_ledger.MissingCallState.EMITTED,
         gap_ledger.MissingCallState.RESOLVED,
@@ -604,10 +610,12 @@ async def test_definitive_publication_failure_continues_later_sibling(
 
     outcome = await _executor(operations, _Committer()).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     assert retained == []
     assert operations.published == [entry.audio_url for entry in entries]
-    first, second = outcome.facts.records
+    first, second = outcome.records
     assert first.terminal_reason is (
         feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
     )
@@ -648,7 +656,9 @@ async def test_publication_gap_event_reports_actual_owner_attempts() -> None:
     with mock.patch.object(telemetry.logger, "log") as emit:
         outcome = await executor.execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    )
     emit.assert_called_once()
     assert emit.call_args.kwargs["extra"]["json_fields"]["attempt_count"] == 3
 
@@ -678,9 +688,11 @@ async def test_gcs_exhaustion_is_replayable_before_commit() -> None:
 
     outcome = await executor.execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallReplayableDirectFailure)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
+    )
     assert operations.published == []
-    assert outcome.facts.disposition is (
+    assert outcome.disposition is (
         feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
     )
     assert all(
@@ -697,16 +709,19 @@ async def test_gcs_exhaustion_is_replayable_before_commit() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("signal_kind", "expected_type"),
+    ("signal_kind", "expected_disposition"),
     [
-        ("stop", feed_work_scheduler.CallStopped),
-        ("loss", feed_work_scheduler.CallAuthorityLost),
+        ("stop", feed_work_scheduler.CohortTerminalDisposition.STOPPED),
+        (
+            "loss",
+            feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
+        ),
     ],
     ids=("stop-during-stage", "authority-loss-during-stage"),
 )
 async def test_precommit_signal_interrupt_is_neutral(
     signal_kind: str,
-    expected_type: type[object],
+    expected_disposition: feed_work_scheduler.CohortTerminalDisposition,
 ) -> None:
     grant = _grant()
     member = _member(grant)
@@ -743,7 +758,7 @@ async def test_precommit_signal_interrupt_is_neutral(
 
     outcome = await executor.execute(execution)
 
-    assert isinstance(outcome, expected_type)
+    assert outcome.disposition is expected_disposition
     assert committer.commits == []
     assert operations.published == []
     assert known == []
@@ -788,7 +803,7 @@ async def test_raw_cancellation_before_commit_releases_replay_safely() -> None:
     assert operations.published == []
     assert known == []
     assert retained == []
-    payload.settlement_observer(payload.entries[0].source_order)(
+    payload.settlement_observer(payload.entries[0])(
         feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
     )
     assert ledger.state(payload.entries[0].obligation) is (
@@ -798,16 +813,14 @@ async def test_raw_cancellation_before_commit_releases_replay_safely() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("signal_name", "expected_type", "expected_disposition"),
+    ("signal_name", "expected_disposition"),
     [
         (
             "stop_requested",
-            feed_work_scheduler.CallStopped,
             feed_work_scheduler.CohortTerminalDisposition.STOPPED,
         ),
         (
             "grant_lost",
-            feed_work_scheduler.CallAuthorityLost,
             feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
         ),
     ],
@@ -815,7 +828,6 @@ async def test_raw_cancellation_before_commit_releases_replay_safely() -> None:
 )
 async def test_postcommit_gate_abandons_every_unpublished_record(
     signal_name: str,
-    expected_type: type[object],
     expected_disposition: feed_work_scheduler.CohortTerminalDisposition,
 ) -> None:
     grant = _grant()
@@ -846,13 +858,12 @@ async def test_postcommit_gate_abandons_every_unpublished_record(
         control_gate=gate,
     ).execute(execution)
 
-    assert isinstance(outcome, expected_type)
-    assert outcome.facts.disposition is expected_disposition
+    assert outcome.disposition is expected_disposition
     assert operations.published == []
     assert all(
         record.terminal_reason
         is feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
-        for record in outcome.facts.records
+        for record in outcome.records
     )
     assert all(
         ledger.state(entry.obligation) is gap_ledger.MissingCallState.EMITTED
@@ -888,10 +899,12 @@ async def test_between_publication_gate_starts_no_later_publish() -> None:
         control_gate=gate,
     ).execute(execution)
 
-    assert isinstance(outcome, feed_work_scheduler.CallStopped)
+    assert outcome.disposition is (
+        feed_work_scheduler.CohortTerminalDisposition.STOPPED
+    )
     assert operations.published == [payload.entries[0].audio_url]
-    assert outcome.facts.records[0].full_pipeline_completed
-    assert outcome.facts.records[1].terminal_reason is (
+    assert outcome.records[0].full_pipeline_completed
+    assert outcome.records[1].terminal_reason is (
         feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
     )
     assert tuple(
@@ -906,10 +919,26 @@ async def test_between_publication_gate_starts_no_later_publish() -> None:
 @pytest.mark.parametrize(
     ("result_kind", "expected_handoff", "expected_retention"),
     [
-        ("accepted", feed_work_scheduler.CallCompleted, None),
-        ("grant-rejected", feed_work_scheduler.CallAuthorityLost, None),
-        ("member-rejected", feed_work_scheduler.CallMembershipRejected, None),
-        ("no-start", feed_work_scheduler.CallRetryable, None),
+        (
+            "accepted",
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+            None,
+        ),
+        (
+            "grant-rejected",
+            feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
+            None,
+        ),
+        (
+            "member-rejected",
+            feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED,
+            None,
+        ),
+        (
+            "no-start",
+            feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
+            None,
+        ),
         (
             "malformed",
             None,
@@ -932,7 +961,7 @@ async def test_between_publication_gate_starts_no_later_publish() -> None:
 )
 async def test_commit_cancellation_mapping_and_original_error(
     result_kind: str,
-    expected_handoff: type[object] | None,
+    expected_handoff: feed_work_scheduler.CohortTerminalDisposition | None,
     expected_retention: (feed_work_scheduler.CohortTerminalDisposition | None),
 ) -> None:
     grant = _grant()
@@ -988,7 +1017,7 @@ async def test_commit_cancellation_mapping_and_original_error(
     assert raised.value.args == ("first-cancel",)
     if expected_handoff is not None:
         assert len(known) == 1
-        assert isinstance(known[0], expected_handoff)
+        assert known[0].disposition is expected_handoff
         assert retained == []
         states = tuple(
             ledger.state(entry.obligation) for entry in payload.entries
@@ -1106,7 +1135,9 @@ async def test_publication_cancellation_settles_or_retains(
         )
     else:
         assert len(known) == 1
-        assert isinstance(known[0], feed_work_scheduler.CallCompleted)
+        assert known[0].disposition is (
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED
+        )
         assert retained == []
         assert all(
             ledger.state(entry.obligation)
@@ -1125,7 +1156,7 @@ async def test_validation_precedes_every_physical_side_effect() -> None:
     execution, _known, _retained = _execution(grant, payload)
     forged_identity = dataclasses.replace(
         execution.calls[0].identity,
-        source_order=3,
+        local_sequence=3,
     )
     forged_execution = feed_work_scheduler.CohortExecution(
         (feed_work_scheduler.CallExecution(forged_identity, payload),),
@@ -1137,7 +1168,7 @@ async def test_validation_precedes_every_physical_side_effect() -> None:
 
     with pytest.raises(
         feed_work_scheduler.CohortIntegrityError,
-        match="source order",
+        match="crossed admitted identity",
     ):
         await _executor(operations, _Committer()).execute(forged_execution)
 

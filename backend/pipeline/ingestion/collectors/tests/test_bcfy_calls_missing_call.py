@@ -62,7 +62,6 @@ def _identity(
     grant: ingestion_lease_store.LeaseGrant,
     member: ingestion_lease_store.LeaseMember,
     *,
-    source_order: int = 0,
     local_sequence: int = 80,
     timestamp: datetime.datetime | None = _NOW,
 ) -> feed_work_scheduler.CohortRecordIdentity:
@@ -72,7 +71,6 @@ def _identity(
         page_sequence=0,
         feed_id=member.identity.feed_id,
         cohort_timestamp=timestamp,
-        source_order=source_order,
         local_sequence=local_sequence,
     )
 
@@ -81,7 +79,6 @@ def _draft(
     ledger: gap_ledger.MissingCallLedger,
     member: ingestion_lease_store.LeaseMember,
     *,
-    source_order: int = 0,
     timestamp: datetime.datetime | None = _NOW,
     audio_url: str = _URL,
 ) -> gap_ledger.MissingCallObligation:
@@ -89,7 +86,6 @@ def _draft(
         member,
         audio_url=audio_url,
         provider_ts=timestamp,
-        source_order=source_order,
     )
 
 
@@ -228,11 +224,10 @@ def test_admission_is_atomic_and_binds_the_exact_identity_tuple() -> None:
     second = _draft(
         ledger,
         member,
-        source_order=1,
         audio_url=f"{_URL}-2",
     )
     first_identity = _identity(grant, member)
-    crossed = _identity(grant, member, source_order=2, local_sequence=81)
+    crossed = _identity(grant, member, local_sequence=82)
 
     with pytest.raises(gap_ledger.MissingCallIntegrityError):
         ledger.admit((first, second), (first_identity, crossed))
@@ -243,7 +238,6 @@ def test_admission_is_atomic_and_binds_the_exact_identity_tuple() -> None:
     second_identity = _identity(
         grant,
         member,
-        source_order=1,
         local_sequence=81,
     )
     ledger.admit((first, second), (first_identity, second_identity))
@@ -263,20 +257,18 @@ def test_local_sequence_is_shard_local_but_unique_within_one_feed() -> None:
     sibling = _draft(
         ledger,
         member_b,
-        source_order=1,
         audio_url=f"{_URL}-sibling",
     )
     duplicate = _draft(
         ledger,
         member_a,
-        source_order=2,
         audio_url=f"{_URL}-duplicate",
     )
 
     ledger.admit((first,), (_identity(grant, member_a),))
     ledger.admit(
         (sibling,),
-        (_identity(grant, member_b, source_order=1),),
+        (_identity(grant, member_b),),
     )
 
     assert ledger.state(first) is gap_ledger.MissingCallState.ADMITTED
@@ -284,7 +276,7 @@ def test_local_sequence_is_shard_local_but_unique_within_one_feed() -> None:
     with pytest.raises(gap_ledger.MissingCallIntegrityError):
         ledger.admit(
             (duplicate,),
-            (_identity(grant, member_a, source_order=2),),
+            (_identity(grant, member_a),),
         )
     assert ledger.state(duplicate) is gap_ledger.MissingCallState.DRAFT
 
@@ -740,7 +732,6 @@ def test_success_publication_gap_abandonment_and_unknown_are_disjoint() -> None:
         _draft(
             ledger,
             member,
-            source_order=index,
             audio_url=f"{_URL}-{index}",
         )
         for index in range(4)
@@ -749,7 +740,6 @@ def test_success_publication_gap_abandonment_and_unknown_are_disjoint() -> None:
         _identity(
             grant,
             member,
-            source_order=index,
             local_sequence=80 + index,
         )
         for index in range(4)
@@ -890,7 +880,6 @@ def test_success_cap_cannot_close_replayable_sibling_feed() -> None:
     obligation_b = _draft(
         ledger,
         member_b,
-        source_order=1,
         timestamp=None,
         audio_url=f"{_URL}-b",
     )
@@ -898,7 +887,6 @@ def test_success_cap_cannot_close_replayable_sibling_feed() -> None:
     identity_b = _identity(
         grant,
         member_b,
-        source_order=1,
         local_sequence=81,
         timestamp=None,
     )
@@ -971,14 +959,12 @@ def test_later_same_feed_replay_releases_earlier_missing_ts_skip() -> None:
     later = _draft(
         ledger,
         member,
-        source_order=1,
         audio_url=f"{_URL}-later",
     )
     earlier_identity = _identity(grant, member, timestamp=None)
     later_identity = _identity(
         grant,
         member,
-        source_order=1,
         local_sequence=81,
     )
     ledger.admit((earlier, later), (earlier_identity, later_identity))

@@ -179,24 +179,6 @@ class _BoundaryCoordinator:
         )
         self._task.add_done_callback(self._task_settled)
 
-    @property
-    def task(self) -> asyncio.Task[None]:
-        """Return the one registered flusher task for bounded inspection."""
-        return self._task
-
-    @property
-    def signal(self) -> asyncio.Event:
-        """Return the one coalescing flusher signal for inspection."""
-        return self._signal
-
-    @property
-    def requested_generation(self) -> int:
-        return self._requested_generation
-
-    @property
-    def completed_generation(self) -> int:
-        return self._completed_generation
-
     def notify_ready(self) -> None:
         """Coalesce a newly ready physical-boundary wake."""
         if not self._closing and self._fatal is None:

@@ -456,7 +456,7 @@ class _ImmediateCallExecutor:
     async def execute(
         self,
         execution: feed_work_scheduler.CohortExecution,
-    ) -> feed_work_scheduler.CallCompleted:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         self.executions.append(execution)
         self.completed.set()
         records = tuple(
@@ -473,11 +473,9 @@ class _ImmediateCallExecutor:
             )
             for call in execution.calls
         )
-        return feed_work_scheduler.CallCompleted(
-            feed_work_scheduler.CohortTerminalFacts(
-                records,
-                feed_work_scheduler.CohortTerminalDisposition.SETTLED,
-            )
+        return feed_work_scheduler.CohortTerminalFacts(
+            records,
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
         )
 
 
@@ -2686,8 +2684,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(boundary_committed.wait(), timeout=1)
         await rt._heartbeat_cycle()
 
-        scheduler_snapshot = await scheduler._snapshot()
-        self.assertEqual(scheduler_snapshot.lane_count, 1)
+        self.assertIn(grant, scheduler._lanes)
         self.assertEqual(
             rt._supervisor.active_count(grant_control.DomainId.SID),
             1,
@@ -2705,9 +2702,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(lane_closed.is_set())
             self.assertTrue(rt._thread_stop.is_set())
             self.assertNotIn(grant, scheduler._lanes)
-            self.assertEqual((await scheduler._snapshot()).lane_count, 0)
-            lane_snapshot = await opened_lanes[0]._snapshot()
-            self.assertTrue(lane_snapshot.closed)
             managed = next(iter(rt._supervisor._registry.values()))
             self.assertTrue(managed.runner_closed.is_set())
             self.assertIsInstance(

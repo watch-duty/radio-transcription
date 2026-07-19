@@ -72,7 +72,6 @@ def _identity(
         page_sequence=page_sequence,
         feed_id=member.feed_id,
         cohort_timestamp=cohort_timestamp,
-        source_order=source_order,
         local_sequence=(
             source_order if local_sequence is None else local_sequence
         ),
@@ -656,7 +655,7 @@ class TestDirectFailureAggregation(unittest.TestCase):
         self.assertEqual(len(feed.direct_failures), 2)
         self.assertEqual(
             tuple(
-                evidence.identity.source_order
+                evidence.identity.local_sequence
                 for evidence in feed.direct_failures
             ),
             (0, 1),
@@ -1177,141 +1176,88 @@ class TestFinalizableFactValidation(unittest.TestCase):
                     _SOURCE_TIME + datetime.timedelta(seconds=index)
                 ),
             )
+            reason = {
+                feed_work_scheduler.CohortTerminalDisposition.SETTLED: (
+                    feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING: (
+                    feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT: (
+                    feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.RETRYABLE: (
+                    feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.STOPPED: (
+                    feed_work_scheduler.CohortRecordTerminalReason.STOPPED
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST: (
+                    feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED: (
+                    feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE: (
+                    feed_work_scheduler.CohortRecordTerminalReason.INTEGRITY_FAILURE
+                ),
+                feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN: (
+                    feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN
+                ),
+            }[disposition]
+            closure_state = (
+                feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+            )
+            participated = True
+            status_reason = feed_store.FeedStatusReason.SOURCE_UNREACHABLE
             if disposition is (
                 feed_work_scheduler.CohortTerminalDisposition.SETTLED
             ):
-                outcome = feed_work_scheduler.CallCompleted(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
-                            ),
-                        ),
-                        disposition,
-                    )
+                reason = (
+                    feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
                 )
             elif disposition is (
                 feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING
             ):
-                outcome = feed_work_scheduler.CallFinalClosurePending(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
-                                closure_state=(
-                                    feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
-                                ),
-                            ),
-                        ),
-                        disposition,
-                    )
+                reason = (
+                    feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
                 )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
-            ):
-                outcome = feed_work_scheduler.CallReplayableDirectFailure(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT,
-                                status_reason=(
-                                    feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR
-                                ),
-                            ),
-                        ),
-                        disposition,
-                    )
+                closure_state = (
+                    feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
                 )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.RETRYABLE
-            ):
-                outcome = feed_work_scheduler.CallRetryable(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
-                            ),
-                        ),
-                        disposition,
-                    )
-                )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.STOPPED
-            ):
-                outcome = feed_work_scheduler.CallStopped(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.STOPPED,
-                            ),
-                        ),
-                        disposition,
-                    )
-                )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST
-            ):
-                outcome = feed_work_scheduler.CallAuthorityLost(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
-                            ),
-                        ),
-                        disposition,
-                    )
-                )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED
-            ):
-                outcome = feed_work_scheduler.CallMembershipRejected(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED,
-                            ),
-                        ),
-                        disposition,
-                    )
-                )
-            elif disposition is (
-                feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE
-            ):
-                outcome = feed_work_scheduler.CallIntegrityFailure(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.INTEGRITY_FAILURE,
-                                participated=True,
-                            ),
-                        ),
-                        disposition,
-                    ),
-                    RuntimeError("malformed evidence"),
+            elif disposition in {
+                feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE,
+                feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN,
+            }:
+                closure_state = (
+                    feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN
                 )
             else:
-                outcome = feed_work_scheduler.CallOutcomeUnknown(
-                    _facts(
-                        (
-                            _record(
-                                identity,
-                                feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN,
-                                participated=True,
-                            ),
-                        ),
-                        disposition,
-                    )
+                closure_state = (
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
                 )
+                participated = False
+                if disposition is (
+                    feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
+                ):
+                    participated = True
+                    status_reason = (
+                        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR
+                    )
+            outcome = _facts(
+                (
+                    _record(
+                        identity,
+                        reason,
+                        closure_state=closure_state,
+                        participated=participated,
+                        status_reason=status_reason,
+                    ),
+                ),
+                disposition,
+            )
             try:
-                page = _page(grant, (member,), (outcome.facts,))
+                page = _page(grant, (member,), (outcome,))
             except boundary_verdict.BoundaryVerdictIntegrityError:
                 rejected.append(disposition)
             else:
@@ -1549,18 +1495,11 @@ class TestFinalizableFactValidation(unittest.TestCase):
             feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT,
             status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
-        cohorts = (
+        with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
             _facts(
                 (record,),
                 feed_work_scheduler.CohortTerminalDisposition.SETTLED,
-            ),
-        )
-
-        with self.assertRaisesRegex(
-            boundary_verdict.BoundaryVerdictIntegrityError,
-            "SETTLED facts",
-        ):
-            _page(grant, (member,), cohorts)
+            )
 
     def test_out_of_order_terminal_cohorts_are_rejected(self) -> None:
         grant = _grant()
@@ -1630,7 +1569,7 @@ class TestFinalizableFactValidation(unittest.TestCase):
 
         self.assertEqual(
             tuple(
-                fact.identity.source_order
+                fact.identity.local_sequence
                 for fact in verdict.feed_facts[0].record_facts
             ),
             (0, 1),
@@ -1679,7 +1618,7 @@ class TestFinalizableFactValidation(unittest.TestCase):
         )
         self.assertEqual(
             tuple(
-                evidence.identity.source_order
+                evidence.identity.local_sequence
                 for evidence in verdict.feed_facts[0].direct_failures
             ),
             (0, 1),

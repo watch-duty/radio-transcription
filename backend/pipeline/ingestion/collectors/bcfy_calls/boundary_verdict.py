@@ -312,17 +312,16 @@ def _require_nonnegative_integer(value: int, name: str) -> int:
 
 def _identity_order_key(
     identity: feed_work_scheduler.CohortRecordIdentity,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     return (
         identity.feed_id.int,
-        identity.source_order,
         identity.local_sequence,
     )
 
 
 def _cohort_order_key(
     facts: feed_work_scheduler.CohortTerminalFacts,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     return _identity_order_key(facts.records[0].identity)
 
 
@@ -381,8 +380,7 @@ def _validate_record_identities(
     if len(set(page.record_identities)) != len(page.record_identities):
         message = "record_identities contains duplicates"
         raise BoundaryVerdictIntegrityError(message)
-    keys: list[tuple[int, int, int]] = []
-    source_orders: set[int] = set()
+    keys: list[tuple[int, int]] = []
     for identity in page.record_identities:
         member = members_by_feed.get(identity.feed_id)
         if member is None:
@@ -395,10 +393,6 @@ def _validate_record_identities(
         ):
             message = "record identity crossed grant, page, or member"
             raise BoundaryVerdictIntegrityError(message)
-        if identity.source_order in source_orders:
-            message = "record identities repeat a page source order"
-            raise BoundaryVerdictIntegrityError(message)
-        source_orders.add(identity.source_order)
         keys.append(_identity_order_key(identity))
     if keys != sorted(keys):
         message = "record identities are not in deterministic page order"
@@ -412,7 +406,7 @@ def _validate_terminal_facts(
         ingestion_lease_store.LeaseMemberIdentity,
     ],
 ) -> None:
-    cohort_keys: list[tuple[int, int, int]] = []
+    cohort_keys: list[tuple[int, int]] = []
     cohort_identities: set[tuple[uuid.UUID, datetime.datetime | None, int]] = (
         set()
     )
@@ -447,7 +441,7 @@ def _validate_terminal_facts(
             first_identity.feed_id,
             first_identity.cohort_timestamp,
             (
-                first_identity.source_order
+                first_identity.local_sequence
                 if first_identity.cohort_timestamp is None
                 else -1
             ),
@@ -710,7 +704,7 @@ def _direct_failure_key(
     )
     if stage is replayable_direct:
         return cohort_order, stage
-    return cohort_order, record.identity.source_order, stage
+    return cohort_order, record.identity.local_sequence, stage
 
 
 def _aggregate_direct_failures(

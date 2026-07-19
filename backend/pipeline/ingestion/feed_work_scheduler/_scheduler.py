@@ -434,7 +434,7 @@ class _ObservedCallExecutor:
     async def execute(
         self,
         execution: _types.CohortExecution,
-    ) -> _types._ExecutorOutcome:
+    ) -> _types.CohortTerminalFacts:
         try:
             self._dispatch_observer(execution)
         except BaseException:  # noqa: S110 - evidence is observational
@@ -453,10 +453,7 @@ class _PageBarrier:
         typing.Callable[[_types.SchedulerPageEvidence], None] | None
     ) = None
     evidence_published: bool = False
-    current_source_order: int | None = None
-    pulled: int = 0
-    registered: int = 0
-    localized: int = 0
+    registration_pending: bool = False
     total_records: int = 0
     pulled_records: int = 0
     registered_records: int = 0
@@ -485,49 +482,6 @@ class _PageBarrier:
     abort_reason: str | None = None
     uncertainty: _types._FinalPageUncertainty | None = None
     changed: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PageSnapshot:
-    """Payload-free projection of one transient page barrier."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    page_sequence: int
-    current_source_order: int | None
-    pulled: int
-    registered: int
-    localized: int
-    total_records: int
-    pulled_records: int
-    registered_records: int
-    locally_rejected_records: int
-    terminalized_registered_records: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _LaneSnapshot:
-    """Bounded exact-lane coordination state for deterministic tests."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    next_page_sequence: int
-    page: _PageSnapshot | None
-    closing: bool
-    closed: bool
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _SchedulerSnapshot:
-    """Bounded process scheduler state without payload or receipt history."""
-
-    shards: tuple[_types._ShardSnapshot, ...]
-    held: int
-    lane_count: int
-    registered_worker_tasks: int
-    registered_flusher_tasks: int
-    started: bool
-    closing: bool
-    closed: bool
-    fatal: bool
 
 
 def _require_member_retirements(
@@ -876,31 +830,6 @@ class FeedWorkScheduler:
         self._closed = True
         return None
 
-    async def _snapshot(self) -> _SchedulerSnapshot:
-        shards = []
-        for shard in self._shards:
-            shards.append(await shard.snapshot())
-        snapshots = tuple(shards)
-        registered = 0
-        for snapshot in snapshots:
-            for worker in snapshot.workers:
-                registered += worker.task_registered
-        registered_flushers = sum(
-            not lane._boundary_coordinator.task.done()
-            for lane in self._lanes.values()
-        )
-        return _SchedulerSnapshot(
-            shards=snapshots,
-            held=sum(snapshot.held for snapshot in snapshots),
-            lane_count=len(self._lanes),
-            registered_worker_tasks=registered,
-            registered_flusher_tasks=registered_flushers,
-            started=self._started,
-            closing=self._closing,
-            closed=self._closed,
-            fatal=any(snapshot.fatal for snapshot in snapshots),
-        )
-
     async def _wait_for_idle(self) -> None:
         for shard in self._shards:
             await shard.wait_for_held(0)
@@ -1145,13 +1074,15 @@ class FeedWorkScheduler:
     def _observe_outcome(
         self,
         record: _types._CallRecord,
-        outcome: _types._ExecutorOutcome,
+        outcome: _types.CohortTerminalFacts,
     ) -> None:
         """Project terminal authority loss into its exact lane."""
         lane = self._lanes.get(record.grant)
         if lane is None:
             return
-        if isinstance(outcome, _types._ExecutorAuthorityLost):
+        if outcome.disposition is (
+            _types.CohortTerminalDisposition.AUTHORITY_LOST
+        ):
             lane._request_close(_types.LaneCloseReason.AUTHORITY_LOSS)
 
     def _observe_page_registration(
@@ -1165,7 +1096,7 @@ class FeedWorkScheduler:
     def _observe_page_terminal(
         self,
         cohort: _types._CohortRecord,
-        outcome: _types._ExecutorOutcome | None,
+        outcome: _types.CohortTerminalFacts | None,
         failure: BaseException | None,
     ) -> None:
         lane = self._lanes.get(cohort.grant)
@@ -1484,12 +1415,10 @@ class GrantLane:
                 evidence_observer=evidence_observer,
             )
             try:
-                source_order = 0
                 replay_blocked_feeds: set[uuid.UUID] = set()
                 for cohort in cohorts:
                     record_count = len(cohort.calls)
                     await self._mark_pulled(
-                        source_order,
                         record_count,
                         call_records=True,
                     )
@@ -1498,7 +1427,6 @@ class GrantLane:
                             feed_id=cohort.feed_id,
                             grant=self._grant,
                             member=cohort.member,
-                            source_order=source_order + offset,
                             cohort_timestamp=cohort.cohort_timestamp,
                             payload=submission.payload,
                             page_sequence=candidate.page_sequence,
@@ -1509,7 +1437,7 @@ class GrantLane:
                                 )
                             ),
                         )
-                        for offset, submission in enumerate(cohort.calls)
+                        for submission in cohort.calls
                     )
                     shard = self._scheduler._shard_for(cohort.feed_id)
                     pressure_started = (
@@ -1551,12 +1479,10 @@ class GrantLane:
                         )
                         replay_blocked_feeds.add(cohort.feed_id)
                         await self._mark_localized(
-                            source_order,
                             record_count,
                             call_records=True,
                             replay_blocked_feed=cohort.feed_id,
                         )
-                        source_order += record_count
                         continue
                     except _shard._AdmissionAbortedError as exc:
                         message = "lane closed during page admission"
@@ -1565,15 +1491,11 @@ class GrantLane:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(
-                        source_order,
                         record_count,
                     )
-                    source_order += record_count
                 for boundary in page_boundaries:
                     self._require_boundary(boundary)
-                    source_order = await self._next_source_order()
                     await self._mark_pulled(
-                        source_order,
                         1,
                         call_records=False,
                     )
@@ -1586,7 +1508,6 @@ class GrantLane:
                         )
                     ):
                         await self._mark_localized(
-                            source_order,
                             1,
                             call_records=False,
                         )
@@ -1594,7 +1515,6 @@ class GrantLane:
                     boundary_input = _types._BoundaryInput(
                         boundary=boundary,
                         grant=self._grant,
-                        source_order=source_order,
                         page_sequence=candidate.page_sequence,
                     )
                     pressure_started = (
@@ -1627,7 +1547,6 @@ class GrantLane:
                     except _shard._ReplayBlockedError:
                         replay_blocked_feeds.add(boundary.feed_id)
                         await self._mark_localized(
-                            source_order,
                             1,
                             call_records=False,
                             replay_blocked_feed=boundary.feed_id,
@@ -1649,7 +1568,7 @@ class GrantLane:
                     except _shard._ShardFatalError as exc:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
-                    await self._mark_registered(source_order, 1)
+                    await self._mark_registered(1)
                 page_state = await self._await_terminal_barrier()
                 if page_state == "uncertain":
                     uncertainty = await self._page_uncertainty()
@@ -1731,36 +1650,6 @@ class GrantLane:
                 await self._abort_and_publish_page(page)
                 raise
             return page_settlement
-
-    async def _snapshot(self) -> _LaneSnapshot:
-        async with self._state_lock:
-            page = self._page
-            page_snapshot = (
-                None
-                if page is None
-                else _PageSnapshot(
-                    grant=page.grant,
-                    page_sequence=page.page_sequence,
-                    current_source_order=page.current_source_order,
-                    pulled=page.pulled,
-                    registered=page.registered,
-                    localized=page.localized,
-                    total_records=page.total_records,
-                    pulled_records=page.pulled_records,
-                    registered_records=page.registered_records,
-                    locally_rejected_records=(page.locally_rejected_records),
-                    terminalized_registered_records=(
-                        page.terminalized_registered_records
-                    ),
-                )
-            )
-            return _LaneSnapshot(
-                grant=self._grant,
-                next_page_sequence=self._next_page_sequence,
-                page=page_snapshot,
-                closing=self._closing,
-                closed=self._closed,
-            )
 
     async def _validate_candidate(
         self,
@@ -1876,7 +1765,6 @@ class GrantLane:
 
     async def _mark_pulled(
         self,
-        source_order: int,
         record_count: int,
         *,
         call_records: bool,
@@ -1885,50 +1773,30 @@ class GrantLane:
         async with self._state_lock:
             self._raise_closed_locked()
             page = self._require_page_locked()
-            if page.current_source_order is not None:
-                message = "cannot pull past the current source record"
+            if page.registration_pending:
+                message = "cannot pull while registration is pending"
                 raise RuntimeError(message)
-            page.current_source_order = source_order
-            page.pulled += record_count
+            page.registration_pending = True
             if call_records:
                 page.pulled_records += record_count
                 if page.pulled_records > page.total_records:
                     message = "page pulled more calls than it declared"
                     raise RuntimeError(message)
 
-    async def _next_source_order(self) -> int:
-        async with self._state_lock:
-            page = self._require_page_locked()
-            if page.current_source_order is not None:
-                message = "cannot inspect the next source record while blocked"
-                raise RuntimeError(message)
-            return page.pulled
-
     async def _mark_registered(
         self,
-        source_order: int,
         record_count: int,
     ) -> None:
         _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
             page = self._require_page_locked()
-            if page.current_source_order is None:
-                if (
-                    source_order != page.pulled - record_count
-                    or page.pulled != page.registered + page.localized
-                ):
-                    message = "source record lost its barrier transition"
-                    raise RuntimeError(message)
-                return
-            if page.current_source_order != source_order:
-                message = "registered source record does not match barrier"
+            if not page.registration_pending:
+                message = "registration has no pending source record"
                 raise RuntimeError(message)
-            page.current_source_order = None
-            page.registered += record_count
+            page.registration_pending = False
 
     async def _mark_localized(
         self,
-        source_order: int,
         record_count: int,
         *,
         call_records: bool,
@@ -1937,11 +1805,10 @@ class GrantLane:
         _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
             page = self._require_page_locked()
-            if page.current_source_order != source_order:
-                message = "localized source record does not match barrier"
+            if not page.registration_pending:
+                message = "localization has no pending source record"
                 raise RuntimeError(message)
-            page.current_source_order = None
-            page.localized += record_count
+            page.registration_pending = False
             if call_records:
                 page.locally_rejected_records += record_count
             if replay_blocked_feed is not None:
@@ -1958,27 +1825,6 @@ class GrantLane:
             except BaseException:  # noqa: S110 - evidence is observational
                 pass
         self._scheduler._sample_page_evidence(page.evidence)
-
-    def _localize_tag(
-        self,
-        page_sequence: int,
-        source_order: int,
-    ) -> None:
-        page = self._page
-        if page is None or page.page_sequence != page_sequence:
-            return
-        if page.current_source_order == source_order:
-            page.current_source_order = None
-            page.localized += 1
-            return
-        if source_order >= page.pulled:
-            message = "membership evidence precedes its source pull"
-            raise RuntimeError(message)
-        if page.registered <= 0:
-            message = "membership evidence has no registered record"
-            raise RuntimeError(message)
-        page.registered -= 1
-        page.localized += 1
 
     @staticmethod
     def _append_retired_member(
@@ -2054,7 +1900,7 @@ class GrantLane:
     def _observe_page_terminal(
         self,
         cohort: _types._CohortRecord,
-        outcome: _types._ExecutorOutcome | None,
+        outcome: _types.CohortTerminalFacts | None,
         failure: BaseException | None,
     ) -> None:
         page = self._page
@@ -2081,54 +1927,50 @@ class GrantLane:
                 _types._FinalPageUncertainty.INTEGRITY_FAILURE,
             )
             return
-        if isinstance(
-            outcome,
-            (
-                _types._ExecutorIntegrityFailure,
-                _types._ExecutorOutcomeUnknown,
-            ),
-        ):
+        if outcome.disposition in {
+            _types.CohortTerminalDisposition.INTEGRITY_FAILURE,
+            _types.CohortTerminalDisposition.OUTCOME_UNKNOWN,
+        }:
             uncertainty = (
                 _types._FinalPageUncertainty.INTEGRITY_FAILURE
-                if isinstance(outcome, _types._ExecutorIntegrityFailure)
+                if outcome.disposition
+                is _types.CohortTerminalDisposition.INTEGRITY_FAILURE
                 else _types._FinalPageUncertainty.OUTCOME_UNKNOWN
             )
             self._mark_page_uncertain(page, uncertainty)
             return
-        fact_outcomes = (
-            _types._ExecutorCompleted,
-            _types._ExecutorFinalClosurePending,
-            _types._ExecutorReplayableDirectFailure,
-        )
-        if isinstance(outcome, fact_outcomes):
-            page.terminal_facts[identities[0]] = outcome.facts
+        if outcome.disposition in {
+            _types.CohortTerminalDisposition.SETTLED,
+            _types.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
+            _types.CohortTerminalDisposition.REPLAYABLE_DIRECT,
+        }:
+            page.terminal_facts[identities[0]] = outcome
         else:
             page.neutralized_identities.update(identities)
-        if isinstance(outcome, _types._ExecutorReplayableDirectFailure):
+        if outcome.disposition is (
+            _types.CohortTerminalDisposition.REPLAYABLE_DIRECT
+        ):
             page.unresolved_replay_feed_ids.add(cohort.feed_id)
             page.replay_blocked_feed_ids.add(cohort.feed_id)
-        if isinstance(outcome, _types._ExecutorMembershipRejected):
+        if outcome.disposition is (
+            _types.CohortTerminalDisposition.MEMBERSHIP_REJECTED
+        ):
             self._append_retired_member(
                 page,
                 cohort.records[0].identity.member,
             )
-        if isinstance(
-            outcome,
-            (
-                _types._ExecutorStopped,
-                _types._ExecutorRetryable,
-                _types._ExecutorAuthorityLost,
-            ),
-        ):
-            page.abort_reason = outcome.facts.disposition.value
+        if outcome.disposition in {
+            _types.CohortTerminalDisposition.STOPPED,
+            _types.CohortTerminalDisposition.RETRYABLE,
+            _types.CohortTerminalDisposition.AUTHORITY_LOST,
+        }:
+            page.abort_reason = outcome.disposition.value
         page.terminalized_registered_records += len(identities)
         try:
             page.evidence.observe_terminal(
                 len(identities),
-                member_rejected=isinstance(
-                    outcome,
-                    _types._ExecutorMembershipRejected,
-                ),
+                member_rejected=outcome.disposition
+                is _types.CohortTerminalDisposition.MEMBERSHIP_REJECTED,
             )
         except BaseException:  # noqa: S110 - evidence is observational
             pass
@@ -2289,7 +2131,6 @@ class GrantLane:
                     page.terminal_facts,
                     key=lambda identity: (
                         identity.feed_id.int,
-                        identity.source_order,
                         identity.local_sequence,
                     ),
                 )
@@ -2642,7 +2483,7 @@ class GrantLane:
             self._raise_closed_locked()
             self._validate_candidate_locked(candidate)
             page = self._require_page_locked()
-            if page.current_source_order is not None:
+            if page.registration_pending:
                 message = "cannot cover a partially admitted source record"
                 raise RuntimeError(message)
             if (

@@ -83,11 +83,7 @@ class _CommitAccepted(enum.Enum):
 
 _COMMIT_ACCEPTED = _CommitAccepted.VALUE
 type _CommitClassification = (
-    _CommitAccepted
-    | feed_work_scheduler.CallMembershipRejected
-    | feed_work_scheduler.CallAuthorityLost
-    | feed_work_scheduler.CallRetryable
-    | feed_work_scheduler.CallIntegrityFailure
+    _CommitAccepted | feed_work_scheduler.CohortTerminalFacts
 )
 
 
@@ -118,21 +114,14 @@ def _freeze_provider_value(value: object) -> object:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ScheduledCohortEntry:
-    """One immutable provider item in its original source order."""
+    """One immutable provider item and its durable gap obligation."""
 
-    source_order: int
     audio_url: str = dataclasses.field(repr=False)
     raw_call: Mapping[str, object] = dataclasses.field(repr=False)
     receipt_time: datetime.datetime
     obligation: gap_ledger.MissingCallObligation
 
     def __post_init__(self) -> None:
-        if isinstance(self.source_order, bool):
-            message = "source_order must be an integer"
-            raise TypeError(message)
-        if self.source_order < 0:
-            message = "source_order must be nonnegative"
-            raise ValueError(message)
         if not self.audio_url:
             message = "audio_url must be nonempty"
             raise ValueError(message)
@@ -183,15 +172,10 @@ class ScheduledCohortPayload:
         if len(set(urls)) != len(urls):
             message = "producer must deduplicate exact URLs before construction"
             raise ValueError(message)
-        orders = tuple(entry.source_order for entry in self.entries)
-        if orders != tuple(sorted(orders)) or len(set(orders)) != len(orders):
-            message = "entries must preserve distinct provider source order"
-            raise ValueError(message)
         ledgers = tuple(
             gap_ledger._validate_scheduled_entry(  # noqa: SLF001
                 entry.obligation,
                 member=self.member,
-                source_order=entry.source_order,
                 audio_url=entry.audio_url,
                 provider_ts=_normalized_provider_timestamp(entry.raw_call),
             )
@@ -212,18 +196,13 @@ class ScheduledCohortPayload:
 
     def settlement_observer(
         self,
-        source_order: int,
+        entry: ScheduledCohortEntry,
     ) -> Callable[[feed_work_scheduler.CallSettlement], None]:
         """Return the exact record-bound known-release observer."""
-        matching = tuple(
-            entry
-            for entry in self.entries
-            if entry.source_order == source_order
-        )
-        if len(matching) != 1:
-            message = "source_order does not identify one payload entry"
+        if not any(candidate is entry for candidate in self.entries):
+            message = "entry is not owned by this payload"
             raise feed_work_scheduler.CohortIntegrityError(message)
-        obligation = matching[0].obligation
+        obligation = entry.obligation
         ledger = gap_ledger._owner_for(obligation)  # noqa: SLF001
 
         def observe(settlement: feed_work_scheduler.CallSettlement) -> None:
@@ -555,19 +534,6 @@ type _PublishOperation = Callable[
 ]
 type _CreateChunkOperation = Callable[..., Awaitable[object]]
 type _ControlGateOperation = Callable[[ControlGate, int], Awaitable[None]]
-type _CohortExecutionResult = (
-    feed_work_scheduler.CallCompleted
-    | feed_work_scheduler.CallFinalClosurePending
-    | feed_work_scheduler.CallReplayableDirectFailure
-    | feed_work_scheduler.CallRetryable
-    | feed_work_scheduler.CallStopped
-    | feed_work_scheduler.CallAuthorityLost
-    | feed_work_scheduler.CallMembershipRejected
-    | feed_work_scheduler.CallIntegrityFailure
-    | feed_work_scheduler.CallOutcomeUnknown
-)
-
-
 class BcfyCallsCohortExecutor:
     """Stage, commit, and sequentially publish one exact Feed cohort."""
 
@@ -616,7 +582,7 @@ class BcfyCallsCohortExecutor:
     async def execute(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         execution: feed_work_scheduler.CohortExecution,
-    ) -> _CohortExecutionResult:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         """Run the complete physical state machine for one exact cohort."""
         payload, states = self._validate_execution(execution)
         signal_outcome = self._precommit_signal_outcome(execution, states)
@@ -669,10 +635,9 @@ class BcfyCallsCohortExecutor:
                     return signal_outcome
                 raise
             except Exception as exc:
-                return self._integrity_outcome(execution, states, exc)
+                self._raise_integrity(states, exc)
             if type(result) is not bcfy_calls_collector._CallChunkResult:  # noqa: SLF001
-                return self._integrity_outcome(
-                    execution,
+                self._raise_integrity(
                     states,
                     RuntimeError("chunk operation returned malformed evidence"),
                 )
@@ -680,8 +645,7 @@ class BcfyCallsCohortExecutor:
             failure = getattr(result, "failure", None)
             if chunk is None:
                 if failure is None:
-                    return self._integrity_outcome(
-                        execution,
+                    self._raise_integrity(
                         states,
                         RuntimeError("chunk result omitted chunk and failure"),
                     )
@@ -697,8 +661,7 @@ class BcfyCallsCohortExecutor:
                 )
                 continue
             if failure is not None or not isinstance(chunk, CapturedChunk):
-                return self._integrity_outcome(
-                    execution,
+                self._raise_integrity(
                     states,
                     RuntimeError("chunk result carried contradictory evidence"),
                 )
@@ -726,8 +689,7 @@ class BcfyCallsCohortExecutor:
                     or staged_chunk.attempt_count
                     > self._settings.gcs_upload_max_retries + 1
                 ):
-                    return self._integrity_outcome(
-                        execution,
+                    self._raise_integrity(
                         states,
                         RuntimeError(
                             "stage operation returned malformed evidence"
@@ -757,7 +719,7 @@ class BcfyCallsCohortExecutor:
             except _GCS_RETRYABLE:
                 return self._replayable_upload_outcome(states, index)
             except Exception as exc:
-                return self._integrity_outcome(execution, states, exc)
+                self._raise_integrity(states, exc)
 
         signal_outcome = self._precommit_signal_outcome(execution, states)
         if signal_outcome is not None:
@@ -789,13 +751,11 @@ class BcfyCallsCohortExecutor:
                 failure,
                 runtime_adapters.BoundaryCommitNotStarted,
             ):
-                outcome = feed_work_scheduler.CallRetryable(
-                    self._replay_facts(
-                        states,
-                        feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
-                        feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
-                        participated=False,
-                    )
+                outcome = self._replay_facts(
+                    states,
+                    feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
+                    feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
+                    participated=False,
                 )
                 if cancellation is not None:
                     execution.cancellation_handoff.settle(outcome)
@@ -805,15 +765,16 @@ class BcfyCallsCohortExecutor:
                 failure,
                 runtime_adapters.BoundaryAdapterIntegrityError,
             ):
-                outcome = self._integrity_outcome(execution, states, failure)
                 if cancellation is not None:
+                    facts = self._integrity_facts(states)
                     self._retain_integrity(
                         execution,
-                        outcome,
+                        facts,
+                        failure,
                         feed_work_scheduler.OutcomeUnknownCause.COMMIT,
                     )
                     raise cancellation
-                return outcome
+                self._raise_integrity(states, failure)
             outcome = self._unknown_outcome(states)
             if cancellation is not None:
                 self._retain_unknown(
@@ -825,24 +786,26 @@ class BcfyCallsCohortExecutor:
             return outcome
 
         commit_result = commit_settlement.unwrap()
-        classified = self._classify_commit_result(
-            commit,
-            commit_result,
-            states,
-        )
+        try:
+            classified = self._classify_commit_result(
+                commit,
+                commit_result,
+                states,
+            )
+        except feed_work_scheduler.CohortIntegrityError as failure:
+            facts = self._integrity_facts(states)
+            if cancellation is not None:
+                self._retain_integrity(
+                    execution,
+                    facts,
+                    failure,
+                    feed_work_scheduler.OutcomeUnknownCause.COMMIT,
+                )
+                raise cancellation from failure
+            raise
         if classified is not _COMMIT_ACCEPTED:
             if cancellation is not None:
-                if isinstance(
-                    classified,
-                    feed_work_scheduler.CallIntegrityFailure,
-                ):
-                    self._retain_integrity(
-                        execution,
-                        classified,
-                        feed_work_scheduler.OutcomeUnknownCause.COMMIT,
-                    )
-                else:
-                    execution.cancellation_handoff.settle(classified)
+                execution.cancellation_handoff.settle(classified)
                 raise cancellation
             return classified
 
@@ -899,7 +862,7 @@ class BcfyCallsCohortExecutor:
                 return self._unknown_outcome(states)
 
             if type(publication) is not CommittedAwaitableSettlement:
-                return self._integrity_value(
+                self._raise_integrity(
                     states,
                     RuntimeError(
                         "publication returned malformed settlement evidence"
@@ -914,20 +877,19 @@ class BcfyCallsCohortExecutor:
                     or published.attempt_count
                     > self._settings.pubsub_publish_max_retries + 1
                 ):
-                    outcome = self._integrity_value(
-                        states,
-                        RuntimeError(
-                            "publication returned malformed result evidence"
-                        ),
+                    failure = RuntimeError(
+                        "publication returned malformed result evidence"
                     )
                     if publication_cancel is not None:
+                        facts = self._integrity_facts(states)
                         self._retain_integrity(
                             execution,
-                            outcome,
+                            facts,
+                            failure,
                             feed_work_scheduler.OutcomeUnknownCause.PUBLICATION,
                         )
                         raise publication_cancel
-                    return outcome
+                    self._raise_integrity(states, failure)
                 state.publication_reason = (
                     feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
                 )
@@ -972,11 +934,9 @@ class BcfyCallsCohortExecutor:
                     execution.signals.grant_lost.is_set()
                     and self._has_abandonment(states)
                 ):
-                    outcome = feed_work_scheduler.CallAuthorityLost(
-                        self._durable_facts(
-                            states,
-                            feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
-                        )
+                    outcome = self._durable_facts(
+                        states,
+                        feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
                     )
                 else:
                     outcome = self._completed_outcome(states)
@@ -1036,14 +996,9 @@ class BcfyCallsCohortExecutor:
         if first.cohort_timestamp is None and len(identities) != 1:
             message = "missing-timestamp cohort must be a singleton"
             raise feed_work_scheduler.CohortIntegrityError(message)
-        source_orders = tuple(identity.source_order for identity in identities)
         local_sequences = tuple(
             identity.local_sequence for identity in identities
         )
-        expected_orders = tuple(entry.source_order for entry in payload.entries)
-        if source_orders != expected_orders:
-            message = "record and provider source order disagree"
-            raise feed_work_scheduler.CohortIntegrityError(message)
         if local_sequences != tuple(sorted(local_sequences)) or len(
             set(local_sequences)
         ) != len(local_sequences):
@@ -1098,26 +1053,18 @@ class BcfyCallsCohortExecutor:
         self,
         execution: feed_work_scheduler.CohortExecution,
         states: list[_RecordState],
-    ) -> (
-        feed_work_scheduler.CallAuthorityLost
-        | feed_work_scheduler.CallStopped
-        | None
-    ):
+    ) -> feed_work_scheduler.CohortTerminalFacts | None:
         if execution.signals.grant_lost.is_set():
-            return feed_work_scheduler.CallAuthorityLost(
-                self._replay_facts(
-                    states,
-                    feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
-                    feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
-                )
+            return self._replay_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
+                feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
             )
         if execution.signals.stop_requested.is_set():
-            return feed_work_scheduler.CallStopped(
-                self._replay_facts(
-                    states,
-                    feed_work_scheduler.CohortTerminalDisposition.STOPPED,
-                    feed_work_scheduler.CohortRecordTerminalReason.STOPPED,
-                )
+            return self._replay_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.STOPPED,
+                feed_work_scheduler.CohortRecordTerminalReason.STOPPED,
             )
         return None
 
@@ -1125,28 +1072,20 @@ class BcfyCallsCohortExecutor:
         self,
         execution: feed_work_scheduler.CohortExecution,
         states: list[_RecordState],
-    ) -> (
-        feed_work_scheduler.CallAuthorityLost
-        | feed_work_scheduler.CallStopped
-        | None
-    ):
+    ) -> feed_work_scheduler.CohortTerminalFacts | None:
         if not self._has_unpublished(states):
             return None
         if execution.signals.grant_lost.is_set():
             self._abandon_unpublished(states)
-            return feed_work_scheduler.CallAuthorityLost(
-                self._durable_facts(
-                    states,
-                    feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
-                )
+            return self._durable_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
             )
         if execution.signals.stop_requested.is_set():
             self._abandon_unpublished(states)
-            return feed_work_scheduler.CallStopped(
-                self._durable_facts(
-                    states,
-                    feed_work_scheduler.CohortTerminalDisposition.STOPPED,
-                )
+            return self._durable_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.STOPPED,
             )
         return None
 
@@ -1216,7 +1155,7 @@ class BcfyCallsCohortExecutor:
         )
         return any(state.publication_reason is abandoned for state in states)
 
-    def _classify_commit_result(  # noqa: PLR0911
+    def _classify_commit_result(
         self,
         commit: runtime_adapters.PhysicalCohortCommit,
         result: object,
@@ -1224,12 +1163,8 @@ class BcfyCallsCohortExecutor:
     ) -> _CommitClassification:
         if type(result) is runtime_adapters.PhysicalCohortResult:
             if result.commit is not commit:
-                return self._integrity_value(
-                    states,
-                    RuntimeError(
-                        "commit result did not retain submitted identity"
-                    ),
-                )
+                message = "commit result did not retain submitted identity"
+                raise feed_work_scheduler.CohortIntegrityError(message)
             if (
                 result.disposition
                 is feed_work_scheduler.BoundaryDisposition.COMMITTED
@@ -1239,54 +1174,42 @@ class BcfyCallsCohortExecutor:
                 result.disposition
                 is feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED
             ):
-                return feed_work_scheduler.CallMembershipRejected(
-                    self._replay_facts(
-                        states,
-                        feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED,
-                        feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED,
-                    )
-                )
-            return self._integrity_value(
-                states,
-                RuntimeError("commit returned unsupported disposition"),
-            )
-        if type(result) is feed_work_scheduler.BoundaryGrantRejected:
-            return feed_work_scheduler.CallAuthorityLost(
-                self._replay_facts(
+                return self._replay_facts(
                     states,
-                    feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
-                    feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
+                    feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED,
+                    feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED,
                 )
+            message = "commit returned unsupported disposition"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        if type(result) is feed_work_scheduler.BoundaryGrantRejected:
+            return self._replay_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
+                feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
             )
         if type(result) is feed_work_scheduler.BoundaryBatchRetryable:
-            return feed_work_scheduler.CallRetryable(
-                self._replay_facts(
-                    states,
-                    feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
-                    feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
-                    participated=False,
-                )
+            return self._replay_facts(
+                states,
+                feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
+                feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
+                participated=False,
             )
-        return self._integrity_value(
-            states,
-            RuntimeError("committer returned malformed or forged evidence"),
-        )
+        message = "committer returned malformed or forged evidence"
+        raise feed_work_scheduler.CohortIntegrityError(message)
 
     def _completed_outcome(
         self,
         states: list[_RecordState],
-    ) -> feed_work_scheduler.CallCompleted:
-        return feed_work_scheduler.CallCompleted(
-            self._durable_facts(
-                states,
-                feed_work_scheduler.CohortTerminalDisposition.SETTLED,
-            )
+    ) -> feed_work_scheduler.CohortTerminalFacts:
+        return self._durable_facts(
+            states,
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
         )
 
     def _final_pending_outcome(
         self,
         states: list[_RecordState],
-    ) -> feed_work_scheduler.CallFinalClosurePending:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         records = tuple(
             feed_work_scheduler.CohortRecordTerminalFact(
                 state.call.identity,
@@ -1298,11 +1221,9 @@ class BcfyCallsCohortExecutor:
             )
             for state in states
         )
-        return feed_work_scheduler.CallFinalClosurePending(
-            feed_work_scheduler.CohortTerminalFacts(
-                records,
-                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
-            )
+        return feed_work_scheduler.CohortTerminalFacts(
+            records,
+            feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
         )
 
     def _durable_facts(
@@ -1342,7 +1263,7 @@ class BcfyCallsCohortExecutor:
         self,
         states: list[_RecordState],
         failed_index: int,
-    ) -> feed_work_scheduler.CallReplayableDirectFailure:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         direct = feed_work_scheduler.CohortDirectFailureFact(
             feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             "gcs_upload_failed",
@@ -1364,11 +1285,9 @@ class BcfyCallsCohortExecutor:
                     direct_failure=direct if failed else None,
                 )
             )
-        return feed_work_scheduler.CallReplayableDirectFailure(
-            feed_work_scheduler.CohortTerminalFacts(
-                tuple(records),
-                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT,
-            )
+        return feed_work_scheduler.CohortTerminalFacts(
+            tuple(records),
+            feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT,
         )
 
     @staticmethod
@@ -1397,39 +1316,36 @@ class BcfyCallsCohortExecutor:
             disposition,
         )
 
-    def _integrity_outcome(
+    def _raise_integrity(
         self,
-        execution: feed_work_scheduler.CohortExecution,
         states: list[_RecordState],
         failure: BaseException,
-    ) -> feed_work_scheduler.CallIntegrityFailure:
-        del execution
-        return self._integrity_value(states, failure)
+    ) -> typing.Never:
+        self._integrity_facts(states)
+        message = "cohort executor produced invalid integrity evidence"
+        raise feed_work_scheduler.CohortIntegrityError(message) from failure
 
-    def _integrity_value(
+    def _integrity_facts(
         self,
         states: list[_RecordState],
-        failure: BaseException,
-    ) -> feed_work_scheduler.CallIntegrityFailure:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         self._retain_unknown_states(states)
-        facts = self._unknown_facts(
+        return self._unknown_facts(
             states,
             feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE,
             feed_work_scheduler.CohortRecordTerminalReason.INTEGRITY_FAILURE,
         )
-        return feed_work_scheduler.CallIntegrityFailure(facts, failure)
 
     def _unknown_outcome(
         self,
         states: list[_RecordState],
-    ) -> feed_work_scheduler.CallOutcomeUnknown:
+    ) -> feed_work_scheduler.CohortTerminalFacts:
         self._retain_unknown_states(states)
-        facts = self._unknown_facts(
+        return self._unknown_facts(
             states,
             feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN,
             feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN,
         )
-        return feed_work_scheduler.CallOutcomeUnknown(facts)
 
     @staticmethod
     def _unknown_facts(
@@ -1454,26 +1370,27 @@ class BcfyCallsCohortExecutor:
     @staticmethod
     def _retain_unknown(
         execution: feed_work_scheduler.CohortExecution,
-        outcome: feed_work_scheduler.CallOutcomeUnknown,
+        facts: feed_work_scheduler.CohortTerminalFacts,
         cause: feed_work_scheduler.OutcomeUnknownCause,
     ) -> None:
         execution.retention.retain(
             feed_work_scheduler.OutcomeUnknownRetentionRequest(
                 cause,
-                outcome.facts,
+                facts,
             )
         )
 
     @staticmethod
     def _retain_integrity(
         execution: feed_work_scheduler.CohortExecution,
-        outcome: feed_work_scheduler.CallIntegrityFailure,
+        facts: feed_work_scheduler.CohortTerminalFacts,
+        failure: BaseException,
         cause: feed_work_scheduler.OutcomeUnknownCause,
     ) -> None:
         execution.retention.retain(
             feed_work_scheduler.OutcomeUnknownRetentionRequest(
                 cause,
-                outcome.facts,
-                outcome.failure,
+                facts,
+                failure,
             )
         )

@@ -151,7 +151,6 @@ def _record_identity(
         page_sequence=0,
         feed_id=member.feed_id,
         cohort_timestamp=cohort_timestamp,
-        source_order=source_order,
         local_sequence=source_order,
     )
 

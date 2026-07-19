@@ -140,7 +140,6 @@ class CohortRecordIdentity:
     page_sequence: int
     feed_id: uuid.UUID
     cohort_timestamp: datetime.datetime | None
-    source_order: int
     local_sequence: int
 
     def __post_init__(self) -> None:
@@ -148,7 +147,6 @@ class CohortRecordIdentity:
             message = "member Feed does not match record Feed"
             raise ValueError(message)
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
-        _require_nonnegative_integer(self.source_order, "source_order")
         _require_nonnegative_integer(self.local_sequence, "local_sequence")
         _require_utc_timestamp(self.cohort_timestamp, "cohort_timestamp")
 
@@ -354,12 +352,11 @@ class BoundaryCommitter(typing.Protocol):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
-    """One source-order call submission before local shard registration."""
+    """One call submission before local shard registration."""
 
     feed_id: uuid.UUID
     grant: ingestion_lease_store.LeaseGrant
     member: ingestion_lease_store.LeaseMemberIdentity
-    source_order: int
     cohort_timestamp: datetime.datetime | None
     payload: object
     page_sequence: int
@@ -369,7 +366,6 @@ class _CallWork:
         if self.member.feed_id != self.feed_id:
             message = "member Feed does not match work Feed"
             raise ValueError(message)
-        _require_nonnegative_integer(self.source_order, "source_order")
         _require_utc_timestamp(self.cohort_timestamp, "cohort_timestamp")
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
 
@@ -388,7 +384,6 @@ class _CallRecord:
             self.work.page_sequence,
             self.work.feed_id,
             self.work.cohort_timestamp,
-            self.work.source_order,
         )
         actual = (
             self.identity.grant,
@@ -396,7 +391,6 @@ class _CallRecord:
             self.identity.page_sequence,
             self.identity.feed_id,
             self.identity.cohort_timestamp,
-            self.identity.source_order,
         )
         if actual != expected or self.identity.member is not self.work.member:
             message = "record identity does not match predecessor work"
@@ -429,9 +423,11 @@ class _CohortControl:
     identities: tuple[CohortRecordIdentity, ...]
     active: bool = False
     retention_request: OutcomeUnknownRetentionRequest | None = None
-    known_handoff: object | None = None
+    known_handoff: CohortTerminalFacts | None = None
     integrity_failure: BaseException | None = None
-    retained_outcome: object | None = None
+    retained_outcome: (
+        CohortTerminalFacts | OutcomeUnknownRetentionRequest | None
+    ) = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -499,11 +495,9 @@ class _BoundaryInput:
 
     boundary: BoundaryWork
     grant: ingestion_lease_store.LeaseGrant
-    source_order: int
     page_sequence: int
 
     def __post_init__(self) -> None:
-        _require_nonnegative_integer(self.source_order, "source_order")
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
 
 
@@ -514,8 +508,6 @@ class _BoundaryRecord:
     grant: ingestion_lease_store.LeaseGrant
     member: ingestion_lease_store.LeaseMemberIdentity
     local_sequence: int
-    source_order: int
-    created_page_sequence: int
     target: datetime.datetime
     stable_target: datetime.datetime | None
     provisional_page_sequence: int | None
@@ -720,16 +712,90 @@ class CohortTerminalFacts:
         if len(set(identities)) != len(identities):
             message = "terminal facts contain duplicate record identities"
             raise CohortIntegrityError(message)
-        if tuple(identity.source_order for identity in identities) != tuple(
-            sorted(identity.source_order for identity in identities)
-        ):
-            message = "terminal facts are not in source order"
-            raise CohortIntegrityError(message)
         if tuple(identity.local_sequence for identity in identities) != tuple(
             sorted(identity.local_sequence for identity in identities)
         ):
             message = "terminal facts are not in local-sequence order"
             raise CohortIntegrityError(message)
+        self._validate_disposition()
+
+    def _validate_disposition(self) -> None:  # noqa: PLR0911, PLR0912
+        if self.disposition is CohortTerminalDisposition.SETTLED:
+            if any(
+                record.closure_state
+                is not CohortRecordClosureState.DURABLY_CLOSED
+                for record in self.records
+            ):
+                message = "settled facts require durable closure"
+                raise CohortIntegrityError(message)
+            return
+        if self.disposition is CohortTerminalDisposition.FINAL_CLOSURE_PENDING:
+            states = {record.closure_state for record in self.records}
+            if (
+                CohortRecordClosureState.FINAL_CLOSURE_PENDING not in states
+                or not states
+                <= {
+                    CohortRecordClosureState.DURABLY_CLOSED,
+                    CohortRecordClosureState.FINAL_CLOSURE_PENDING,
+                }
+            ):
+                message = "final-pending facts have invalid closure states"
+                raise CohortIntegrityError(message)
+            return
+        if self.disposition is CohortTerminalDisposition.REPLAYABLE_DIRECT:
+            _require_all_replay_safe(self)
+            if not any(
+                record.terminal_reason
+                is CohortRecordTerminalReason.REPLAYABLE_DIRECT
+                for record in self.records
+            ):
+                message = "replayable facts lack direct failure evidence"
+                raise CohortIntegrityError(message)
+            return
+        if self.disposition is CohortTerminalDisposition.RETRYABLE:
+            _require_all_replay_safe(self)
+            if any(
+                record.terminal_reason
+                is not CohortRecordTerminalReason.RETRYABLE
+                or record.participated
+                for record in self.records
+            ):
+                message = "retryable facts lack definitive precommit proof"
+                raise CohortIntegrityError(message)
+            return
+        if self.disposition is CohortTerminalDisposition.STOPPED:
+            _require_abort_mix(self, CohortRecordTerminalReason.STOPPED)
+            return
+        if self.disposition is CohortTerminalDisposition.AUTHORITY_LOST:
+            _require_abort_mix(
+                self,
+                CohortRecordTerminalReason.AUTHORITY_LOST,
+            )
+            return
+        if self.disposition is CohortTerminalDisposition.MEMBERSHIP_REJECTED:
+            _require_all_replay_safe(self)
+            if any(
+                record.terminal_reason
+                is not CohortRecordTerminalReason.MEMBERSHIP_REJECTED
+                for record in self.records
+            ):
+                message = "membership facts contain another reason"
+                raise CohortIntegrityError(message)
+            return
+        if self.disposition is CohortTerminalDisposition.INTEGRITY_FAILURE:
+            _require_all_unknown(
+                self,
+                CohortRecordTerminalReason.INTEGRITY_FAILURE,
+            )
+            return
+        if self.disposition is CohortTerminalDisposition.OUTCOME_UNKNOWN:
+            _require_all_unknown(
+                self,
+                CohortRecordTerminalReason.OUTCOME_UNKNOWN,
+            )
+            return
+        message = "terminal facts carry an unsupported disposition"
+        raise CohortIntegrityError(message)
 
     @property
     def identities(self) -> tuple[CohortRecordIdentity, ...]:
@@ -909,7 +975,6 @@ class PageFinalizationContext:
             order.append(
                 (
                     first.feed_id.int,
-                    first.source_order,
                     first.local_sequence,
                 )
             )
@@ -1389,191 +1454,6 @@ class CohortExecution:
             raise CohortIntegrityError(message)
 
 
-def _require_outcome_facts(
-    facts: CohortTerminalFacts,
-    disposition: CohortTerminalDisposition,
-) -> CohortTerminalFacts:
-    if facts.disposition is not disposition:
-        message = "outcome and terminal disposition disagree"
-        raise CohortIntegrityError(message)
-    return facts
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallCompleted:
-    """Every record is structurally settled and durably closed."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.SETTLED,
-        )
-        if any(
-            record.closure_state is not CohortRecordClosureState.DURABLY_CLOSED
-            for record in facts.records
-        ):
-            message = "completed outcome requires durable closure"
-            raise CohortIntegrityError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallFinalClosurePending:
-    """At least one structurally settled record awaits source finalization."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
-        )
-        states = {record.closure_state for record in facts.records}
-        if (
-            CohortRecordClosureState.FINAL_CLOSURE_PENDING not in states
-            or not states
-            <= {
-                CohortRecordClosureState.DURABLY_CLOSED,
-                CohortRecordClosureState.FINAL_CLOSURE_PENDING,
-            }
-        ):
-            message = "final-pending outcome has invalid closure states"
-            raise CohortIntegrityError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallReplayableDirectFailure:
-    """A definitive direct precommit failure replay-releases the cohort."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.REPLAYABLE_DIRECT,
-        )
-        _require_all_replay_safe(facts)
-        if not any(
-            record.terminal_reason
-            is CohortRecordTerminalReason.REPLAYABLE_DIRECT
-            for record in facts.records
-        ):
-            message = "replayable outcome lacks direct failure evidence"
-            raise CohortIntegrityError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallRetryable:
-    """Definitive no-start/precommit evidence replay-releases the cohort."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.RETRYABLE,
-        )
-        _require_all_replay_safe(facts)
-        if any(
-            record.terminal_reason is not CohortRecordTerminalReason.RETRYABLE
-            or record.participated
-            for record in facts.records
-        ):
-            message = "retryable outcome lacks definitive precommit proof"
-            raise CohortIntegrityError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallStopped:
-    """Graceful explicit stop with durable or replay-safe record facts."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.STOPPED,
-        )
-        _require_abort_mix(facts, CohortRecordTerminalReason.STOPPED)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallAuthorityLost:
-    """Confirmed complete-grant loss with exact terminal facts."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.AUTHORITY_LOST,
-        )
-        _require_abort_mix(
-            facts,
-            CohortRecordTerminalReason.AUTHORITY_LOST,
-        )
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallMembershipRejected:
-    """Exact member rejection replay-releases only its cohort."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.MEMBERSHIP_REJECTED,
-        )
-        _require_all_replay_safe(facts)
-        if any(
-            record.terminal_reason
-            is not CohortRecordTerminalReason.MEMBERSHIP_REJECTED
-            for record in facts.records
-        ):
-            message = "membership outcome contains another reason"
-            raise CohortIntegrityError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallIntegrityFailure:
-    """Malformed evidence retains this cohort with integrity disposition."""
-
-    facts: CohortTerminalFacts
-    failure: BaseException
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.INTEGRITY_FAILURE,
-        )
-        _require_all_unknown(
-            facts,
-            CohortRecordTerminalReason.INTEGRITY_FAILURE,
-        )
-        if not isinstance(self.failure, BaseException):
-            message = "failure must be a BaseException"
-            raise TypeError(message)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CallOutcomeUnknown:
-    """External commit/publication outcome is unknown and retained."""
-
-    facts: CohortTerminalFacts
-
-    def __post_init__(self) -> None:
-        facts = _require_outcome_facts(
-            self.facts,
-            CohortTerminalDisposition.OUTCOME_UNKNOWN,
-        )
-        _require_all_unknown(
-            facts,
-            CohortRecordTerminalReason.OUTCOME_UNKNOWN,
-        )
-
-
 def _require_all_replay_safe(facts: CohortTerminalFacts) -> None:
     if any(
         record.closure_state is not CohortRecordClosureState.REPLAY_SAFE_RELEASE
@@ -1653,113 +1533,18 @@ class Undrained:
     reason: LaneCloseReason
 
 
-_ExecutorCompleted = CallCompleted
-_ExecutorFinalClosurePending = CallFinalClosurePending
-_ExecutorReplayableDirectFailure = CallReplayableDirectFailure
-_ExecutorRetryable = CallRetryable
-_ExecutorStopped = CallStopped
-_ExecutorAuthorityLost = CallAuthorityLost
-_ExecutorMembershipRejected = CallMembershipRejected
-_ExecutorIntegrityFailure = CallIntegrityFailure
-_ExecutorOutcomeUnknown = CallOutcomeUnknown
-
-
-type _ExecutorOutcome = (
-    CallCompleted
-    | CallFinalClosurePending
-    | CallReplayableDirectFailure
-    | CallRetryable
-    | CallStopped
-    | CallAuthorityLost
-    | CallMembershipRejected
-    | CallIntegrityFailure
-    | CallOutcomeUnknown
-)
-
-
 class CallExecutor(typing.Protocol):
     """Narrow injected seam awaited only by an unlocked fixed worker."""
 
-    async def execute(self, execution: CohortExecution) -> _ExecutorOutcome:
-        """Settle one already-registered cohort through a closed outcome."""
+    async def execute(self, execution: CohortExecution) -> CohortTerminalFacts:
+        """Settle one already-registered cohort through exact terminal facts."""
         ...
 
 
 class _RecordState(enum.StrEnum):
     """Counted locations in the shard conservation equation."""
 
-    QUEUED = "queued"
-    ACTIVE = "active"
     FINAL_CLOSURE_PENDING = "final_closure_pending"
     OUTCOME_UNKNOWN = "outcome_unknown"
     PENDING_BOUNDARY = "pending_boundary"
     FLUSHING_BOUNDARY = "flushing_boundary"
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _RecordSnapshot:
-    """Payload-free bounded identity for one counted call record."""
-
-    local_sequence: int
-    feed_id: uuid.UUID
-    grant: ingestion_lease_store.LeaseGrant
-    source_order: int
-    page_sequence: int
-    state: _RecordState
-    worker_slot: int | None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _BoundarySnapshot:
-    """Payload-free projection of one counted boundary record."""
-
-    local_sequence: int
-    feed_id: uuid.UUID
-    grant: ingestion_lease_store.LeaseGrant
-    source_order: int
-    created_page_sequence: int
-    target: datetime.datetime
-    stable_target: datetime.datetime | None
-    provisional_page_sequence: int | None
-    provisional_count: int
-    state: _RecordState
-    retry_suspended: bool
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _WorkerSnapshot:
-    """Bounded ownership evidence for one fixed worker slot."""
-
-    slot_id: int
-    task_registered: bool
-    task_done: bool
-    active_sequence: int | None
-    cancellation_sequence: int | None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ShardSnapshot:
-    """Read-only bounded projection of authoritative shard state."""
-
-    held: int
-    queued_calls: int
-    active_calls: int
-    pending_boundaries: int
-    flushing_boundaries: int
-    pressure_paused: bool
-    ready_feeds: tuple[uuid.UUID, ...]
-    ready_members: frozenset[uuid.UUID]
-    active_feeds: frozenset[uuid.UUID]
-    records: tuple[_RecordSnapshot, ...]
-    boundaries: tuple[_BoundarySnapshot, ...]
-    workers: tuple[_WorkerSnapshot, ...]
-    admission_open: bool
-    fatal: bool
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PurgeResult:
-    """Exact bounded-scan result without retaining completed outcomes."""
-
-    released_sequences: tuple[int, ...]
-    active_sequences: tuple[int, ...]

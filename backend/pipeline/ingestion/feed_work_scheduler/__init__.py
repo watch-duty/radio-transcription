@@ -2,17 +2,8 @@
 
 from backend.pipeline.ingestion.feed_work_scheduler import _scheduler, _types
 
-CallAuthorityLost = _types.CallAuthorityLost
-CallCompleted = _types.CallCompleted
 CallExecution = _types.CallExecution
-CallFinalClosurePending = _types.CallFinalClosurePending
-CallIntegrityFailure = _types.CallIntegrityFailure
-CallMembershipRejected = _types.CallMembershipRejected
-CallOutcomeUnknown = _types.CallOutcomeUnknown
-CallReplayableDirectFailure = _types.CallReplayableDirectFailure
-CallRetryable = _types.CallRetryable
 CallSettlement = _types.CallSettlement
-CallStopped = _types.CallStopped
 CallSubmission = _types.CallSubmission
 CohortCancellationHandoff = _types.CohortCancellationHandoff
 CohortDirectFailureFact = _types.CohortDirectFailureFact
@@ -62,17 +53,8 @@ __all__ = [
     "BoundaryGrantRejected",
     "BoundaryResult",
     "BoundaryWork",
-    "CallAuthorityLost",
-    "CallCompleted",
     "CallExecution",
-    "CallFinalClosurePending",
-    "CallIntegrityFailure",
-    "CallMembershipRejected",
-    "CallOutcomeUnknown",
-    "CallReplayableDirectFailure",
-    "CallRetryable",
     "CallSettlement",
-    "CallStopped",
     "CallSubmission",
     "CohortCancellationHandoff",
     "CohortDirectFailureFact",

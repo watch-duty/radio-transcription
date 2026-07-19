@@ -242,7 +242,6 @@ type _Wait = collections.abc.Callable[
 class _ValidatedCall:
     """One independently validated provider item before route filters."""
 
-    source_order: int
     state: _MemberState
     audio_url: str
     source_timestamp: datetime.datetime | None
@@ -1425,9 +1424,8 @@ class BcfyCallsSidProcessor:
             frozen_routes: Optional immutable routing snapshot for this fetch.
 
         Returns:
-            One page ledger and deterministic per-Feed cohort stream. Cohort
-            first-seen order is defined by the existing ``(ts, source_order)``
-            sorted stream, preserving chronological Feed execution.
+            One page ledger and deterministic per-Feed cohort stream. Calls
+            are sorted by timestamp while preserving provider order for ties.
 
         Raises:
             TypeError: The candidate is outside the closed cursor vocabulary.
@@ -1448,23 +1446,20 @@ class BcfyCallsSidProcessor:
             else frozen_routes
         )
         validated: list[_ValidatedCall] = []
-        for source_order, raw_call in enumerate(raw_calls):
+        for raw_call in raw_calls:
             item = self._validate_call(
-                source_order,
                 raw_call,
                 page_routes,
             )
             if item is not None:
                 validated.append(item)
-        validated.sort(
-            key=lambda item: (item.sort_timestamp, item.source_order)
-        )
+        validated.sort(key=lambda item: item.sort_timestamp)
         ledger = gap_ledger.MissingCallLedger(
             self._grant,
             candidate.page_sequence,
         )
         grouped: dict[
-            tuple[uuid.UUID, datetime.datetime | None, int | None],
+            tuple[uuid.UUID, datetime.datetime | None, str | None],
             list[_ValidatedCall],
         ] = {}
         seen_urls: set[str] = set()
@@ -1491,7 +1486,7 @@ class BcfyCallsSidProcessor:
                 continue
             seen_urls.add(item.audio_url)
             singleton = (
-                item.source_order if item.source_timestamp is None else None
+                item.audio_url if item.source_timestamp is None else None
             )
             key = (state.feed_id, item.source_timestamp, singleton)
             grouped.setdefault(key, []).append(item)
@@ -1499,21 +1494,16 @@ class BcfyCallsSidProcessor:
         cohorts = []
         page_entries = []
         entry_feed_ids = []
-        next_source_order = 0
         for items in grouped.values():
             state = items[0].state
             entries = []
             for item in items:
-                source_order = next_source_order
-                next_source_order += 1
                 obligation = ledger.draft(
                     state.member,
                     audio_url=item.audio_url,
                     provider_ts=item.source_timestamp,
-                    source_order=source_order,
                 )
                 entry = cohort_pipeline.ScheduledCohortEntry(
-                    source_order=source_order,
                     audio_url=item.audio_url,
                     raw_call=item.raw_call,
                     receipt_time=_require_utc_datetime(
@@ -1567,7 +1557,6 @@ class BcfyCallsSidProcessor:
 
     def _validate_call(  # noqa: PLR0911
         self,
-        source_order: int,
         raw_call: object,
         frozen_routes: collections.abc.Mapping[str, _MemberState],
     ) -> _ValidatedCall | None:
@@ -1614,7 +1603,6 @@ class BcfyCallsSidProcessor:
             sort_timestamp = float(timestamp_value)
 
         return _ValidatedCall(
-            source_order=source_order,
             state=state,
             audio_url=audio_url,
             source_timestamp=source_timestamp,
@@ -1630,7 +1618,7 @@ class BcfyCallsSidProcessor:
     ) -> collections.abc.Callable[[feed_work_scheduler.CallSettlement], None]:
         """Pair the exact ledger release with grant-local URL state."""
         ledger = gap_ledger._owner_for(entry.obligation)  # noqa: SLF001
-        ledger_observer = payload.settlement_observer(entry.source_order)
+        ledger_observer = payload.settlement_observer(entry)
         audio_url = entry.audio_url
 
         def observe(settlement: feed_work_scheduler.CallSettlement) -> None:
