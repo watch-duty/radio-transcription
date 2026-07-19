@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable  # noqa: TC003 - runtime type hints
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 if TYPE_CHECKING:
-    import uuid
-
     from backend.pipeline.ingestion.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)
@@ -21,8 +20,8 @@ class HealthState:
     Shared state between the worker runtime and the /healthz handler.
 
     Lives on the event-loop thread; all reads/writes happen there, so no lock
-    is required. ``feed_tasks`` is held by reference to the runtime's own
-    ``_feed_tasks`` dict so ``len()`` reflects live leasing without copying.
+    is required. The active-count provider reads process-local supervisor
+    state and performs no request-time control or database I/O.
 
     ``last_heartbeat_tick`` is stamped at the *beginning* of every
     ``_heartbeat_cycle`` invocation — before any DB I/O — so the stamp
@@ -33,12 +32,23 @@ class HealthState:
     on recovery).
     """
 
+    active_feed_count: Callable[[], int]
     startup_time: float = field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
-    # Value type is Any because the handler only calls len() on this — it
-    # doesn't inspect values. Using Any avoids a dict-invariance mismatch
-    # when the runtime passes its dict[UUID, asyncio.Task] by reference.
-    feed_tasks: dict[uuid.UUID, Any] = field(default_factory=dict)
+
+
+def _response_payload(
+    state: HealthState,
+    *,
+    status: str,
+    heartbeat_age_sec: float | None,
+) -> dict[str, object]:
+    """Build the stable health response from process-local state."""
+    return {
+        "status": status,
+        "active_feeds": state.active_feed_count(),
+        "last_heartbeat_age_sec": heartbeat_age_sec,
+    }
 
 
 # Typed aiohttp app keys (the recommended pattern since aiohttp 3.9).
@@ -62,13 +72,11 @@ async def _healthz(request: web.Request) -> web.Response:
     # unnecessarily tear down the VM.
     if uptime < settings.health_check_startup_grace_sec:
         return web.json_response(
-            {
-                "status": "healthy",
-                "active_feeds": len(state.feed_tasks),
-                "last_heartbeat_age_sec": (now - hb)
-                if hb is not None
-                else None,
-            },
+            _response_payload(
+                state,
+                status="healthy",
+                heartbeat_age_sec=(now - hb) if hb is not None else None,
+            )
         )
 
     # Gate 1: Heartbeat dispatch freshness. Threshold = 2x
@@ -102,11 +110,11 @@ async def _healthz(request: web.Request) -> web.Response:
     # restart); /healthz is not the right place to detect that.
 
     return web.json_response(
-        {
-            "status": "healthy",
-            "active_feeds": len(state.feed_tasks),
-            "last_heartbeat_age_sec": hb_age,
-        },
+        _response_payload(
+            state,
+            status="healthy",
+            heartbeat_age_sec=hb_age,
+        )
     )
 
 

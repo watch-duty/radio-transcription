@@ -2,6 +2,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from backend.pipeline.ingestion import grant_control, worker_profiles
 from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -188,27 +189,100 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
         self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
 
-    def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
-        """Allows zero/negative values because parsing does not enforce ranges."""
+    def test_calls_authority_and_work_defaults(self) -> None:
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(
+            settings.bcfy_calls_authority_mode,
+            worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
+        )
+        self.assertEqual(
+            set(settings.feed_claim_caps),
+            set(settings.caps),
+        )
+        self.assertEqual(settings.worker_profile.name, "mixed-dormant")
+        self.assertEqual(settings.bcfy_calls_work_concurrency, 16)
+        self.assertEqual(settings.bcfy_calls_work_queue_capacity, 32)
+
+    def test_sid_runtime_settings_from_environment(self) -> None:
         env = {
             **_required_env(),
-            "MAX_FEEDS_PER_WORKER": "0",
-            "LEASE_POLL_INTERVAL_SEC": "0.0",
-            "HEARTBEAT_INTERVAL_SEC": "-1.0",
-            "ALLOYDB_POOL_MIN_SIZE": "0",
-            "ALLOYDB_POOL_MAX_SIZE": "-2",
-            "ABANDONMENT_WINDOW_SEC": "-0.5",
+            "MAX_SIDS_PER_WORKER": "19",
+            "SID_LEASE_ADMISSION_CYCLE_BUDGET": "3",
+            "BCFY_CALLS_WORK_CONCURRENCY": "12",
         }
 
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.max_feeds_per_worker, 0)
-        self.assertEqual(settings.lease_poll_interval_sec, 0.0)
-        self.assertEqual(settings.heartbeat_interval_sec, -1.0)
-        self.assertEqual(settings.db.pool_min_size, 0)
-        self.assertEqual(settings.db.pool_max_size, -2)
-        self.assertEqual(settings.abandonment_window_sec, -0.5)
+        self.assertEqual(settings.bcfy_calls_work_concurrency, 12)
+        self.assertEqual(settings.bcfy_calls_work_queue_capacity, 24)
+        sid = worker_profiles.allocation_for_domain(
+            settings.worker_profile,
+            grant_control.DomainId.SID,
+        )
+        self.assertIsNotNone(sid)
+        assert sid is not None
+        self.assertEqual(sid.owned_cap, 19)
+        self.assertEqual(sid.claims_per_cycle, 3)
+        self.assertFalse(sid.claims_enabled)
+
+    def test_sid_authority_removes_only_calls_from_feed_claims(self) -> None:
+        env = {
+            **_required_env(),
+            "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+            # Historical profile selectors cannot become a second authority
+            # switch. The topology is always mixed and the Calls flag alone
+            # selects which domain may claim Calls.
+            "WORKER_PROFILE": "sid-dormant",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(
+            set(settings.feed_claim_caps),
+            {
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            },
+        )
+        sid = worker_profiles.allocation_for_domain(
+            settings.worker_profile,
+            grant_control.DomainId.SID,
+        )
+        self.assertIsNotNone(sid)
+        assert sid is not None
+        self.assertTrue(sid.claims_enabled)
+        self.assertEqual(settings.worker_profile.name, "mixed-dormant")
+
+    def test_invalid_calls_authority_mode_fails_closed(self) -> None:
+        env = {
+            **_required_env(),
+            "BCFY_CALLS_AUTHORITY_MODE": "both",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            self.assertRaisesRegex(ValueError, "BCFY_CALLS_AUTHORITY_MODE"),
+        ):
+            CollectorSettings()
+
+    def test_zero_process_capacity_fails_closed(self) -> None:
+        """Reject a topology that cannot own even one selected grant."""
+        env = {
+            **_required_env(),
+            "MAX_FEEDS_PER_WORKER": "0",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            self.assertRaisesRegex(ValueError, "feed owned_cap"),
+        ):
+            CollectorSettings()
 
     def test_caps_partial_env_override(self) -> None:
         """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""
@@ -373,9 +447,7 @@ class TestCollectorSettings(unittest.TestCase):
     def test_invalid_task_cancel_budget_exceeds_graceful_shutdown_raises(
         self,
     ) -> None:
-        """SHUTDOWN-02: ValueError raised when task_cancel_budget_sec +
-        2s settle exceeds graceful_shutdown_timeout_sec (D-03 / D-11).
-        """
+        """Reject a cooperative drain budget without finalization headroom."""
         env = {
             **_required_env(),
             "TASK_CANCEL_BUDGET_SEC": "120.0",
@@ -392,9 +464,7 @@ class TestCollectorSettings(unittest.TestCase):
     def test_edge_case_task_cancel_budget_at_boundary_does_not_raise(
         self,
     ) -> None:
-        """Boundary: task_cancel_budget_sec + 2.0 == graceful_shutdown_
-        timeout_sec is allowed (D-03 uses `>`, not `>=`).
-        """
+        """Allow exactly two seconds of finalization headroom."""
         env = {
             **_required_env(),
             "TASK_CANCEL_BUDGET_SEC": "88.0",

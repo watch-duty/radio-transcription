@@ -69,6 +69,7 @@ def _member_row(**overrides: object) -> dict[str, object]:
         "group_id": "00045",
         "status": "active",
         "last_bookmark_time": _NOW,
+        "retry_after": None,
     }
     row.update(overrides)
     return row
@@ -900,6 +901,7 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result.members[0].identity.source_feed_id, "00123-00045"
         )
+        self.assertIsNone(result.members[0].retry_after)
         connection.transaction.assert_called_once_with(
             isolation="read_committed"
         )

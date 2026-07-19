@@ -315,6 +315,7 @@ def _member_from_row(
         identity=identity,
         name=name,
         last_bookmark_time=row["last_bookmark_time"],
+        retry_after=row["retry_after"],
     )
 
 
