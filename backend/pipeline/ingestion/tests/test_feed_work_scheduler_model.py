@@ -212,8 +212,7 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
                     _call_work(
                         hot,
                         grant,
-                        timestamp=_SOURCE_TIME
-                        - datetime.timedelta(seconds=1),
+                        timestamp=_SOURCE_TIME - datetime.timedelta(seconds=1),
                     )
                 ),
             )
@@ -289,6 +288,57 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
             await shard.wait_for_held(0)
             self.assertEqual(followup.sequences, [1])
         finally:
+            await shard.close()
+
+    async def test_cancel_active_exact_propagates_outer_cancellation(
+        self,
+    ) -> None:
+        executor = _CancellationExecutor(swallow=True)
+        shard = _shard._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+        )
+        grant = _grant()
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], grant))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        cancellation = asyncio.create_task(shard.cancel_active_exact(grant))
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+
+        cancellation.cancel()
+        try:
+            with self.assertRaises(asyncio.CancelledError):
+                await cancellation
+        finally:
+            executor.release.set()
+            tasks = tuple(
+                slot.task for slot in shard._workers if slot.task is not None
+            )
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_wait_for_held_rejects_nonzero_targets(self) -> None:
+        executor = _GateExecutor()
+        shard = _shard._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+        )
+        grant = _grant()
+        await shard.start()
+        record = await shard.admit(_call_work(_FEED_IDS[0], grant))
+        await executor.wait_for_started(1)
+        try:
+            with self.assertRaisesRegex(
+                ValueError,
+                "only supports draining",
+            ):
+                await shard.wait_for_held(1)
+        finally:
+            executor.allow(record.local_sequence)
+            await shard.wait_for_held(0)
             await shard.close()
 
     async def test_abandoned_cancellation_fails_closed(self) -> None:

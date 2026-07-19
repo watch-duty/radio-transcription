@@ -261,12 +261,11 @@ class _Shard:
         """Settle expected exact cancellations before reusing worker slots."""
         requests = await self.request_cancel_exact(grant)
         for request in requests:
-            try:
-                await request.task
-            except asyncio.CancelledError:
-                pass
-            except BaseException as exc:
-                await self._mark_fatal(exc)
+            await asyncio.wait((request.task,))
+            if not request.task.cancelled():
+                failure = request.task.exception()
+                if failure is not None:
+                    await self._mark_fatal(failure)
             await self._replace_cancelled_worker(request)
         return tuple(request.slot_id for request in requests)
 
@@ -289,12 +288,15 @@ class _Shard:
             self._mark_fatal_locked(failure)
 
     async def wait_for_held(self, expected: int) -> None:
-        """Wait for an exact held count without polling or wall-clock sleeps."""
+        """Wait for the shard to drain without polling or wall-clock sleeps."""
         if isinstance(expected, bool):
             message = "expected must be an integer"
             raise TypeError(message)
         if expected < 0 or expected > self._limits.capacity:
             message = "expected is outside shard capacity"
+            raise ValueError(message)
+        if expected != 0:
+            message = "wait_for_held only supports draining to zero"
             raise ValueError(message)
         async with self._capacity_changed:
             await self._capacity_changed.wait_for(
