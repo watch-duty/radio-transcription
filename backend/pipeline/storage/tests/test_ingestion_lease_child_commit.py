@@ -35,8 +35,6 @@ def _member(feed_id: uuid.UUID) -> contracts.LeaseMemberIdentity:
         feed_id=feed_id,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id="123-45",
-        sid="123",
-        group_id="45",
     )
 
 

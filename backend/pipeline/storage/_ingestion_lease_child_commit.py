@@ -203,25 +203,18 @@ def _require_member_identity(
     grant: LeaseGrant,
     value: LeaseMemberIdentity,
 ) -> LeaseMemberIdentity:
-    for field_name, field_value in (
-        ("sid", value.sid),
-        ("group_id", value.group_id),
-    ):
-        if (
-            not field_value
-            or not field_value.isascii()
-            or not field_value.isdigit()
-        ):
-            msg = f"child member {field_name} must contain ASCII digits"
-            raise ValueError(msg)
     if value.source_type is not grant.source_type:
         msg = "child member source type does not match the Lease grant"
         raise ValueError(msg)
-    if value.sid != grant.lease_key:
-        msg = "child member SID does not match the Lease key"
-        raise ValueError(msg)
-    if value.source_feed_id != f"{value.sid}-{value.group_id}":
-        msg = "child member source_feed_id does not match SID-group identity"
+    sid, separator, group_id = value.source_feed_id.partition("-")
+    if (
+        separator != "-"
+        or sid != grant.lease_key
+        or not group_id
+        or not group_id.isascii()
+        or not group_id.isdigit()
+    ):
+        msg = "child member source_feed_id does not belong to the Lease SID"
         raise ValueError(msg)
     return value
 

@@ -280,8 +280,6 @@ def _membership_identity_from_row(
         feed_id=feed_id,
         source_type=property_source,
         source_feed_id=source_feed_id,
-        sid=sid,
-        group_id=group_id,
     )
 
 
