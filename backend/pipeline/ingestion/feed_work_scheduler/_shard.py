@@ -320,7 +320,9 @@ class _Shard:
                 slot.task for slot in self._workers if slot.task is not None
             )
         if tasks:
-            await asyncio.gather(*tasks)
+            await asyncio.wait(tasks)
+            for task in tasks:
+                task.result()
         async with self._lock:
             self._closed = True
 

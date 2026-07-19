@@ -341,6 +341,24 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
             await shard.wait_for_held(0)
             await shard.close()
 
+    async def test_cancelled_close_can_be_retried(self) -> None:
+        shard = _shard._Shard(
+            0,
+            _ImmediateExecutor(),
+            limits=self._limits(workers=1),
+        )
+        await shard.start()
+        closing = asyncio.create_task(shard.close())
+        await asyncio.sleep(0)
+        self.assertFalse(closing.done())
+
+        closing.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await closing
+
+        await shard.close()
+        self.assertTrue(shard._closed)
+
     async def test_abandoned_cancellation_fails_closed(self) -> None:
         executor = _CancellationExecutor(swallow=True)
         shard = _shard._Shard(

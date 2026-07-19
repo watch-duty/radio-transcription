@@ -86,37 +86,18 @@ cursor_policy.LeaseCursor.accept_no_progress
 cursor_policy.LeaseCursor.accept_replayable
 
 # The private Feed-affine shard lands before the public scheduler facade that
-# consumes it. Vulture excludes its focused model tests, so allowlist this
+# consumes it. Vulture excludes its focused shard tests, so allowlist this
 # dormant package only until the next stacked scheduler PR wires the facade.
 from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
 _shard._Shard
 _shard._Shard.fatal_failure
 _shard._Shard.admit
 _shard._Shard.purge_exact
-_shard._Shard.retire_feed
 _shard._Shard.cancel_active_exact
 _shard._Shard.abandon_cancellation
-_shard._Shard.wait_for_capacity_waiters
 _shard._Shard.wait_for_held
-_shard._Shard.wait_for_fatal
 _types._shard_index
-_types._RecordState.PENDING_BOUNDARY
-_types._RecordState.FLUSHING_BOUNDARY
-source_timestamp
-task_registered
-task_done
-active_sequence
-queued_calls
-active_calls
-pending_boundaries
-flushing_boundaries
-pressure_paused
-ready_feeds
-ready_members
-retired_feeds
-admission_open
-fatal
-released_sequences
+cohort_timestamp
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
