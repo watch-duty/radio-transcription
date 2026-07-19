@@ -69,10 +69,9 @@ run = "uv run vulture backend vulture_manual_whitelist.py --make-whitelist > vul
 
 [tasks."lint:terraform"]
 description = "Validate Terraform code and check formatting for pre-submits"
-run = """
-terraform validate
-terraform fmt -check -recursive
-"""
+run = "scripts/validate_terraform.sh"
+
+
 
 [tasks."lint:frontend:eslint"]
 description = "Run ESLint checks for frontend"

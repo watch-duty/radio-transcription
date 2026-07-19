@@ -1,8 +1,11 @@
 """Google Gemini transcriber implementation."""
 
+import asyncio
 import dataclasses
 import mimetypes
+import re
 
+import httpx
 import pydantic
 from google import genai
 from google.genai import types
@@ -33,11 +36,11 @@ _DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_OUTPUT_TOKENS = 512
 
 # API retry defaults
-DEFAULT_GEMINI_RETRY_ATTEMPTS = 5
+DEFAULT_GEMINI_RETRY_ATTEMPTS = 3
 DEFAULT_GEMINI_RETRY_INITIAL_DELAY = 1.0
 DEFAULT_GEMINI_RETRY_MAX_DELAY = 60.0
 DEFAULT_GEMINI_RETRY_MULTIPLIER = 2.0
-DEFAULT_GEMINI_CLIENT_TIMEOUT_MS = 120000
+DEFAULT_GEMINI_CLIENT_TIMEOUT_MS = 60000
 
 
 # Emergency dispatch traffic frequently contains graphic descriptions of
@@ -49,7 +52,6 @@ _DEFAULT_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_JAILBREAK", "threshold": "BLOCK_NONE"},
 ]
 
 logger = log_helper.get_task_logger(
@@ -68,7 +70,17 @@ class GeminiTranscriptionError(ValueError):
 
 
 class GeminiTransientTranscriptionError(GeminiTranscriptionError):
-    """Raised when Gemini transcription fails due to a potentially transient model/backend issue."""
+    """Raised when Gemini transcription fails due to a potentially transient
+    model/backend issue.
+    """
+
+
+class GeminiOtherFinishReasonError(GeminiTranscriptionError):
+    """Raised on OTHER finish reason, indicating GCS/internal failure."""
+
+
+class GeminiNoCandidatesError(GeminiTranscriptionError):
+    """Raised when Gemini returns a response with zero candidates."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -103,6 +115,10 @@ class GeminiConfig(utils.ConfigBase):
     retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
+    fallback_model: str | None = DEFAULT_GEMINI_MODEL
+    fallback_location: str = DEFAULT_GEMINI_LOCATION
+    fallback_retry_attempts: int = 2
+
 
 class GeminiTranscriber(base.Transcriber):
     """Transcriber implementation using Google GenAI SDK with Gemini 3.1."""
@@ -112,29 +128,60 @@ class GeminiTranscriber(base.Transcriber):
         project_id: str,
         config: GeminiConfig,
         location: str | None = None,
+        fallback_location: str | None = None,
     ) -> None:
         """Binds the GCP Project ID and parsed configuration."""
         self.project_id = project_id
         self.config = config
         self.client: genai.Client | None = None
         self.location = location or config.location
+        self.fallback_location = fallback_location or config.fallback_location
+        self._clients: dict[str, genai.Client] = {}
+
+    def _resolve_location(self, model: str, default_location: str) -> str:
+        """Resolves the location/region for a model.
+
+        If the model is a full Vertex resource name containing a location path,
+        extracts and returns that location; otherwise returns default_location.
+        """
+        match = re.search(r"/locations/([^/]+)/", model)
+        if match:
+            return match.group(1)
+        return default_location
+
+    def _get_client(self, location: str) -> genai.Client:
+        """Gets or creates a cached genai.Client for the given location."""
+        if location not in self._clients:
+            logger.info("Initializing genai.Client for location %s", location)
+            self._clients[location] = genai.Client(
+                enterprise=True,
+                project=self.project_id,
+                location=location,
+                http_options=types.HttpOptions(
+                    timeout=self.config.client_timeout_ms,
+                    httpx_async_client=httpx.AsyncClient(
+                        limits=httpx.Limits(
+                            max_connections=500,
+                            max_keepalive_connections=100,
+                        ),
+                    ),
+                    retry_options=types.HttpRetryOptions(
+                        attempts=self.config.retry_attempts,
+                        initial_delay=self.config.retry_initial_delay,
+                        max_delay=self.config.retry_max_delay,
+                        exp_base=self.config.retry_multiplier,
+                    ),
+                ),
+            )
+        return self._clients[location]
 
     def setup(self) -> None:
-        """Instantiate the GenAI API client with a robust retry policy."""
-        self.client = genai.Client(
-            enterprise=True,
-            project=self.project_id,
-            location=self.location,
-            http_options=types.HttpOptions(
-                timeout=self.config.client_timeout_ms,
-                retry_options=types.HttpRetryOptions(
-                    attempts=self.config.retry_attempts,
-                    initial_delay=self.config.retry_initial_delay,
-                    max_delay=self.config.retry_max_delay,
-                    exp_base=self.config.retry_multiplier,
-                ),
-            ),
+        """Instantiates client caching and warms up the primary client."""
+        self._clients.clear()
+        primary_location = self._resolve_location(
+            self.config.model, self.location
         )
+        self.client = self._get_client(primary_location)
 
     async def transcribe(
         self,
@@ -173,7 +220,8 @@ class GeminiTranscriber(base.Transcriber):
             f"from GCS URI: {uri}" if uri else "from in-memory bytes",
         )
 
-        # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context): Support context
+        # TODO(GOO-580): Support context
+        # https://linear.app/watchduty/issue/GOO-580
         mime_type = self.config.mime_type
         if uri:
             guessed_mime, _ = mimetypes.guess_type(uri)
@@ -206,14 +254,195 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # Note: Retry policy is configured globally on the client in setup()
-        response = await self.client.aio.models.generate_content(
+        return await self._transcribe_tuned(contents, generation_config)
+
+    async def _execute_transcribe_attempt(
+        self,
+        client: genai.Client,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+        *,
+        is_sft_model: bool,
+    ) -> str:
+        """Executes a single transcription attempt and parses results."""
+        response = await client.aio.models.generate_content(
             model=self.config.model,
             contents=contents,
             config=generation_config,
         )
+        transcript = self._parse_response(response)
 
-        return self._parse_response(response)
+        # If we get a valid transcript, or if this is the foundation
+        # model (which returns empty transcripts legitimately for
+        # silent audio), we return the result immediately.
+        if transcript.strip() or not is_sft_model:
+            return transcript
+
+        # SFT model returned empty transcript: treat as transient.
+        msg = "Tuned model returned empty transcript"
+        raise GeminiTransientTranscriptionError(msg)
+
+    async def _transcribe_tuned(
+        self,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+    ) -> str:
+        primary_location = self._resolve_location(
+            self.config.model, self.location
+        )
+        primary_client = self._get_client(primary_location)
+
+        # Tuned/SFT models reside in projects/.../endpoints/... resource paths.
+        # Default foundation models use string names (e.g. gemini-3.1-flash).
+        is_sft_model = "projects/" in self.config.model
+
+        # We only run in-situ retries for SFT models because they occasionally
+        # fail to process valid audio and return empty responses or NONE.
+        # Foundation models do not need these retry policies or fallbacks.
+        attempts = self.config.retry_attempts if is_sft_model else 1
+        last_exception = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._execute_transcribe_attempt(
+                    primary_client,
+                    contents,
+                    generation_config,
+                    is_sft_model=is_sft_model,
+                )
+            except (
+                GeminiTransientTranscriptionError,
+                GeminiNoCandidatesError,
+            ) as e:
+                # Caught finish_reason=None, empty candidates, or SFT-empty:
+                # these are transient model issues we want to retry.
+                last_exception = e
+            except GeminiOtherFinishReasonError as e:
+                # OTHER represents a GCS/internal prediction gateway error.
+                # We want to retry these against SFT (since they are
+                # transient) but MUST NOT fall back to foundation model.
+                last_exception = e
+                # On the final attempt, raise to the worker so it can retry
+                # the original model later, bypassing fallback.
+                if attempt == attempts:
+                    raise
+
+            if attempt < attempts:
+                logger.warning(
+                    "Tuned model transcription failed (attempt %d/%d): %s. "
+                    "Retrying in 1s...",
+                    attempt,
+                    attempts,
+                    str(last_exception),
+                )
+                await asyncio.sleep(1)
+
+        # Fallback to foundation model on SFT-specific empty transcript /
+        # NONE / no-candidates outcomes, whether the primary model is the
+        # tuned SFT model or the foundation model itself.
+        fallback_model = self.config.fallback_model or DEFAULT_GEMINI_MODEL
+        is_fallback_eligible_error = isinstance(
+            last_exception,
+            (GeminiTransientTranscriptionError, GeminiNoCandidatesError),
+        )
+        if is_fallback_eligible_error and (
+            is_sft_model or self.config.model == fallback_model
+        ):
+            return await self._fallback_transcribe(
+                contents,
+                generation_config,
+                str(last_exception),
+            )
+
+        if last_exception:
+            # Raised outside except block, specify name to re-raise.
+            raise last_exception
+        return ""
+
+    async def _fallback_transcribe(
+        self,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+        reason: str,
+    ) -> str:
+        """Falls back to foundation model if tuned model fails with empty/None.
+
+        If the configured model is already the foundation model, or if the
+        fallback call also fails with a transient empty response, returns an
+        empty string ("") to prevent infinite retries.
+        """
+        if not self._clients:
+            msg = "Client not initialized"
+            raise RuntimeError(msg)
+
+        fallback_model = self.config.fallback_model
+        if not fallback_model or self.config.model == fallback_model:
+            logger.info(
+                "Model %s returned incomplete/empty response: %s. "
+                "No fallback model configured or model is already the "
+                "fallback. "
+                "Treating as empty transcription.",
+                self.config.model,
+                reason,
+            )
+            return ""
+
+        logger.warning(
+            "Tuned model %s failed: %s. Falling back to foundation model %s...",
+            self.config.model,
+            reason,
+            fallback_model,
+        )
+
+        fallback_location = self._resolve_location(
+            fallback_model, self.fallback_location
+        )
+        fallback_client = self._get_client(fallback_location)
+
+        attempts = self.config.fallback_retry_attempts
+        for attempt in range(1, attempts + 1):
+            try:
+                fallback_response = (
+                    await fallback_client.aio.models.generate_content(
+                        model=fallback_model,
+                        contents=contents,
+                        config=generation_config,
+                    )
+                )
+                transcript = self._parse_response(fallback_response)
+                if transcript.strip():
+                    return transcript
+
+                resp_id = fallback_response.response_id or "Unknown"
+                msg = (
+                    "Empty transcript returned by fallback model. "
+                    f"(Response ID: {resp_id})"
+                )
+                e = GeminiTransientTranscriptionError(msg)
+            except GeminiTransientTranscriptionError as exc:
+                e = exc
+
+            if attempt == attempts:
+                logger.info(
+                    "Fallback model %s also returned "
+                    "incomplete/empty response: %s. "
+                    "Treating as empty transcription.",
+                    fallback_model,
+                    e,
+                )
+                return ""
+            logger.warning(
+                "Fallback call to %s "
+                "returned incomplete response (attempt %d/%d): %s. "
+                "Retrying in 1s...",
+                fallback_model,
+                attempt,
+                attempts,
+                e,
+            )
+            await asyncio.sleep(1)
+
+        return ""
 
     def _get_blocked_ratings(self, candidate: types.Candidate) -> str:
         """Helper to extract a string list of blocked safety categories."""
@@ -247,11 +476,16 @@ class GeminiTranscriber(base.Transcriber):
             ):
                 block_reason = response.prompt_feedback.block_reason
                 logger.error(
-                    "Gemini prompt blocked at request level. Block Reason: %s. Response ID: %s",
+                    "Gemini prompt blocked at request level. "
+                    "Block Reason: %s. Response ID: %s",
                     block_reason,
                     response_id,
                 )
-                msg = f"Gemini prompt blocked. Block Reason: {block_reason}. (Response ID: {response_id})"
+                msg = (
+                    "Gemini prompt blocked. "
+                    f"Block Reason: {block_reason}. "
+                    f"(Response ID: {response_id})"
+                )
                 raise GeminiTranscriptionError(msg)
 
             logger.warning(
@@ -260,8 +494,11 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
                 headers,
             )
-            msg = f"Gemini response returned no candidates. (Response ID: {response_id})"
-            raise GeminiTransientTranscriptionError(msg)
+            msg = (
+                "Gemini response returned no candidates. "
+                f"(Response ID: {response_id})"
+            )
+            raise GeminiNoCandidatesError(msg)
 
         candidate = response.candidates[0]
         reason_str = (
@@ -283,23 +520,32 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
             )
             msg = (
-                f"Gemini response blocked by safety filters. "
-                f"Finish Reason: {reason_str}, Blocked Ratings: {blocked_ratings}. (Response ID: {response_id})"
+                "Gemini response blocked by safety filters. "
+                f"Finish Reason: {reason_str}, "
+                f"Blocked Ratings: {blocked_ratings}. "
+                f"(Response ID: {response_id})"
             )
             raise GeminiTranscriptionError(
                 msg, finish_reason=candidate.finish_reason
             )
 
         if reason_str is None:
-            logger.warning(
-                "Gemini response interrupted (finish_reason is None). "
-                "Usually caused by hitting the client timeout (%s ms) before completion. "
-                "Response ID: %s",
-                self.config.client_timeout_ms,
-                response_id,
+            msg = (
+                "Incomplete response from Gemini (finish_reason: None). "
+                f"(Response ID: {response_id})"
             )
-            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
             raise GeminiTransientTranscriptionError(msg)
+
+        if reason_str == types.FinishReason.OTHER.name:
+            finish_msg = candidate.finish_message or "No finish message"
+            msg = (
+                "Incomplete response from Gemini due to internal error "
+                "(finish_reason: OTHER). "
+                f"Finish Message: {finish_msg}. (Response ID: {response_id})"
+            )
+            raise GeminiOtherFinishReasonError(
+                msg, finish_reason=candidate.finish_reason
+            )
 
         if reason_str not in _VALID_FINISH_REASONS:
             finish_msg = candidate.finish_message or "No finish message"
@@ -326,7 +572,8 @@ class GeminiTranscriber(base.Transcriber):
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(
-                "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
+                "Gemini response reached MAX_TOKENS limit. "
+                "Transcript is likely truncated. Response ID: %s",
                 response_id,
             )
             raise exceptions.PartialTranscriptionError(

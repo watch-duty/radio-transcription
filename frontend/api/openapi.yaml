@@ -194,6 +194,77 @@ components:
           type: array
       type: object
       additionalProperties: false
+    TextMatchSpan:
+      properties:
+        startIndex:
+          type: number
+          format: double
+        endIndex:
+          type: number
+          format: double
+        matchedText:
+          type: string
+      required:
+        - startIndex
+        - endIndex
+        - matchedText
+      type: object
+      additionalProperties: false
+    DryRunMatchExample:
+      properties:
+        audioSegmentId:
+          type: string
+        feedId:
+          type: string
+        text:
+          type: string
+        matchedSpans:
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
+      required:
+        - audioSegmentId
+        - feedId
+        - text
+        - matchedSpans
+      type: object
+      additionalProperties: false
+    DryRunResponse:
+      properties:
+        hitCount:
+          type: number
+          format: double
+        totalEvaluated:
+          type: number
+          format: double
+        examples:
+          items:
+            $ref: "#/components/schemas/DryRunMatchExample"
+          type: array
+      required:
+        - hitCount
+        - totalEvaluated
+        - examples
+      type: object
+      additionalProperties: false
+    DryRunRequest:
+      properties:
+        rule:
+          $ref: "#/components/schemas/RuleCreate"
+        maxExamples:
+          type: number
+          format: double
+        feedIds:
+          items:
+            type: string
+          type: array
+        daysLookback:
+          type: number
+          format: double
+      required:
+        - rule
+      type: object
+      additionalProperties: false
     FeedStatus:
       type: string
       enum:
@@ -493,22 +564,6 @@ components:
       required:
         - text
         - errors
-      type: object
-      additionalProperties: false
-    TextMatchSpan:
-      properties:
-        startIndex:
-          type: number
-          format: double
-        endIndex:
-          type: number
-          format: double
-        matchedText:
-          type: string
-      required:
-        - startIndex
-        - endIndex
-        - matchedText
       type: object
       additionalProperties: false
     RuleAnnotation:
@@ -971,6 +1026,61 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/rules/dry-run:
+    post:
+      operationId: DryRunRule
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryRunResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DryRunRequest"
       x-google-backend: radio-transcription-api
   /api/v1/feeds:
     get:

@@ -1,7 +1,8 @@
 import type {
+  DryRunRequest,
+  DryRunResponse,
   LogicalOperator,
   Rule,
-  RuleConditions,
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
@@ -27,7 +28,13 @@ import {
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+  toSnake,
+} from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -86,131 +93,54 @@ interface RuleCreateBackend {
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
 
-function convertConditions(conditions: RuleConditionsResponse): RuleConditions {
-  switch (conditions.evaluation_type) {
-    case 'KEYWORD_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        keywords: conditions.keywords,
-        caseSensitive: conditions.case_sensitive,
-      };
-    case 'REGEX_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        expression: conditions.expression,
-        flags: conditions.flags,
-      };
-    case 'RULE_GROUP':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        childRuleIds: conditions.child_rule_ids,
-      };
-  }
+interface TextMatchSpanResponse {
+  start: number;
+  end: number;
+  matched_text: string;
+}
+
+interface DryRunMatchExampleResponse {
+  audio_segment_id: string;
+  feed_id: string;
+  text: string;
+  matched_spans: TextMatchSpanResponse[];
+}
+
+interface DryRunResponseBackend {
+  hit_count: number;
+  total_evaluated: number;
+  examples: DryRunMatchExampleResponse[];
 }
 
 function convertRuleResponse(response: RuleResponse): Rule {
-  return {
-    ruleId: response.rule_id,
-    ruleName: response.rule_name,
-    description: response.description,
-    isActive: response.is_active,
-    scope: {
-      level: response.scope.level,
-      targetFeeds: response.scope.target_feeds,
-    },
-    conditions: convertConditions(response.conditions),
-    tags: response.tags,
-    metadata: {
-      createdBy: response.metadata.created_by,
-      createdAt: response.metadata.created_at,
-      updatedAt: response.metadata.updated_at,
-    },
-  };
+  return toCamel<Rule>(response);
 }
 
 function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
-  let conditions: RuleConditionsResponse;
-  switch (create.conditions.evaluationType) {
-    case 'KEYWORD_MATCH':
-      conditions = {
-        evaluation_type: 'KEYWORD_MATCH',
-        operator: create.conditions.operator,
-        keywords: create.conditions.keywords,
-        case_sensitive: create.conditions.caseSensitive,
-      };
-      break;
-    case 'REGEX_MATCH':
-      conditions = {
-        evaluation_type: 'REGEX_MATCH',
-        expression: create.conditions.expression,
-        flags: create.conditions.flags,
-      };
-      break;
-    case 'RULE_GROUP':
-      conditions = {
-        evaluation_type: 'RULE_GROUP',
-        operator: create.conditions.operator,
-        child_rule_ids: create.conditions.childRuleIds,
-      };
-      break;
-  }
-
-  return {
-    rule_name: create.ruleName,
-    description: create.description,
-    is_active: create.isActive,
-    scope: {
-      level: create.scope.level,
-      target_feeds: create.scope.targetFeeds,
-    },
-    conditions: conditions,
-    tags: create.tags,
-  };
+  return toSnake<RuleCreateBackend>(create);
 }
 
 function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
-  const result: RuleUpdateBackend = {};
-  if (update.ruleName !== undefined) result.rule_name = update.ruleName;
-  if (update.description !== undefined) result.description = update.description;
-  if (update.isActive !== undefined) result.is_active = update.isActive;
-  if (update.scope !== undefined) {
-    result.scope = {
-      level: update.scope.level,
-      target_feeds: update.scope.targetFeeds,
-    };
-  }
-  if (update.conditions !== undefined) {
-    let conditions: RuleConditionsResponse;
-    switch (update.conditions.evaluationType) {
-      case 'KEYWORD_MATCH':
-        conditions = {
-          evaluation_type: 'KEYWORD_MATCH',
-          operator: update.conditions.operator,
-          keywords: update.conditions.keywords,
-          case_sensitive: update.conditions.caseSensitive,
-        };
-        break;
-      case 'REGEX_MATCH':
-        conditions = {
-          evaluation_type: 'REGEX_MATCH',
-          expression: update.conditions.expression,
-          flags: update.conditions.flags,
-        };
-        break;
-      case 'RULE_GROUP':
-        conditions = {
-          evaluation_type: 'RULE_GROUP',
-          operator: update.conditions.operator,
-          child_rule_ids: update.conditions.childRuleIds,
-        };
-        break;
-    }
-    result.conditions = conditions;
-  }
-  if (update.tags !== undefined) result.tags = update.tags;
-  return result;
+  return toSnake<RuleUpdateBackend>(update);
+}
+
+function convertDryRunResponse(
+  response: DryRunResponseBackend
+): DryRunResponse {
+  return {
+    hitCount: response.hit_count,
+    totalEvaluated: response.total_evaluated,
+    examples: response.examples.map((ex) => ({
+      audioSegmentId: ex.audio_segment_id,
+      feedId: ex.feed_id,
+      text: ex.text,
+      matchedSpans: ex.matched_spans.map((span) => ({
+        startIndex: span.start,
+        endIndex: span.end,
+        matchedText: span.matched_text,
+      })),
+    })),
+  };
 }
 
 export class ListRulesQueryParams {
@@ -368,6 +298,34 @@ export class RulesController extends Controller {
         error,
         `deleting rule ${ruleId}`
       );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Post('dry-run')
+  @Security('google_id_token')
+  @SuccessResponse('200', 'OK')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async dryRunRule(
+    @Request() request: AuthenticatedRequest,
+    @Body() requestBody: DryRunRequest
+  ): Promise<DryRunResponse> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    try {
+      const client = await this.getClient();
+      const response = await client.request({
+        url: `${RULES_API_URL}/dry-run`,
+        method: 'POST',
+        data: toSnake(requestBody),
+      });
+      return convertDryRunResponse(response.data as DryRunResponseBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(error, 'dry running rule');
       throw new HttpError(status, message);
     }
   }

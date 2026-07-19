@@ -41,7 +41,9 @@ import {
   HttpError,
   getServiceClient,
   handleBackendError,
+  parseTimestamp,
   toCamel,
+  toSnake,
 } from '../utils.js';
 
 interface BaseFeedBackend {
@@ -118,7 +120,7 @@ function convertFeedHistoryEventBackend(
     feedId: response.feed_id,
     action: response.action,
     actor: response.actor,
-    occurredAt: Date.parse(response.occurred_at),
+    occurredAt: parseTimestamp(response.occurred_at) ?? 0,
     feedRevision: response.feed_revision_num,
     beforeValues: toCamel(response.before_values),
     afterValues: toCamel(response.after_values),
@@ -138,7 +140,7 @@ function getSourceUrl(
     case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
     case SourceType.ECHO:
-      return undefined;
+      return `https://storage.googleapis.com/wd-echo-recordings-prod/index.html#${sourceFeedId}/`;
     case SourceType.FIRE_NOTIFICATIONS: {
       const cleanSourceId = sourceFeedId.startsWith('/')
         ? sourceFeedId.slice(1)
@@ -178,13 +180,6 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
-  const lastHeartbeatParsed = response.last_heartbeat
-    ? Date.parse(response.last_heartbeat)
-    : undefined;
-  const lastSpeechParsed = response.last_speech_segment_timestamp
-    ? Date.parse(response.last_speech_segment_timestamp)
-    : undefined;
-
   return {
     id: response.id,
     name: response.name,
@@ -194,11 +189,13 @@ function convertFeedBackend(response: FeedBackend): Feed {
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     substatus: response.status,
-    lastHeartbeat: lastHeartbeatParsed,
+    lastHeartbeat: parseTimestamp(response.last_heartbeat),
     tags: response.tags,
     statusReasonDetail: response.status_reason_detail ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
-    lastSpeechSegmentTimestamp: lastSpeechParsed,
+    lastSpeechSegmentTimestamp: parseTimestamp(
+      response.last_speech_segment_timestamp
+    ),
   };
 }
 
@@ -216,19 +213,11 @@ function appendTagFilters(queryParams: URLSearchParams, tags: string[]): void {
 }
 
 function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
-  return {
-    name: create.name,
-    source_type: create.sourceType,
-    source_feed_id: create.sourceFeedId,
-    tags: create.tags,
-  };
+  return toSnake<FeedCreateBackend>(create);
 }
 
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
-  return {
-    name: update.name,
-    tags: update.tags,
-  };
+  return toSnake<FeedUpdateBackend>(update);
 }
 
 @Route('api/v1/feeds')

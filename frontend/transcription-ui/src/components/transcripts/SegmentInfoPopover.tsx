@@ -12,11 +12,13 @@ import type { AudioSegment } from '@transcription/common';
 interface SegmentInfoPopoverProps {
   audioSegment: AudioSegment;
   triggerSnackbar: (message: string) => void;
+  degradationReasons?: string[];
 }
 
 export function SegmentInfoPopover({
   audioSegment,
   triggerSnackbar,
+  degradationReasons,
 }: SegmentInfoPopoverProps) {
   const [infoAnchorEl, setInfoAnchorEl] = useState<HTMLElement | null>(null);
 
@@ -155,6 +157,30 @@ export function SegmentInfoPopover({
                     <ContentCopyIcon fontSize="inherit" />
                   </IconButton>
                 </Tooltip>
+              </Box>
+            )}
+
+            {degradationReasons && degradationReasons.length > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block', mb: 0.5 }}
+                >
+                  Segment error(s)
+                </Typography>
+                {degradationReasons.map((error, index) => (
+                  <Typography
+                    key={index}
+                    variant="body2"
+                    color="error.main"
+                    sx={{
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {error}
+                  </Typography>
+                ))}
               </Box>
             )}
           </Box>

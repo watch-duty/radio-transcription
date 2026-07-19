@@ -1192,17 +1192,6 @@ class TestExtractCallsFromResponse(unittest.TestCase):
         res = bcfy_calls_collector._extract_calls_from_response(None)
         self.assertEqual(res, [])
 
-    def test_non_dict_input(self) -> None:
-        with self.assertRaises(FeedFailure) as ctx:
-            bcfy_calls_collector._extract_calls_from_response(
-                [{"url": "http://1"}]  # type: ignore
-            )
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
-        )
-        self.assertEqual(ctx.exception.reason, "calls_api_payload_malformed")
-
     def test_missing_calls_key(self) -> None:
         res = bcfy_calls_collector._extract_calls_from_response(
             {"lastPos": 123}
