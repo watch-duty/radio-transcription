@@ -321,7 +321,6 @@ class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
             client.fetch_group_page(
                 "00123-00045",
                 None,
-                subject_id="feed-id",
                 shutdown_event=asyncio.Event(),
             ),
         )
@@ -377,13 +376,11 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         group_page = await self.client.fetch_group_page(
             "00123-00045",
             1_700_000_001,
-            subject_id="feed-id",
             shutdown_event=self.shutdown,
         )
         sid_page = await self.client.fetch_sid_page(
             "00123",
             sid_position,
-            subject_id="lease-id",
             shutdown_event=self.shutdown,
         )
 
@@ -410,20 +407,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("sid", group_request.kwargs["params"])
         self.assertNotIn("groups", sid_request.kwargs["params"])
 
-    async def test_private_fetch_requires_exactly_one_selector(self) -> None:
-        for group_id, sid in ((None, None), ("group", "sid")):
-            with self.subTest(group_id=group_id, sid=sid):
-                with self.assertRaises(ValueError):
-                    await self.client._fetch_page(
-                        group_id=group_id,
-                        sid=sid,
-                        pos=None,
-                        subject_id="subject",
-                        shutdown_event=self.shutdown,
-                    )
-
-        self.session.get.assert_not_called()
-
     async def test_envelope_is_frozen_and_preserves_raw_items(self) -> None:
         malformed_item = {"not": "validated here"}
         self.session.get.return_value = self._response(
@@ -436,7 +419,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         page = await self.client.fetch_group_page(
             "00123-00045",
             None,
-            subject_id="feed-id",
             shutdown_event=self.shutdown,
         )
 
@@ -456,7 +438,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         missing = await self.client.fetch_group_page(
             "00123-00045",
             None,
-            subject_id="feed-id",
             shutdown_event=self.shutdown,
         )
         self.assertEqual(missing.calls, ())
@@ -467,7 +448,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
                     await self.client.fetch_group_page(
                         "00123-00045",
                         None,
-                        subject_id="feed-id",
                         shutdown_event=self.shutdown,
                     )
                 self.assertIs(
@@ -499,7 +479,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         await self.client.fetch_group_page(
             "00123-00045",
             None,
-            subject_id="feed-id",
             shutdown_event=self.shutdown,
         )
 
@@ -526,7 +505,6 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         await self.client.fetch_group_page(
             "00123-00045",
             None,
-            subject_id="feed-id",
             shutdown_event=self.shutdown,
         )
 
@@ -557,7 +535,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.shutdown.set()
         with self.assertRaises(asyncio.CancelledError):
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
 
     async def test_success_list(self) -> None:
@@ -569,7 +547,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", self.shutdown
+            self.session, "url", {}, {}, self.shutdown
         )
         self.assertEqual(res, {"calls": [{"call": 1}]})
 
@@ -582,7 +560,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", self.shutdown
+            self.session, "url", {}, {}, self.shutdown
         )
         self.assertEqual(res, {"call": 1})
 
@@ -596,7 +574,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(FeedFailure) as ctx:
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
 
         self.assertIs(
@@ -626,7 +604,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(FeedFailure) as ctx:
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
 
         self.assertIs(
@@ -663,7 +641,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         ]
 
         res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", self.shutdown
+            self.session, "url", {}, {}, self.shutdown
         )
         self.assertEqual(res, {"calls": [{"call": 1}]})
         self.assertEqual(self.session.get.call_count, 2)
@@ -684,7 +662,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(FeedFailure) as ctx:
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
         self.assertIs(
             ctx.exception.status_reason,
@@ -713,7 +691,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(asyncio.CancelledError):
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
         self.assertEqual(self.session.get.call_count, 1)
 
@@ -726,7 +704,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(FeedFailure) as ctx:
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
         self.assertIs(
             ctx.exception.status_reason,
@@ -751,7 +729,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(FeedFailure) as ctx:
             await bcfy_calls_collector._fetch_calls(
-                self.session, "url", {}, {}, "fid", self.shutdown
+                self.session, "url", {}, {}, self.shutdown
             )
 
         self.assertIs(
@@ -1806,7 +1784,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             return "token"
 
         async def _fetch_then_shutdown(*args, **kwargs):
-            shutdown = args[5]
+            shutdown = args[4]
             shutdown.set()
             return _fetch_payload({"calls": []})
 
