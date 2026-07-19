@@ -97,6 +97,20 @@ grant_supervisor.GrantSupervisor.admit_cycle
 grant_supervisor.GrantSupervisor.heartbeat_cycle
 grant_supervisor.GrantSupervisor.active_count
 
+# The private Feed-affine shard lands before the public scheduler facade that
+# consumes it. Vulture excludes its focused shard tests, so allowlist this
+# dormant package only until the next stacked scheduler PR wires the facade.
+from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
+_shard._Shard
+_shard._Shard.fatal_failure
+_shard._Shard.admit
+_shard._Shard.purge_exact
+_shard._Shard.cancel_active_exact
+_shard._Shard.abandon_cancellation
+_shard._Shard.wait_for_held
+_types._shard_index
+cohort_timestamp
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
