@@ -102,7 +102,6 @@ class FeedBatchResult:
         committed_urls: URLs whose fenced progress commit completed.
         failure: Selected Feed failure, if the batch failed.
         grant_lost: Parent authority was rejected by the progress commit.
-        member_rejected: The child was ineligible for admitted progress.
     """
 
     attempted_count: int
@@ -111,7 +110,6 @@ class FeedBatchResult:
     committed_urls: tuple[str, ...]
     failure: failure_classification.ItemFailure | None
     grant_lost: bool = False
-    member_rejected: bool = False
 
 
 def _leased_feed(
@@ -320,7 +318,6 @@ class BcfyCallsFeedBatchExecutor:
                     next_sequence,
                     committed_urls,
                     None,
-                    member_rejected=True,
                 )
             if (
                 child.disposition
@@ -489,7 +486,6 @@ class BcfyCallsFeedBatchExecutor:
         failure: failure_classification.ItemFailure | None,
         *,
         grant_lost: bool = False,
-        member_rejected: bool = False,
     ) -> FeedBatchResult:
         return FeedBatchResult(
             attempted_count=outcome.attempted_count,
@@ -498,5 +494,4 @@ class BcfyCallsFeedBatchExecutor:
             committed_urls=tuple(committed_urls),
             failure=failure,
             grant_lost=grant_lost,
-            member_rejected=member_rejected,
         )

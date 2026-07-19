@@ -231,7 +231,6 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(result.failure)
         self.assertFalse(result.grant_lost)
-        self.assertFalse(result.member_rejected)
         self.assertEqual(len(store.calls), 2)
         for grant, batch, actor_id in store.calls:
             self.assertEqual(grant, _grant())
@@ -361,7 +360,7 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         new_callable=mock.AsyncMock,
         return_value="gs://audio/10.mp3",
     )
-    async def test_exact_grant_and_member_rejections_are_control_results(
+    async def test_grant_and_member_rejections_stop_without_failure(
         self,
         _upload: mock.AsyncMock,
         _create_chunk: mock.AsyncMock,
@@ -372,24 +371,22 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
                 ),
                 True,
-                False,
             ),
             (
                 _committed(ingestion_lease_store.ChildDisposition.REJECTED),
                 False,
-                True,
             ),
         )
 
-        for index, (commit, grant_lost, member_rejected) in enumerate(cases):
+        for index, (commit, grant_lost) in enumerate(cases):
             with self.subTest(index=index):
                 result = await _executor(_Store(commit)).execute(
                     _batch(_work(0))
                 )
 
                 self.assertEqual(result.committed_urls, ())
+                self.assertIsNone(result.failure)
                 self.assertEqual(result.grant_lost, grant_lost)
-                self.assertEqual(result.member_rejected, member_rejected)
 
     @mock.patch.object(
         bcfy_calls_collector,
