@@ -89,8 +89,6 @@ def _forged_member_for_sid(
         feed_id=feed_id,
         source_type=_SOURCE_TYPE,
         source_feed_id=f"{sid}-{group_id}",
-        sid=sid,
-        group_id=group_id,
     )
 
 
@@ -105,8 +103,6 @@ def _issued_member_for_grant(
         feed_id=feed_id,
         source_type=grant.source_type,
         source_feed_id=f"{grant.lease_key}-{group_id}",
-        sid=grant.lease_key,
-        group_id=group_id,
     )
 
 
@@ -906,10 +902,11 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(  # noqa: PLR0915
     forged_sid = _unique_digits()
     await _insert_lease(ingestion_lease_pool, forged_sid)
     forged_grant = await _claim_exact(store, forged_sid, uuid.uuid4())
+    _, _, low_group_id = low_member.source_feed_id.partition("-")
     forged_member = _forged_member_for_sid(
         low_member.feed_id,
         forged_sid,
-        low_member.group_id,
+        low_group_id,
     )
     forged_lease_before = dict(
         await _fetch_lease(ingestion_lease_pool, forged_sid)
