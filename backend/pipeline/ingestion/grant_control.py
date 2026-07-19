@@ -161,6 +161,8 @@ class RunContext:
 class GrantControl[GrantT, PayloadT](typing.Protocol):
     """Small typed storage-control seam shared by registered domains."""
 
+    domain_id: DomainId
+
     async def claim(
         self,
         mode: ClaimMode,

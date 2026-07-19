@@ -48,10 +48,10 @@ from backend.pipeline.ingestion import (
     failure_policy,
     feed_grant_control,
     grant_control,
+    grant_supervisor,
     sid_grant_control,
     worker_profiles,
 )
-from backend.pipeline.storage import feed_store, ingestion_lease_contracts
 failure_policy.plan_failure
 feed_grant_control.FeedGrantControl
 feed_grant_control.FeedGrantControl.heartbeat
@@ -66,10 +66,6 @@ grant_control.GrantControl
 grant_control.GrantControl.heartbeat
 grant_control.GrantControl.finalize
 grant_control.GrantRunner
-grant_control.ExactGrant
-grant_control.ExactGrant.unit_key
-feed_store.FeedGrant.unit_key
-ingestion_lease_contracts.LeaseGrant.unit_key
 worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
 
@@ -89,6 +85,17 @@ cursor_policy.LeaseCursor.prepare_no_progress
 cursor_policy.LeaseCursor.accept
 cursor_policy.LeaseCursor.accept_no_progress
 cursor_policy.LeaseCursor.accept_replayable
+
+# The generic supervisor lands before CollectorRuntime delegates its legacy
+# Feed lifecycle to it. Vulture excludes the focused contract tests, so retain
+# only the public handoff surface until the next runtime-migration PR.
+grant_supervisor.GrantSupervisor
+grant_supervisor.GrantSupervisor.admission_enabled
+grant_supervisor.GrantSupervisor.integrity_failure_event
+grant_supervisor.GrantSupervisor.integrity_failure
+grant_supervisor.GrantSupervisor.admit_cycle
+grant_supervisor.GrantSupervisor.heartbeat_cycle
+grant_supervisor.GrantSupervisor.active_count
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python

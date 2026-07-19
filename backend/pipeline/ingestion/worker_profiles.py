@@ -40,18 +40,15 @@ class WorkerProfile:
 
     Attributes:
         name: Stable deployment-facing profile selector.
-        process_owned_cap: Maximum enabled grants across the process.
         allocations: Immutable per-domain admission allocations.
     """
 
     name: str
-    process_owned_cap: int
     allocations: tuple[DomainAllocation, ...]
 
 
 LEGACY_PROFILE = WorkerProfile(
     name="legacy",
-    process_owned_cap=800,
     allocations=(
         DomainAllocation(
             domain_id=grant_control.DomainId.FEED,
@@ -64,7 +61,6 @@ LEGACY_PROFILE = WorkerProfile(
 
 MIXED_DORMANT_PROFILE = WorkerProfile(
     name="mixed-dormant",
-    process_owned_cap=832,
     allocations=(
         LEGACY_PROFILE.allocations[0],
         DomainAllocation(
@@ -78,7 +74,6 @@ MIXED_DORMANT_PROFILE = WorkerProfile(
 
 SID_DORMANT_PROFILE = WorkerProfile(
     name="sid-dormant",
-    process_owned_cap=32,
     allocations=(MIXED_DORMANT_PROFILE.allocations[1],),
 )
 
@@ -104,7 +99,6 @@ def _validate_profile_shape(profile: WorkerProfile) -> None:
     if not profile.name.strip():
         msg = "Worker profile name must not be empty"
         raise ValueError(msg)
-    _positive_int(profile.process_owned_cap, "Worker profile process_owned_cap")
     if not profile.allocations:
         msg = "Worker profile must select at least one domain"
         raise ValueError(msg)
@@ -112,7 +106,7 @@ def _validate_profile_shape(profile: WorkerProfile) -> None:
 
 def _validate_allocation(
     allocation: DomainAllocation,
-) -> tuple[DomainAllocation, int]:
+) -> DomainAllocation:
     owned_cap = _positive_int(
         allocation.owned_cap,
         f"Domain {allocation.domain_id.value} owned_cap",
@@ -127,7 +121,7 @@ def _validate_allocation(
             "must not exceed owned_cap"
         )
         raise ValueError(msg)
-    return allocation, owned_cap
+    return allocation
 
 
 def validate_worker_profile(profile: WorkerProfile) -> WorkerProfile:
@@ -145,24 +139,14 @@ def validate_worker_profile(profile: WorkerProfile) -> WorkerProfile:
     _validate_profile_shape(profile)
 
     seen_domains: set[grant_control.DomainId] = set()
-    enabled_owned_cap = 0
     for candidate in profile.allocations:
-        allocation, owned_cap = _validate_allocation(candidate)
+        allocation = _validate_allocation(candidate)
         if allocation.domain_id in seen_domains:
             msg = (
                 f"Duplicate worker profile domain: {allocation.domain_id.value}"
             )
             raise ValueError(msg)
         seen_domains.add(allocation.domain_id)
-        if allocation.claims_enabled:
-            enabled_owned_cap += owned_cap
-
-    if enabled_owned_cap > profile.process_owned_cap:
-        msg = (
-            "Enabled domain owned caps exceed the worker profile process "
-            "envelope"
-        )
-        raise ValueError(msg)
     return profile
 
 
@@ -203,8 +187,7 @@ def derive_bcfy_calls_authority(
         A validated frozen profile with both claim authorities derived.
 
     Raises:
-        ValueError: If the topology cannot host the selected authority or the
-            derived enabled capacity exceeds the process envelope.
+        ValueError: If the topology cannot host the selected authority.
     """
     validated = validate_worker_profile(profile)
 
@@ -299,10 +282,8 @@ def resolve_worker_profile(
         else:
             allocations.append(allocation)
 
-    process_owned_cap = sum(allocation.owned_cap for allocation in allocations)
     profile = dataclasses.replace(
         preset,
-        process_owned_cap=process_owned_cap,
         allocations=tuple(allocations),
     )
     return validate_worker_profile(profile)

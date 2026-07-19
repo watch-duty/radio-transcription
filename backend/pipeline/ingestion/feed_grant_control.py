@@ -69,6 +69,8 @@ def _calculate_branch_limits(
 class FeedGrantControl:
     """Translate generic grant operations to two authoritative Feed stores."""
 
+    domain_id = grant_control.DomainId.FEED
+
     def __init__(
         self,
         data_store: feed_store.FeedStore,
@@ -114,8 +116,8 @@ class FeedGrantControl:
             payload: Original leased Feed payload.
             terminal: Applied budgeted failure plan.
 
-        Raises:
-            asyncio.CancelledError: The caller cancels observation.
+        Returns:
+            None after observation completes or is abandoned.
         """
         observer = self._on_quarantined
         if observer is None:
@@ -129,7 +131,6 @@ class FeedGrantControl:
             logger.warning(
                 "Quarantine observer cancelled after exact Feed finalization"
             )
-            raise
         except TimeoutError:
             logger.warning(
                 "Quarantine observer timed out after exact Feed finalization"
@@ -291,8 +292,8 @@ class FeedGrantControl:
         Raises:
             grant_control.GrantControlIntegrityError: The payload does not
                 match the grant, or storage returns an invalid outcome.
-            asyncio.CancelledError: Quarantine observation is cancelled after
-                durable failure finalization.
+            asyncio.CancelledError: Authoritative storage finalization is
+                cancelled before its outcome is known.
         """
         if (
             payload["id"] != grant.feed_id

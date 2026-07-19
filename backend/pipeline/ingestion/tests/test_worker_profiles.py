@@ -30,7 +30,7 @@ class TestWorkerProfile(unittest.TestCase):
         self.assertIsInstance(profile.allocations, tuple)
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(profile)),
-            ("name", "process_owned_cap", "allocations"),
+            ("name", "allocations"),
         )
 
     def test_presets_have_exact_domains_caps_budgets_and_claim_flags(
@@ -128,18 +128,6 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires.*domain"):
                     worker_profiles.derive_bcfy_calls_authority(profile, mode)
 
-    def test_authority_derivation_revalidates_process_envelope(self) -> None:
-        profile = dataclasses.replace(
-            worker_profiles.MIXED_DORMANT_PROFILE,
-            process_owned_cap=800,
-        )
-
-        with self.assertRaisesRegex(ValueError, "exceed.*envelope"):
-            worker_profiles.derive_bcfy_calls_authority(
-                profile,
-                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
-            )
-
     def test_sid_budget_is_one_total_cycle_allocation(self) -> None:
         sid_allocations = [
             allocation
@@ -179,7 +167,6 @@ class TestWorkerProfile(unittest.TestCase):
             sid_claims_per_cycle=1,
         )
 
-        self.assertEqual(profile.process_owned_cap, 154)
         self.assertEqual(
             profile.allocations,
             (
@@ -202,10 +189,6 @@ class TestWorkerProfile(unittest.TestCase):
         baseline = worker_profiles.LEGACY_PROFILE
         invalid_profiles = {
             "empty_name": dataclasses.replace(baseline, name=" "),
-            "zero_envelope": dataclasses.replace(
-                baseline,
-                process_owned_cap=0,
-            ),
             "empty_allocations": dataclasses.replace(
                 baseline,
                 allocations=(),
@@ -222,7 +205,6 @@ class TestWorkerProfile(unittest.TestCase):
         feed = baseline.allocations[0]
         duplicate = dataclasses.replace(
             baseline,
-            process_owned_cap=1600,
             allocations=(feed, feed),
         )
         with self.assertRaisesRegex(ValueError, "Duplicate.*domain"):
@@ -267,35 +249,6 @@ class TestWorkerProfile(unittest.TestCase):
                 )
                 with self.assertRaises((TypeError, ValueError)):
                     worker_profiles.validate_worker_profile(profile)
-
-    def test_enabled_caps_must_fit_process_envelope(self) -> None:
-        invalid = dataclasses.replace(
-            worker_profiles.LEGACY_PROFILE,
-            process_owned_cap=799,
-        )
-
-        with self.assertRaisesRegex(ValueError, "exceed.*envelope"):
-            worker_profiles.validate_worker_profile(invalid)
-
-    def test_disabled_caps_do_not_consume_process_envelope(self) -> None:
-        feed, sid = worker_profiles.MIXED_DORMANT_PROFILE.allocations
-        profile = dataclasses.replace(
-            worker_profiles.MIXED_DORMANT_PROFILE,
-            process_owned_cap=3,
-            allocations=(
-                dataclasses.replace(
-                    feed,
-                    owned_cap=3,
-                    claims_per_cycle=1,
-                ),
-                sid,
-            ),
-        )
-
-        self.assertIs(
-            worker_profiles.validate_worker_profile(profile),
-            profile,
-        )
 
     def test_profile_module_has_no_deployment_execution_surface(self) -> None:
         source = inspect.getsource(worker_profiles).lower()
