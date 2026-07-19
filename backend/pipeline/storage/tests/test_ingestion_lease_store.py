@@ -84,8 +84,6 @@ def _member_identity(
         feed_id=feed_id,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id=f"{sid}-{group_id}",
-        sid=sid,
-        group_id=group_id,
     )
 
 
@@ -898,8 +896,6 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
         self.assertEqual(result.membership_revision, 4)
         self.assertEqual(len(result.members), 2)
-        self.assertEqual(result.members[0].identity.sid, "00123")
-        self.assertEqual(result.members[0].identity.group_id, "00045")
         self.assertEqual(result.members[0].name, "County Fire Dispatch")
         self.assertEqual(
             result.members[0].identity.source_feed_id, "00123-00045"
@@ -1422,7 +1418,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
         malformed_member = dataclasses.replace(
             _member_identity(feed_id),
-            source_feed_id="123-999",
+            source_feed_id="999-45",
         )
         invalid_batches = (
             ingestion_lease_store.ChildMutationBatch(
@@ -1551,8 +1547,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             feed_id=feed_id,
             source_type=feed_store.SourceType.OPENMHZ,
             source_feed_id="123-45",
-            sid="123",
-            group_id="45",
         )
         batch = ingestion_lease_store.ChildMutationBatch(
             mutations=(ingestion_lease_store.SourceObservation(member, _NOW),),

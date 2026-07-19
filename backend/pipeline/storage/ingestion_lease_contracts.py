@@ -272,21 +272,17 @@ class LeaseFailureResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseMemberIdentity:
-    """Immutable Feed/source/SID/group binding from membership loading.
+    """Immutable Feed/source binding from membership loading.
 
     Attributes:
         feed_id: Permanent Feed UUID.
         source_type: Source family shared by the Feed and property row.
         source_feed_id: Canonical provider routing identity.
-        sid: Textual Broadcastify system identity, including leading zeroes.
-        group_id: Textual talkgroup identity, including leading zeroes.
     """
 
     feed_id: uuid.UUID
     source_type: feed_store.SourceType
     source_feed_id: str
-    sid: str
-    group_id: str
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

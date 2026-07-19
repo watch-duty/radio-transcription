@@ -89,8 +89,6 @@ def _member_for_grant(
         feed_id=feed_id,
         source_type=grant.source_type,
         source_feed_id=f"{grant.lease_key}-{group_id}",
-        sid=grant.lease_key,
-        group_id=group_id,
     )
 
 

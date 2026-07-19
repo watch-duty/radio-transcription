@@ -918,8 +918,6 @@ class TestMembershipSnapshotContract(unittest.TestCase):
                 "feed_id",
                 "source_type",
                 "source_feed_id",
-                "sid",
-                "group_id",
             },
         )
         self.assertNotIn("membership_revision", fields)
@@ -931,12 +929,10 @@ class TestMembershipSnapshotContract(unittest.TestCase):
             feed_id=uuid.uuid4(),
             source_type=feed_store.SourceType.BCFY_CALLS,
             source_feed_id="123-45",
-            sid="123",
-            group_id="45",
         )
         self.assertFalse(hasattr(identity, "__dict__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            identity.group_id = "46"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            identity.source_feed_id = "123-46"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
     def test_lease_member_exposes_only_runtime_consumed_state(self) -> None:
         fields = dataclasses.fields(ingestion_lease_store.LeaseMember)
