@@ -109,6 +109,16 @@ class _FeedState:
                 self.recent_committed_urls.popitem(last=False)
 
 
+def _prune_departed_states(
+    states: dict[uuid.UUID, _FeedState],
+    members: collections.abc.Iterable[ingestion_lease_store.LeaseMember],
+) -> None:
+    """Drop grant-local state for Feeds absent from current membership."""
+    current_feed_ids = {member.identity.feed_id for member in members}
+    for feed_id in states.keys() - current_feed_ids:
+        del states[feed_id]
+
+
 def _utc_timestamp(value: object) -> datetime.datetime | None:
     """Decode a finite provider timestamp at the external trust boundary."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
@@ -139,6 +149,8 @@ def _valid_page_boundary(
     """
     boundary = _utc_timestamp(raw_last_pos)
     if boundary is None:
+        return None
+    if boundary.timestamp() <= 0:
         return None
     if boundary > response_received_at:
         return None
@@ -322,6 +334,8 @@ class BcfyCallsSidRunner:
                     _MEMBERSHIP_INVALID,
                 )
 
+            _prune_departed_states(states, membership.members)
+
             due_members = tuple(
                 member
                 for member in membership.members
@@ -471,6 +485,7 @@ class BcfyCallsSidRunner:
                         due_members,
                         result_by_feed,
                         boundary,
+                        poll_started,
                         promoted,
                     )
                 except asyncio.CancelledError as error:
@@ -527,7 +542,7 @@ class BcfyCallsSidRunner:
         raw_calls: collections.abc.Sequence[object],
         states: dict[uuid.UUID, _FeedState],
     ) -> tuple[pipeline.FeedBatch, ...]:
-        by_group = {
+        by_source_feed_id = {
             member.identity.source_feed_id: member for member in members
         }
         adopting_ids = frozenset(
@@ -548,14 +563,18 @@ class BcfyCallsSidRunner:
             )
             timestamp = _utc_timestamp(call.get("ts"))
 
-            raw_group_id = call.get("groupId")
-            group_id = None
-            if isinstance(raw_group_id, (str, int)) and not isinstance(
-                raw_group_id,
+            raw_source_feed_id = call.get("groupId")
+            source_feed_id = None
+            if isinstance(raw_source_feed_id, (str, int)) and not isinstance(
+                raw_source_feed_id,
                 bool,
             ):
-                group_id = str(raw_group_id)
-            member = by_group.get(group_id) if group_id is not None else None
+                source_feed_id = str(raw_source_feed_id)
+            member = (
+                by_source_feed_id.get(source_feed_id)
+                if source_feed_id is not None
+                else None
+            )
             if member is None or member.identity.feed_id in adopting_ids:
                 continue
             audio_url = call.get("url")
@@ -627,6 +646,7 @@ class BcfyCallsSidRunner:
             pipeline.FeedBatchResult,
         ],
         boundary: datetime.datetime | None,
+        adoption_boundary: datetime.datetime,
         promoted: failure_classification.ItemFailure | None,
     ) -> (
         ingestion_lease_store.BatchCommitted
@@ -657,11 +677,16 @@ class BcfyCallsSidRunner:
                     )
                 )
                 continue
-            if boundary is not None:
+            observation = (
+                adoption_boundary
+                if member.last_bookmark_time is None
+                else boundary
+            )
+            if observation is not None:
                 mutations.append(
                     ingestion_lease_store.SourceObservation(
                         member.identity,
-                        boundary,
+                        observation,
                     )
                 )
 

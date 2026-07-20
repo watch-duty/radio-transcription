@@ -187,6 +187,10 @@ def test_provider_timestamp_preserves_fractional_seconds() -> None:
     )
 
 
+def test_page_boundary_rejects_epoch_without_requested_position() -> None:
+    assert sid_runner._valid_page_boundary(0, None, _NOW) is None
+
+
 @pytest.mark.asyncio
 async def test_accepted_batches_settle_before_an_error_surfaces() -> None:
     first = asyncio.get_running_loop().create_future()
@@ -288,7 +292,7 @@ async def test_admission_error_drains_already_accepted_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
+async def test_routes_due_members_and_adopts_null_cursor_at_live_edge(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     grant = _grant()
@@ -325,7 +329,12 @@ async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
             "ts": _NOW.timestamp(),
         },
     )
-    page = provider.CallsPageEnvelope({}, calls, _NOW.timestamp())
+    historical_boundary = _NOW - datetime.timedelta(seconds=10)
+    page = provider.CallsPageEnvelope(
+        {},
+        calls,
+        historical_boundary.timestamp(),
+    )
     store = _Store(_snapshot(grant, due, adopter, deferred))
     calls_provider = _Provider([page], context)
     pool = _Pool()
@@ -358,6 +367,15 @@ async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
         due.identity.feed_id,
         adopter.identity.feed_id,
     }
+    observations = {
+        mutation.member.feed_id: mutation.cursor
+        for mutation in store.batches[0].mutations
+        if isinstance(mutation, ingestion_lease_store.SourceObservation)
+    }
+    assert observations == {
+        due.identity.feed_id: historical_boundary,
+        adopter.identity.feed_id: _NOW,
+    }
     assert isinstance(
         store.batches[0].lease_effect,
         ingestion_lease_store.FinalizeLeaseRecovery,
@@ -370,6 +388,20 @@ async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
     ]
     assert len(settled) == 1
     assert getattr(settled[0], "json_fields", {}).get("status") == "completed"
+
+
+def test_departed_member_state_is_pruned() -> None:
+    current = _member("100", bookmark=_NOW)
+    departed = _member("200", bookmark=_NOW)
+    current_state = sid_runner._FeedState()
+    states = {
+        current.identity.feed_id: current_state,
+        departed.identity.feed_id: sid_runner._FeedState(),
+    }
+
+    sid_runner._prune_departed_states(states, (current,))
+
+    assert states == {current.identity.feed_id: current_state}
 
 
 @pytest.mark.asyncio
@@ -454,7 +486,7 @@ async def test_all_null_members_start_at_live_edge_without_routing() -> None:
                 "ts": _NOW.timestamp(),
             },
         ),
-        _NOW.timestamp(),
+        0,
     )
     store = _Store(_snapshot(grant, first, second))
     calls_provider = _Provider([page], context)
@@ -481,6 +513,11 @@ async def test_all_null_members_start_at_live_edge_without_routing() -> None:
     assert {
         mutation.member.feed_id for mutation in store.batches[0].mutations
     } == {first.identity.feed_id, second.identity.feed_id}
+    assert {
+        mutation.cursor
+        for mutation in store.batches[0].mutations
+        if isinstance(mutation, ingestion_lease_store.SourceObservation)
+    } == {_NOW}
 
 
 @pytest.mark.asyncio
@@ -791,10 +828,13 @@ async def test_batch_grant_rejection_stops_sid_without_page_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
+async def test_all_failed_participants_promote_parent_and_commit_quiet_feed() -> (
+    None
+):
     grant = _grant()
     first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
     second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    quiet = _member("300", bookmark=_NOW - datetime.timedelta(minutes=1))
     context = _context()
     page = provider.CallsPageEnvelope(
         {},
@@ -834,7 +874,7 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
             terminal=next(failures),
         )
 
-    store = _Store(_snapshot(grant, first, second))
+    store = _Store(_snapshot(grant, first, second, quiet))
     calls_provider = _Provider([page], context)
     pool = _Pool(mock.Mock(side_effect=failed_result))
     runner = sid_runner.BcfyCallsSidRunner(
@@ -857,7 +897,12 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "first",
     )
-    assert store.batches[0].mutations == ()
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(
+            quiet.identity,
+            _NOW,
+        ),
+    )
     assert isinstance(
         store.batches[0].lease_effect,
         ingestion_lease_store.NoLeaseEffect,
