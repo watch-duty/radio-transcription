@@ -145,6 +145,26 @@ describe('RuleConfigurationView', () => {
       });
     });
 
+    it("displays a rule's tags as chips in the table", async () => {
+      vi.mocked(listRules).mockResolvedValue([
+        {
+          ...mockRules[0],
+          tags: [
+            { key: 'geo_event_type', value: 'flooding' },
+            { key: 'geo_event_type', value: 'wildfire' },
+          ],
+        },
+      ]);
+
+      renderView();
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('geo_event_type: flooding, wildfire')
+        ).toBeInTheDocument();
+      });
+    });
+
     it('validates empty required fields and displays interactive errors', async () => {
       renderView();
 
@@ -233,6 +253,7 @@ describe('RuleConfigurationView', () => {
               keywords: ['dispatch'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );
@@ -242,6 +263,120 @@ describe('RuleConfigurationView', () => {
         );
         expect(within(formCard).getByLabelText('Rule Name')).toHaveValue('');
       });
+    });
+
+    it('adds a tag and includes it in the create payload', async () => {
+      vi.mocked(createRule).mockResolvedValue(mockRules[0]);
+
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'dispatch' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Value'), {
+        target: { value: 'flooding' },
+      });
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: 'Add Tag' })
+      );
+
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: /Create Rule/i })
+      );
+
+      await waitFor(() => {
+        expect(createRule).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tags: [{ key: 'geo_event_type', value: 'flooding' }],
+          }),
+          'fake-jwt-token-xyz'
+        );
+      });
+    });
+
+    it('adds a tag on Enter without submitting the form', async () => {
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+      const valueField = within(formCard).getByLabelText('Value');
+      fireEvent.change(valueField, { target: { value: 'flooding' } });
+      fireEvent.keyDown(valueField, { key: 'Enter', code: 'Enter' });
+
+      // The tag row was added (its value is now shown in a row field)...
+      await waitFor(() => {
+        expect(
+          within(formCard).getByDisplayValue('geo_event_type')
+        ).toBeInTheDocument();
+      });
+      // ...and the form was NOT submitted.
+      expect(createRule).not.toHaveBeenCalled();
+    });
+
+    it("loads an existing rule's tags into the editor", async () => {
+      vi.mocked(listRules).mockResolvedValue([
+        {
+          ...mockRules[0],
+          tags: [{ key: 'geo_event_type', value: 'flooding' }],
+        },
+      ]);
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('Evacuation Trigger')).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit Evacuation Trigger' })
+      );
+
+      const editFormCard = screen.getByTestId('rule-config-card');
+      expect(
+        within(editFormCard).getByDisplayValue('geo_event_type')
+      ).toBeInTheDocument();
+      expect(
+        within(editFormCard).getByDisplayValue('flooding')
+      ).toBeInTheDocument();
+    });
+
+    it('blocks submit and shows an error when a tag is missing its value', async () => {
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'dispatch' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: /Create Rule/i })
+      );
+
+      expect(
+        screen.getByText('Both key and value must be populated to add a tag.')
+      ).toBeInTheDocument();
+      expect(createRule).not.toHaveBeenCalled();
     });
 
     it('supports transitioning to edit mode, cancelling, and saving updates', async () => {
@@ -307,6 +442,7 @@ describe('RuleConfigurationView', () => {
               keywords: ['evacuate', 'evacuation'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );
@@ -403,6 +539,7 @@ describe('RuleConfigurationView', () => {
               keywords: ['evacuate', 'evacuation'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );

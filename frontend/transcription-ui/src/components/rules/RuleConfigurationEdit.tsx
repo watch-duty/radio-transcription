@@ -1,8 +1,10 @@
 import { useState } from 'react';
 
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RuleIcon from '@mui/icons-material/Rule';
+import TagIcon from '@mui/icons-material/Tag';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -37,9 +39,16 @@ import type {
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
+  Tag,
 } from '@transcription/common';
 
-import { buildRulePayload, validateRule } from '../../utils/validationUtils';
+import {
+  buildRulePayload,
+  tagAddError,
+  validateRule,
+  validateTags,
+} from '../../utils/validationUtils';
+import { type TagRow, nextTagRowId, toTagRows } from '../feeds/tagRows';
 
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
@@ -87,6 +96,11 @@ export function RuleConfigurationEdit({
   isSubmitting,
 }: RuleConfigurationEditProps) {
   const [newKeyword, setNewKeyword] = useState('');
+  const [tagRows, setTagRows] = useState<TagRow[]>(() =>
+    toTagRows(editingRule.tags ?? [])
+  );
+  const [newTagKey, setNewTagKey] = useState('');
+  const [newTagValue, setNewTagValue] = useState('');
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
   >({});
@@ -95,6 +109,61 @@ export function RuleConfigurationEdit({
     useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
+
+  // Folds the saved rows and any in-progress key/value into the Tag[] sent on
+  // save, dropping the client-only row ids. Mirrors the feed tag editor.
+  const collectTags = (): Tag[] => {
+    const rows = tagRows.map(({ key, value }) => ({
+      key: key.trim(),
+      value: value.trim(),
+    }));
+    const key = newTagKey.trim();
+    const value = newTagValue.trim();
+    if (key && value) {
+      rows.push({ key, value });
+    }
+    return rows;
+  };
+
+  const handleAddTag = () => {
+    const key = newTagKey.trim();
+    const value = newTagValue.trim();
+    if (!key && !value) return;
+    if (!key || !value) {
+      setValidationErrors((prev) => ({
+        ...prev,
+        tags: 'Both key and value must be populated to add a tag.',
+      }));
+      return;
+    }
+    const addError = tagAddError(tagRows, key, value);
+    if (addError) {
+      setValidationErrors((prev) => ({ ...prev, tags: addError }));
+      return;
+    }
+    setTagRows((prev) => [...prev, { id: nextTagRowId(), key, value }]);
+    setNewTagKey('');
+    setNewTagValue('');
+    setValidationErrors((prev) => {
+      const copy = { ...prev };
+      delete copy.tags;
+      return copy;
+    });
+  };
+
+  const handleRemoveTag = (idToRemove: string) => {
+    setTagRows((prev) => prev.filter((tag) => tag.id !== idToRemove));
+  };
+
+  const handleUpdateTag = (
+    id: string,
+    field: 'key' | 'value',
+    value: string
+  ) => {
+    setTagRows((prev) =>
+      prev.map((tag) => (tag.id === id ? { ...tag, [field]: value } : tag))
+    );
+  };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -121,7 +190,8 @@ export function RuleConfigurationEdit({
         ...editingRule,
         isActive: !editingRule.isActive,
       },
-      newKeyword
+      newKeyword,
+      collectTags()
     );
     onUpdateRule(payload);
   };
@@ -197,6 +267,14 @@ export function RuleConfigurationEdit({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const errors = validateRule(editingRule, newKeyword);
+    const tagError = validateTags(
+      tagRows,
+      { key: newTagKey, value: newTagValue },
+      {}
+    );
+    if (tagError) {
+      errors.tags = tagError;
+    }
 
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
@@ -205,7 +283,7 @@ export function RuleConfigurationEdit({
 
     setValidationErrors({});
 
-    const payload = buildRulePayload(editingRule, newKeyword);
+    const payload = buildRulePayload(editingRule, newKeyword, collectTags());
 
     if (isEditing) {
       onUpdateRule(payload);
@@ -294,6 +372,21 @@ export function RuleConfigurationEdit({
               handleAddKeyword={handleAddKeyword}
               handleRemoveKeyword={handleRemoveKeyword}
               handleKeywordKeyPress={handleKeywordKeyPress}
+              validationErrors={validationErrors}
+              isSubmitting={isSubmitting}
+            />
+
+            <Divider sx={{ my: 1 }} />
+
+            <RuleTagsSection
+              tagRows={tagRows}
+              newTagKey={newTagKey}
+              setNewTagKey={setNewTagKey}
+              newTagValue={newTagValue}
+              setNewTagValue={setNewTagValue}
+              handleAddTag={handleAddTag}
+              handleRemoveTag={handleRemoveTag}
+              handleUpdateTag={handleUpdateTag}
               validationErrors={validationErrors}
               isSubmitting={isSubmitting}
             />
@@ -416,6 +509,167 @@ export function RuleConfigurationEdit({
         isSubmitting={isSubmitting}
       />
     </Card>
+  );
+}
+
+interface RuleTagsSectionProps {
+  tagRows: TagRow[];
+  newTagKey: string;
+  setNewTagKey: React.Dispatch<React.SetStateAction<string>>;
+  newTagValue: string;
+  setNewTagValue: React.Dispatch<React.SetStateAction<string>>;
+  handleAddTag: () => void;
+  handleRemoveTag: (id: string) => void;
+  handleUpdateTag: (id: string, field: 'key' | 'value', value: string) => void;
+  validationErrors: Record<string, string>;
+  isSubmitting: boolean;
+}
+
+function RuleTagsSection({
+  tagRows,
+  newTagKey,
+  setNewTagKey,
+  newTagValue,
+  setNewTagValue,
+  handleAddTag,
+  handleRemoveTag,
+  handleUpdateTag,
+  validationErrors,
+  isSubmitting,
+}: RuleTagsSectionProps) {
+  // Enter in a tag field should add the tag, not submit the whole rule form.
+  const handleTagInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
+    }
+  };
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+        <TagIcon fontSize="small" color="action" />
+        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+          Tags
+        </Typography>
+      </Box>
+
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: 'block', mb: 2 }}
+      >
+        Tags (e.g. geo_event_type) label rules for grouping and downstream
+        notification routing.
+      </Typography>
+
+      <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: 'center' }}>
+        <TextField
+          size="small"
+          label="Key"
+          placeholder="geo_event_type"
+          value={newTagKey}
+          onChange={(e) => setNewTagKey(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
+          error={!!validationErrors.tags}
+          disabled={isSubmitting}
+          sx={{ flex: 1 }}
+        />
+        <TextField
+          size="small"
+          label="Value"
+          placeholder="flooding"
+          value={newTagValue}
+          onChange={(e) => setNewTagValue(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
+          error={!!validationErrors.tags}
+          disabled={isSubmitting}
+          sx={{ flex: 1 }}
+        />
+        <Button
+          variant="outlined"
+          onClick={handleAddTag}
+          disabled={isSubmitting}
+          startIcon={<AddIcon fontSize="small" />}
+          sx={{ textTransform: 'none' }}
+          aria-label="Add Tag"
+        >
+          Add
+        </Button>
+      </Stack>
+
+      {validationErrors.tags && (
+        <Typography
+          variant="caption"
+          color="error"
+          sx={{ display: 'block', mb: 2 }}
+        >
+          {validationErrors.tags}
+        </Typography>
+      )}
+
+      <Box
+        sx={{
+          p: 2,
+          borderRadius: 2.5,
+          border: '1px dashed',
+          borderColor: 'divider',
+          bgcolor: 'background.default',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1.5,
+        }}
+      >
+        {tagRows.length === 0 ? (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mx: 'auto', py: 2, fontStyle: 'italic' }}
+          >
+            No tags added.
+          </Typography>
+        ) : (
+          tagRows.map((tag, index) => (
+            <Stack
+              key={tag.id}
+              direction="row"
+              spacing={1.5}
+              sx={{ alignItems: 'center' }}
+            >
+              <TextField
+                size="small"
+                label="Key"
+                value={tag.key}
+                onChange={(e) => handleUpdateTag(tag.id, 'key', e.target.value)}
+                error={!!validationErrors.tags && !tag.key.trim()}
+                disabled={isSubmitting}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                size="small"
+                label="Value"
+                value={tag.value}
+                onChange={(e) =>
+                  handleUpdateTag(tag.id, 'value', e.target.value)
+                }
+                error={!!validationErrors.tags && !tag.value.trim()}
+                disabled={isSubmitting}
+                sx={{ flex: 1 }}
+              />
+              <IconButton
+                size="small"
+                onClick={() => handleRemoveTag(tag.id)}
+                disabled={isSubmitting}
+                color="error"
+                aria-label={`Remove tag ${index + 1}: ${tag.key}=${tag.value}`}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+          ))
+        )}
+      </Box>
+    </Box>
   );
 }
 
