@@ -1075,8 +1075,11 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             ("retry_after", _NOW.astimezone(non_utc), ValueError),
         )
 
-        for field_name, value, error_type in cases:
-            with self.subTest(field_name=field_name, value=value):
+        for case_index, (field_name, value, error_type) in enumerate(cases):
+            with self.subTest(
+                case_index=case_index,
+                field_name=field_name,
+            ):
                 pool = connection_util.make_mock_pool(transaction=True)
                 connection = pool.acquired_connection
                 connection.fetchrow.return_value = _lease_row(lease_key="00123")
