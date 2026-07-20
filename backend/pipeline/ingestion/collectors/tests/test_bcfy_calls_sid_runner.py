@@ -62,7 +62,7 @@ def _result(
     *,
     attempted: int | None = None,
     published: int | None = None,
-    failure: ItemFailure | None = None,
+    terminal: (ItemFailure | ingestion_lease_store.GrantRejected | None) = None,
 ) -> pipeline.FeedBatchResult:
     attempted_count = len(batch.calls) if attempted is None else attempted
     published_count = attempted_count if published is None else published
@@ -71,7 +71,7 @@ def _result(
         published_count=published_count,
         next_sequence=batch.starting_sequence + attempted_count,
         committed_urls=tuple(call.audio_url for call in batch.calls),
-        failure=failure,
+        terminal=terminal,
     )
 
 
@@ -565,6 +565,55 @@ async def test_grant_loss_during_fetch_still_settles_admitted_page() -> None:
 
 
 @pytest.mark.asyncio
+async def test_batch_grant_rejection_stops_sid_without_page_commit() -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+    )
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/rejected",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    rejection = ingestion_lease_store.GrantRejected(
+        ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
+    )
+
+    def rejected_result(
+        batch: pipeline.FeedBatch,
+    ) -> pipeline.FeedBatchResult:
+        return _result(batch, terminal=rejection)
+
+    store = _Store(_snapshot(grant, member))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(mock.Mock(side_effect=rejected_result)),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunLost)
+    assert store.batches == []
+
+
+@pytest.mark.asyncio
 async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
     grant = _grant()
     first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
@@ -605,7 +654,7 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
         return _result(
             batch,
             published=0,
-            failure=next(failures),
+            terminal=next(failures),
         )
 
     store = _Store(_snapshot(grant, first, second))
@@ -665,7 +714,7 @@ async def test_single_feed_failure_stays_child_local() -> None:
     )
 
     def failed_result(batch: pipeline.FeedBatch) -> pipeline.FeedBatchResult:
-        return _result(batch, published=0, failure=item_failure)
+        return _result(batch, published=0, terminal=item_failure)
 
     store = _Store(_snapshot(grant, member))
     calls_provider = _Provider([page], context)

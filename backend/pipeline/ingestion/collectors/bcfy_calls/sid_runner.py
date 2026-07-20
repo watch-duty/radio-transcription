@@ -317,7 +317,10 @@ class BcfyCallsSidRunner:
                     state = states[batch.member.identity.feed_id]
                     state.next_sequence = result.next_sequence
                     state.remember_urls(result.committed_urls)
-                    if result.grant_lost:
+                    if isinstance(
+                        result.terminal,
+                        ingestion_lease_store.GrantRejected,
+                    ):
                         poll_status = "grant_lost"
                         return grant_control.RunLost()
 
@@ -500,8 +503,8 @@ class BcfyCallsSidRunner:
             outcome.record_attempt()
             if result.published_count > 0:
                 outcome.record_chunk_produced()
-            if result.failure is not None:
-                outcome.record_failure(result.failure)
+            if isinstance(result.terminal, ItemFailure):
+                outcome.record_failure(result.terminal)
         return outcome.promoted_failure()
 
     async def _commit_page(
@@ -526,10 +529,11 @@ class BcfyCallsSidRunner:
             result = results.get(feed_id)
             if promoted is not None and result is not None:
                 continue
-            if result is not None and result.failure is not None:
+            terminal = result.terminal if result is not None else None
+            if isinstance(terminal, ItemFailure):
                 plan = self._failure_planner(
-                    result.failure.status_reason,
-                    result.failure.reason,
+                    terminal.status_reason,
+                    terminal.reason,
                 )
                 mutations.append(
                     ingestion_lease_store.FeedFailureTransition(
