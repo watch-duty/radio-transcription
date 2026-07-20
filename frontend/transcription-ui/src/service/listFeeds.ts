@@ -57,26 +57,9 @@ export async function listFeedsPage(
   });
 }
 
-// TODO: Update this to allow tanstack query to handle the nextToken pagination.
-// This is okay, but temporary given that when we have 10k+ feeds this will be a lot of calls.
-// https://linear.app/watchduty/issue/GOO-554
 export async function listFeeds(
   token: string,
   params?: Omit<ListFeedsParams, 'limit' | 'nextToken'>
 ): Promise<Omit<ListFeedsResponse, 'nextToken'>> {
-  let allFeeds: Feed[] = [];
-  let nextToken: string | undefined = undefined;
-  do {
-    const response = await listFeedsPage(token, {
-      ...params,
-      limit: 100,
-      nextToken,
-    });
-    allFeeds = allFeeds.concat(response.feeds);
-    nextToken = response.nextToken;
-  } while (nextToken);
-  return {
-    feeds: allFeeds,
-    total: allFeeds.length,
-  };
+  return listFeedsPage(token, params);
 }

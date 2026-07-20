@@ -49,7 +49,7 @@ function createWrapper(token: string | null = 'mock-token') {
 describe('SettingsView', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.spyOn(listFeedsModule, 'listFeeds').mockResolvedValue({
+    vi.spyOn(listFeedsModule, 'listFeedsPage').mockResolvedValue({
       feeds: [
         {
           id: 'feed-alpha',
@@ -291,7 +291,7 @@ describe('SettingsView', () => {
 
   it('calls onError callback when feed list query fails', async () => {
     const apiError = new Error('Failed to fetch feeds');
-    vi.spyOn(listFeedsModule, 'listFeeds').mockRejectedValue(apiError);
+    vi.spyOn(listFeedsModule, 'listFeedsPage').mockRejectedValue(apiError);
 
     const onError = vi.fn();
     render(<SettingsView onError={onError} />, { wrapper: createWrapper() });

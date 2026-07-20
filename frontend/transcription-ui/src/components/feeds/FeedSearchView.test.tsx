@@ -4,13 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { type Feed, SourceType } from '@transcription/common';
 
-import { listFeeds } from '../../service/listFeeds';
+import { listFeeds, listFeedsPage } from '../../service/listFeeds';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedSearchView from './FeedSearchView';
 
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+  listFeedsPage: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -44,6 +45,10 @@ describe('FeedSearchView Condensed Mode', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
+    vi.mocked(listFeedsPage).mockResolvedValue({
+      feeds: mockFeeds,
+      total: mockFeeds.length,
+    });
     vi.mocked(listFeeds).mockResolvedValue({
       feeds: mockFeeds,
       total: mockFeeds.length,

@@ -8,11 +8,11 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import { listFeeds } from '../../service/listFeeds';
+import { listFeedsPage } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -37,6 +37,9 @@ interface CondensedFeedSearchResultsProps {
   feedsLoading: boolean;
   feedTotal: number;
   onFeedSelect?: (feedId: string) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function CondensedFeedSearchResults({
@@ -45,6 +48,9 @@ function CondensedFeedSearchResults({
   onFiltersChange,
   feedsLoading,
   onFeedSelect,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: CondensedFeedSearchResultsProps) {
   const [inputValue, setInputValue] = useState('');
 
@@ -70,12 +76,27 @@ function CondensedFeedSearchResults({
           setInputValue(newInputValue);
           onFiltersChange({ ...filters, searchQuery: newInputValue });
         }}
-        loading={feedsLoading}
+        loading={feedsLoading || isFetchingNextPage}
         loadingText={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CircularProgress size={16} /> Loading feeds...
           </Box>
         }
+        slotProps={{
+          listbox: {
+            onScroll: (event: React.UIEvent<HTMLUListElement>) => {
+              const listboxNode = event.currentTarget;
+              if (
+                listboxNode.scrollTop + listboxNode.clientHeight >=
+                listboxNode.scrollHeight - 20
+              ) {
+                if (hasNextPage && !isFetchingNextPage && onLoadMore) {
+                  onLoadMore();
+                }
+              }
+            },
+          },
+        }}
         renderInput={(params) => (
           <TextField
             {...params}
@@ -165,6 +186,9 @@ interface TableFeedSearchResultsProps {
   feedTotal: number;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function TableFeedSearchResults({
@@ -175,6 +199,9 @@ function TableFeedSearchResults({
   feedTotal,
   filters,
   onFiltersChange,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: TableFeedSearchResultsProps) {
   return (
     <Box
@@ -194,6 +221,9 @@ function TableFeedSearchResults({
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={onFiltersChange}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={onLoadMore}
       />
     </Box>
   );
@@ -229,7 +259,10 @@ export function FeedSearchView({
     data: feedsData,
     error: feedsError,
     isLoading: feedsLoading,
-  } = useQuery({
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: [
       'listFeeds',
       token,
@@ -241,21 +274,28 @@ export function FeedSearchView({
       filters.tags,
       filters.tags.length,
     ],
-    queryFn: () =>
-      listFeeds(token!, {
+    queryFn: ({ pageParam }) =>
+      listFeedsPage(token!, {
+        limit: 50,
+        nextToken: pageParam || undefined,
         name: debouncedSearchQuery || undefined,
         sourceTypes:
           filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
         statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
         tags: filters.tags.length > 0 ? filters.tags : undefined,
       }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
     enabled: !!token,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
-  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
-  const feedTotal = feedsData?.total ?? 0;
+  const feeds = useMemo(
+    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
+    [feedsData]
+  );
+  const feedTotal = feedsData?.pages[0]?.total ?? feeds.length;
 
   useEffect(() => {
     if (feedsError) {
@@ -263,21 +303,10 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
-
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
+    const sourceFeeds = feeds || [];
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -290,7 +319,7 @@ export function FeedSearchView({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [allFeeds]);
+  }, [feeds]);
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -305,6 +334,9 @@ export function FeedSearchView({
         feedsLoading={feedsLoading}
         feedTotal={feedTotal}
         onFeedSelect={onFeedSelect}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
       />
     );
   }
@@ -318,6 +350,9 @@ export function FeedSearchView({
       feedTotal={feedTotal}
       filters={filters}
       onFiltersChange={setFilters}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadMore={fetchNextPage}
     />
   );
 }

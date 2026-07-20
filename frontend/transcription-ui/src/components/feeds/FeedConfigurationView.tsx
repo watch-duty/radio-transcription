@@ -4,7 +4,12 @@ import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type {
   Feed,
   FeedCreate,
@@ -17,7 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
-import { listFeeds } from '../../service/listFeeds';
+import { listFeedsPage } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
@@ -67,17 +72,14 @@ export function FeedConfigurationView({
 
   const feedsErrorHandled = useRef<Error | null>(null);
 
-  // We flatten the filter object and include array lengths in the query key.
-  // In JavaScript, empty arrays ([]) are compared by object reference rather than value.
-  // Flattening the keys and including primitive lengths (e.g. 0) ensures that we can define
-  // a stable, static query key for `allFeeds` (['listFeeds', token, '', [], 0, [], 0, [], 0])
-  // that matches the structure of the main query, allowing `queryClient.setQueriesData`
-  // and `invalidateQueries` prefix matching to successfully update both query caches at once.
   const {
     data: feedsData,
     isLoading: feedsLoading,
     error: feedsError,
-  } = useQuery({
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: [
       'listFeeds',
       token,
@@ -89,20 +91,27 @@ export function FeedConfigurationView({
       filters.tags,
       filters.tags.length,
     ],
-    queryFn: () =>
-      listFeeds(token!, {
+    queryFn: ({ pageParam }) =>
+      listFeedsPage(token!, {
+        limit: 50,
+        nextToken: pageParam || undefined,
         name: debouncedSearchQuery || undefined,
         sourceTypes:
           filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
         statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
         tags: filters.tags.length > 0 ? filters.tags : undefined,
       }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
 
-  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
-  const feedTotal = feedsData?.total ?? 0;
+  const feeds = useMemo(
+    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
+    [feedsData]
+  );
+  const feedTotal = feedsData?.pages[0]?.total ?? feeds.length;
 
   useEffect(() => {
     if (feedsError && feedsErrorHandled.current !== feedsError) {
@@ -113,21 +122,10 @@ export function FeedConfigurationView({
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = allFeedData.feeds;
-
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
   const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const result: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
+    const sourceFeeds = feeds || [];
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -140,7 +138,7 @@ export function FeedConfigurationView({
     return result.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [allFeeds]);
+  }, [feeds]);
 
   const resetForm = () => {
     setId('');
@@ -189,14 +187,17 @@ export function FeedConfigurationView({
     onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueriesData<ListFeedsResponse>(
+      queryClient.setQueriesData<InfiniteData<ListFeedsResponse>>(
         { queryKey: ['listFeeds', token] },
         (oldData) => {
           if (!oldData) return oldData;
-          const updatedFeeds = oldData.feeds.filter((f) => f.id !== feedId);
           return {
-            feeds: updatedFeeds,
-            total: oldData.total - (oldData.feeds.length - updatedFeeds.length),
+            ...oldData,
+            pages: oldData.pages.map((page) => ({
+              ...page,
+              feeds: page.feeds.filter((f) => f.id !== feedId),
+              total: Math.max(0, page.total - 1),
+            })),
           };
         }
       );
@@ -364,6 +365,9 @@ export function FeedConfigurationView({
             isSubmitting={isSubmitting}
             filters={filters}
             onFiltersChange={setFilters}
+            hasNextPage={hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={fetchNextPage}
           />
         </Grid>
       </Grid>

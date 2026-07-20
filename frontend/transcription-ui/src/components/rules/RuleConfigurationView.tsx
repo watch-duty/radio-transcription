@@ -4,13 +4,18 @@ import RuleIcon from '@mui/icons-material/Rule';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import type { Rule, RuleCreate, RuleUpdate } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
-import { listFeeds } from '../../service/listFeeds';
+import { listFeedsPage } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
 import { RuleConfigurationEdit } from './RuleConfigurationEdit';
@@ -20,6 +25,8 @@ interface RuleConfigurationViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
+
+const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function RuleConfigurationView({
   triggerSnackbar,
@@ -43,6 +50,16 @@ export function RuleConfigurationView({
     },
   }));
 
+  const [feedSearchQuery, setFeedSearchQuery] = useState('');
+  const [debouncedFeedSearchQuery, setDebouncedFeedSearchQuery] = useState('');
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedFeedSearchQuery(feedSearchQuery);
+    }, QUERY_DEBOUNCE_TIME_MS);
+    return () => clearTimeout(handler);
+  }, [feedSearchQuery]);
+
   const rulesErrorHandled = useRef<Error | null>(null);
   const feedsErrorHandled = useRef<Error | null>(null);
 
@@ -61,14 +78,27 @@ export function RuleConfigurationView({
     data: feedsData,
     isLoading: feedsLoading,
     error: feedsError,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    hasNextPage: hasNextFeedsPage,
+    isFetchingNextPage: isFetchingNextFeedsPage,
+    fetchNextPage: fetchNextFeedsPage,
+  } = useInfiniteQuery({
+    queryKey: ['listFeeds', token, debouncedFeedSearchQuery],
+    queryFn: ({ pageParam }) =>
+      listFeedsPage(token!, {
+        limit: 50,
+        nextToken: pageParam || undefined,
+        name: debouncedFeedSearchQuery || undefined,
+      }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
 
-  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
+  const feeds = useMemo(
+    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
+    [feedsData]
+  );
 
   const sortedFeeds = useMemo(() => {
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));
@@ -126,7 +156,6 @@ export function RuleConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Rule "${data.ruleName}" updated successfully!`);
       setIsEditing(false);
-      setId('');
       setEditingRule({
         ruleName: '',
         description: '',
@@ -142,20 +171,26 @@ export function RuleConfigurationView({
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
-      onError(error, 'Updating Rule Settings');
+      onError(error, 'Updating Rule');
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (ruleId: string) => deleteRule(ruleId, token!),
-    onSuccess: (_, ruleId) => {
+    onSuccess: () => {
       triggerSnackbar('Rule deleted successfully!');
       setIsEditing(false);
-      setId('');
-      queryClient.setQueryData<Rule[]>(['listRules', token], (oldRules) => {
-        return oldRules
-          ? oldRules.filter((rule) => rule.ruleId !== ruleId)
-          : [];
+      setEditingRule({
+        ruleName: '',
+        description: '',
+        isActive: true,
+        scope: { level: 'GLOBAL', targetFeeds: [] },
+        conditions: {
+          evaluationType: 'KEYWORD_MATCH',
+          operator: 'ANY',
+          keywords: [],
+          caseSensitive: false,
+        },
       });
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
@@ -177,16 +212,12 @@ export function RuleConfigurationView({
     setId(rule.ruleId);
     setEditingRule({
       ruleName: rule.ruleName,
-      description: rule.description || '',
+      description: rule.description ?? '',
       isActive: rule.isActive,
-      scope: {
-        level: rule.scope.level,
-        targetFeeds: rule.scope.targetFeeds || [],
-      },
+      scope: rule.scope,
       conditions: rule.conditions,
       tags: rule.tags ?? [],
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
@@ -278,6 +309,11 @@ export function RuleConfigurationView({
               }}
               onCancel={handleCancelEdit}
               isSubmitting={isSubmitting}
+              feedSearchQuery={feedSearchQuery}
+              onFeedSearchQueryChange={setFeedSearchQuery}
+              hasNextFeedsPage={hasNextFeedsPage}
+              isFetchingNextFeedsPage={isFetchingNextFeedsPage}
+              onFetchNextFeedsPage={fetchNextFeedsPage}
             />
           </Grid>
         )}

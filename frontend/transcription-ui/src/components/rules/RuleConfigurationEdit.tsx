@@ -80,6 +80,11 @@ interface RuleConfigurationEditProps {
   onDeleteRule: () => void;
   onCancel: () => void;
   isSubmitting: boolean;
+  feedSearchQuery?: string;
+  onFeedSearchQueryChange?: (query: string) => void;
+  hasNextFeedsPage?: boolean;
+  isFetchingNextFeedsPage?: boolean;
+  onFetchNextFeedsPage?: () => void;
 }
 
 export function RuleConfigurationEdit({
@@ -94,6 +99,11 @@ export function RuleConfigurationEdit({
   onDeleteRule,
   onCancel,
   isSubmitting,
+  feedSearchQuery = '',
+  onFeedSearchQueryChange,
+  hasNextFeedsPage,
+  isFetchingNextFeedsPage,
+  onFetchNextFeedsPage,
 }: RuleConfigurationEditProps) {
   const [newKeyword, setNewKeyword] = useState('');
   const [tagRows, setTagRows] = useState<TagRow[]>(() =>
@@ -359,6 +369,11 @@ export function RuleConfigurationEdit({
               feeds={feeds}
               validationErrors={validationErrors}
               isSubmitting={isSubmitting}
+              feedSearchQuery={feedSearchQuery}
+              onFeedSearchQueryChange={onFeedSearchQueryChange}
+              hasNextFeedsPage={hasNextFeedsPage}
+              isFetchingNextFeedsPage={isFetchingNextFeedsPage}
+              onFetchNextFeedsPage={onFetchNextFeedsPage}
             />
 
             <Divider sx={{ my: 1 }} />
@@ -731,6 +746,11 @@ interface RuleScopeSectionProps {
   feeds: Feed[];
   validationErrors: Record<string, string>;
   isSubmitting: boolean;
+  feedSearchQuery?: string;
+  onFeedSearchQueryChange?: (query: string) => void;
+  hasNextFeedsPage?: boolean;
+  isFetchingNextFeedsPage?: boolean;
+  onFetchNextFeedsPage?: () => void;
 }
 
 function RuleScopeSection({
@@ -739,6 +759,11 @@ function RuleScopeSection({
   feeds,
   validationErrors,
   isSubmitting,
+  feedSearchQuery = '',
+  onFeedSearchQueryChange,
+  hasNextFeedsPage,
+  isFetchingNextFeedsPage,
+  onFetchNextFeedsPage,
 }: RuleScopeSectionProps) {
   return (
     <Box>
@@ -774,10 +799,22 @@ function RuleScopeSection({
             <Autocomplete
               multiple
               options={feeds}
-              getOptionLabel={(option) => option.name}
-              value={feeds.filter((f) =>
-                editingRule.scope.targetFeeds?.includes(f.id)
-              )}
+              filterOptions={(x) => x}
+              getOptionLabel={(option) => option.name || option.id}
+              isOptionEqualToValue={(option, val) => option.id === val.id}
+              value={
+                editingRule.scope.targetFeeds?.map((feedId) => {
+                  const existing = feeds.find((f) => f.id === feedId);
+                  return (
+                    existing ||
+                    ({ id: feedId, name: feedId, sourceFeedId: feedId } as Feed)
+                  );
+                }) ?? []
+              }
+              inputValue={feedSearchQuery}
+              onInputChange={(_, newInputValue) => {
+                onFeedSearchQueryChange?.(newInputValue);
+              }}
               onChange={(_, selectedOptions) => {
                 setEditingRule((prev) => ({
                   ...prev,
@@ -786,6 +823,26 @@ function RuleScopeSection({
                     targetFeeds: selectedOptions.map((f) => f.id),
                   },
                 }));
+              }}
+              loading={isFetchingNextFeedsPage}
+              slotProps={{
+                listbox: {
+                  onScroll: (event: React.UIEvent<HTMLUListElement>) => {
+                    const listboxNode = event.currentTarget;
+                    if (
+                      listboxNode.scrollTop + listboxNode.clientHeight >=
+                      listboxNode.scrollHeight - 20
+                    ) {
+                      if (
+                        hasNextFeedsPage &&
+                        !isFetchingNextFeedsPage &&
+                        onFetchNextFeedsPage
+                      ) {
+                        onFetchNextFeedsPage();
+                      }
+                    }
+                  },
+                },
               }}
               renderInput={(params) => (
                 <TextField

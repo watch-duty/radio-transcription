@@ -59,6 +59,9 @@ export interface FeedTableProps {
   isSubmitting?: boolean;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 interface SortConfig {
@@ -181,6 +184,9 @@ export function FeedTable({
   isSubmitting = false,
   filters,
   onFiltersChange,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -737,6 +743,18 @@ export function FeedTable({
               ))}
             </TableBody>
           </Table>
+          {hasNextPage && (
+            <Box
+              sx={{
+                display: 'flex',
+                justify: 'center',
+                alignItems: 'center',
+                p: 2,
+              }}
+            >
+              <CircularProgress size={24} />
+            </Box>
+          )}
         </TableContainer>
       ) : (
         <TableVirtuoso
@@ -747,6 +765,11 @@ export function FeedTable({
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
           itemContent={(_index, feed) => renderRowContent(feed)}
+          endReached={() => {
+            if (hasNextPage && !isFetchingNextPage && onLoadMore) {
+              onLoadMore();
+            }
+          }}
         />
       )}
       {historyFeed && (
