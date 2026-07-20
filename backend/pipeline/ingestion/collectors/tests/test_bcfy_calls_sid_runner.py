@@ -172,6 +172,14 @@ def _context() -> grant_control.RunContext:
     return grant_control.RunContext(asyncio.Event(), asyncio.Event())
 
 
+def test_provider_timestamp_preserves_fractional_seconds() -> None:
+    timestamp = _NOW.timestamp() + 0.75
+
+    assert sid_runner._utc_timestamp(timestamp) == (
+        datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+    )
+
+
 @pytest.mark.asyncio
 async def test_accepted_batches_settle_before_an_error_surfaces() -> None:
     first = asyncio.get_running_loop().create_future()
@@ -399,6 +407,55 @@ async def test_all_null_members_start_at_live_edge_without_routing() -> None:
     assert {
         mutation.member.feed_id for mutation in store.batches[0].mutations
     } == {first.identity.feed_id, second.identity.feed_id}
+
+
+@pytest.mark.asyncio
+async def test_metadata_fetch_uses_supervisor_stop_event() -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(seconds=30),
+    )
+    context = _context()
+    page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
+
+    class StopAwareProvider:
+        def __init__(self) -> None:
+            self.shutdown_event: asyncio.Event | None = None
+
+        async def fetch_sid_page(
+            self,
+            sid: str,
+            pos: datetime.datetime | None,
+            *,
+            shutdown_event: asyncio.Event,
+        ) -> provider.CallsPageEnvelope:
+            del sid, pos
+            self.shutdown_event = shutdown_event
+            context.stop_requested.set()
+            if shutdown_event.is_set():
+                raise provider.TokenLoadStopped
+            return page
+
+    calls_provider = StopAwareProvider()
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        calls_provider,
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert calls_provider.shutdown_event is context.stop_requested
 
 
 @pytest.mark.asyncio

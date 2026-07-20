@@ -115,7 +115,7 @@ def _utc_timestamp(value: object) -> datetime.datetime | None:
         numeric = float(value)
         if not math.isfinite(numeric):
             return None
-        return datetime.datetime.fromtimestamp(int(numeric), datetime.UTC)
+        return datetime.datetime.fromtimestamp(numeric, datetime.UTC)
     except (TypeError, ValueError, OSError, OverflowError):
         return None
 
@@ -273,12 +273,11 @@ class BcfyCallsSidRunner:
                 ),
                 default=None,
             )
-            request_stop = asyncio.Event()
             try:
                 page = await self._calls_provider.fetch_sid_page(
                     grant.lease_key,
                     requested_position,
-                    shutdown_event=request_stop,
+                    shutdown_event=context.stop_requested,
                 )
             except provider.TokenLoadStopped:
                 return grant_control.RunCompleted()
