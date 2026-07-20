@@ -27,7 +27,6 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Feed } from '@transcription/common';
 
 import {
@@ -42,14 +41,12 @@ import {
   feedKey,
 } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
-import { listFeeds } from '../../service/listFeeds';
+import { useFeeds } from '../../hooks/useFeeds';
 
 export interface SettingsViewProps {
   triggerSnackbar?: (message: string) => void;
   onError?: (error: Error, titleMessage?: string) => void;
 }
-
-const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
@@ -152,40 +149,17 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
 
   const [selectedFeedToAdd, setSelectedFeedToAdd] = useState<Feed | null>(null);
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
-  const [debouncedFeedSearchQuery, setDebouncedFeedSearchQuery] = useState('');
 
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedFeedSearchQuery(feedSearchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [feedSearchQuery]);
-
-  // Fetch list of feeds to resolve feed names and allow adding new overrides
   const {
-    data: feedsData,
+    feeds,
     error: feedsError,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useInfiniteQuery({
-    queryKey: ['listFeeds', token, debouncedFeedSearchQuery],
-    queryFn: ({ pageParam }) =>
-      listFeeds(token!, {
-        limit: 50,
-        nextToken: pageParam || undefined,
-        name: debouncedFeedSearchQuery || undefined,
-      }),
-    initialPageParam: '',
-    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+  } = useFeeds({
+    token,
+    searchQuery: feedSearchQuery,
   });
-
-  const feeds = useMemo(
-    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
-    [feedsData]
-  );
 
   useEffect(() => {
     if (feedsError && onError) {

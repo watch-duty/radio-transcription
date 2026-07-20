@@ -101,15 +101,14 @@ describe('FeedConfigurationView', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
-    const mockListFeedsFn = (_, params) => {
+    vi.mocked(listFeeds).mockImplementation((_, params) => {
       let filtered = mockFeeds;
       if (params?.name) {
         const q = params.name.toLowerCase();
         filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
       }
       return Promise.resolve({ feeds: filtered, total: filtered.length });
-    };
-    vi.mocked(listFeeds).mockImplementation(mockListFeedsFn);
+    });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
     vi.mocked(resetFeed).mockResolvedValue({} as Feed);

@@ -8,11 +8,10 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useInfiniteQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import { listFeeds } from '../../service/listFeeds';
+import { useFeeds } from '../../hooks/useFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -26,9 +25,6 @@ interface FeedSearchViewProps {
   condensed?: boolean;
   onFeedSelect?: (feedId: string) => void;
 }
-
-const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
-const QUERY_DEBOUNCE_TIME_MS = 300;
 
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
@@ -244,58 +240,21 @@ export function FeedSearchView({
     tags: [],
   });
 
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
-    filters.searchQuery
-  );
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchQuery(filters.searchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [filters.searchQuery]);
-
   const {
-    data: feedsData,
+    feeds,
+    total: feedTotal,
     error: feedsError,
     isLoading: feedsLoading,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-  } = useInfiniteQuery({
-    queryKey: [
-      'listFeeds',
-      token,
-      debouncedSearchQuery,
-      filters.sourceTypes,
-      filters.sourceTypes.length,
-      filters.statuses,
-      filters.statuses.length,
-      filters.tags,
-      filters.tags.length,
-    ],
-    queryFn: ({ pageParam }) =>
-      listFeeds(token!, {
-        limit: 50,
-        nextToken: pageParam || undefined,
-        name: debouncedSearchQuery || undefined,
-        sourceTypes:
-          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
-        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
-        tags: filters.tags.length > 0 ? filters.tags : undefined,
-      }),
-    initialPageParam: '',
-    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-    refetchInterval: FEED_REFETCH_INTERVAL_MS,
+  } = useFeeds({
+    token,
+    searchQuery: filters.searchQuery,
+    sourceTypes: filters.sourceTypes,
+    statuses: filters.statuses,
+    tags: filters.tags,
   });
-
-  const feeds = useMemo(
-    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
-    [feedsData]
-  );
-  const feedTotal = feedsData?.pages[0]?.total ?? feeds.length;
 
   useEffect(() => {
     if (feedsError) {

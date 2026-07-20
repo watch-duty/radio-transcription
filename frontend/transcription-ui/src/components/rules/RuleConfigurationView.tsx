@@ -4,18 +4,13 @@ import RuleIcon from '@mui/icons-material/Rule';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Rule, RuleCreate, RuleUpdate } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeeds } from '../../hooks/useFeeds';
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
-import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
 import { RuleConfigurationEdit } from './RuleConfigurationEdit';
@@ -25,8 +20,6 @@ interface RuleConfigurationViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
-
-const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function RuleConfigurationView({
   triggerSnackbar,
@@ -51,14 +44,6 @@ export function RuleConfigurationView({
   }));
 
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
-  const [debouncedFeedSearchQuery, setDebouncedFeedSearchQuery] = useState('');
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedFeedSearchQuery(feedSearchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [feedSearchQuery]);
 
   const rulesErrorHandled = useRef<Error | null>(null);
   const feedsErrorHandled = useRef<Error | null>(null);
@@ -75,30 +60,16 @@ export function RuleConfigurationView({
   });
 
   const {
-    data: feedsData,
+    feeds,
     isLoading: feedsLoading,
     error: feedsError,
     hasNextPage: hasNextFeedsPage,
     isFetchingNextPage: isFetchingNextFeedsPage,
     fetchNextPage: fetchNextFeedsPage,
-  } = useInfiniteQuery({
-    queryKey: ['listFeeds', token, debouncedFeedSearchQuery],
-    queryFn: ({ pageParam }) =>
-      listFeeds(token!, {
-        limit: 50,
-        nextToken: pageParam || undefined,
-        name: debouncedFeedSearchQuery || undefined,
-      }),
-    initialPageParam: '',
-    getNextPageParam: (lastPage) => lastPage.nextToken || undefined,
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+  } = useFeeds({
+    token,
+    searchQuery: feedSearchQuery,
   });
-
-  const feeds = useMemo(
-    () => feedsData?.pages.flatMap((page) => page.feeds) ?? [],
-    [feedsData]
-  );
 
   const sortedFeeds = useMemo(() => {
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));
