@@ -40,6 +40,44 @@ type FailurePlanner = collections.abc.Callable[
 ]
 
 
+class _LeaseStore(typing.Protocol):
+    async def load_membership(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> (
+        ingestion_lease_store.GrantRejected
+        | ingestion_lease_store.MembershipSnapshot
+        | ingestion_lease_store.MembershipInvariantViolation
+    ):
+        """Load the authoritative membership beneath an exact SID grant."""
+        ...
+
+    async def commit_child_mutations(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        batch: ingestion_lease_store.ChildMutationBatch,
+        *,
+        actor_id: str,
+    ) -> (
+        ingestion_lease_store.GrantRejected
+        | ingestion_lease_store.BatchCommitted
+    ):
+        """Commit one closed child batch beneath an exact SID grant."""
+        ...
+
+
+class _CallsProvider(typing.Protocol):
+    async def fetch_sid_page(
+        self,
+        sid: str,
+        pos: datetime.datetime | None,
+        *,
+        shutdown_event: asyncio.Event,
+    ) -> provider.CallsPageEnvelope:
+        """Fetch one Calls page for a SID."""
+        ...
+
+
 class _BatchPool(typing.Protocol):
     async def submit(
         self,
@@ -167,8 +205,8 @@ class BcfyCallsSidRunner:
 
     def __init__(
         self,
-        store: ingestion_lease_store.IngestionLeaseStore,
-        calls_provider: provider.CallsProviderClient,
+        store: _LeaseStore,
+        calls_provider: _CallsProvider,
         work_pool: _BatchPool,
         failure_planner: FailurePlanner,
         *,

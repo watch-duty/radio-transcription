@@ -123,13 +123,13 @@ class _Provider:
     async def fetch_sid_page(
         self,
         sid: str,
-        position: datetime.datetime | None,
+        pos: datetime.datetime | None,
         *,
         shutdown_event: asyncio.Event,
     ) -> provider.CallsPageEnvelope:
         assert sid == "7017"
         assert not shutdown_event.is_set()
-        self.positions.append(position)
+        self.positions.append(pos)
         page = self.pages.pop(0)
         if not self.pages:
             self.context.stop_requested.set()
@@ -354,7 +354,7 @@ async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
         == "bcfy_calls_sid_poll_settled"
     ]
     assert len(settled) == 1
-    assert settled[0].json_fields["status"] == "completed"
+    assert getattr(settled[0], "json_fields", {}).get("status") == "completed"
 
 
 @pytest.mark.asyncio
@@ -419,7 +419,7 @@ async def test_authentication_failure_retries_the_owned_sid() -> None:
         async def fetch_sid_page(
             self,
             sid: str,
-            position: datetime.datetime | None,
+            pos: datetime.datetime | None,
             *,
             shutdown_event: asyncio.Event,
         ) -> provider.CallsPageEnvelope:
@@ -431,7 +431,7 @@ async def test_authentication_failure_retries_the_owned_sid() -> None:
                 )
             return await super().fetch_sid_page(
                 sid,
-                position,
+                pos,
                 shutdown_event=shutdown_event,
             )
 
@@ -517,13 +517,13 @@ async def test_grant_loss_during_fetch_still_settles_admitted_page() -> None:
         async def fetch_sid_page(
             self,
             sid: str,
-            position: datetime.datetime | None,
+            pos: datetime.datetime | None,
             *,
             shutdown_event: asyncio.Event,
         ) -> provider.CallsPageEnvelope:
             page = await super().fetch_sid_page(
                 sid,
-                position,
+                pos,
                 shutdown_event=shutdown_event,
             )
             context.grant_lost.set()

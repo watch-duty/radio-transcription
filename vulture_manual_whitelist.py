@@ -14,8 +14,10 @@ _.get_value
 # Calls batch execution lands before the later stacked runtime-composition PR
 # wires these public classes. Vulture excludes their focused tests.
 from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline
+from backend.pipeline.ingestion.collectors.bcfy_calls import sid_runner
 from backend.pipeline.ingestion.collectors.bcfy_calls import work_pool
 pipeline.BcfyCallsFeedBatchExecutor
+sid_runner.BcfyCallsSidRunner
 work_pool.BcfyCallsWorkPool
 
 # These PRs intentionally introduce the Lease lifecycle and membership storage
