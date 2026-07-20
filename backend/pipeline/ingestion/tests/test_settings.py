@@ -60,6 +60,7 @@ class TestCollectorSettings(unittest.TestCase):
             "CAP_BCFY_FEEDS": "200",
             "CAP_BCFY_CALLS": "400",
             "CAP_OPENMHZ": "700",
+            "CAP_FIRE_NOTIFICATIONS": "500",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -113,7 +114,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 200)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 500)
 
     def test_phase1_expected_inputs(self) -> None:
         """Loads Phase 1 lease-admission settings from environment."""
@@ -186,7 +187,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
@@ -220,7 +221,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
 
     def test_caps_keys_match_default_caps_registry(self) -> None:
         """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""

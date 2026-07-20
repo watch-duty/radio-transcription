@@ -6,6 +6,7 @@ import os
 import unittest
 import uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
@@ -203,6 +204,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         exit_code: int = 0,
         wait_delay: float = 0.01,
         wait_exception: Exception | None = None,
+        clock: Any = None,
     ):
         """Create side effect for _create_ffmpeg_process that writes segment files."""
 
@@ -210,8 +212,17 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _url: str, segment_pattern: str, _auth: str = ""
         ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
-            for index, segment in enumerate(segments):
-                (segment_dir / f"chunk_{index:06d}.pcm").write_bytes(segment)
+            writing_done = asyncio.Event()
+
+            async def write_segments_task():
+                for index, segment in enumerate(segments):
+                    await asyncio.sleep(1.0)
+                    (segment_dir / f"chunk_{index:06d}.pcm").write_bytes(
+                        segment
+                    )
+                    if clock is not None:
+                        clock.advance(15)
+                writing_done.set()
 
             mock_proc = AsyncMock()
             mock_proc.pid = 12345
@@ -219,7 +230,11 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             mock_proc.terminate = MagicMock()
             mock_proc.stderr.readline = AsyncMock(return_value=b"")
 
+            write_task = asyncio.create_task(write_segments_task())
+            mock_proc._write_task = write_task
+
             async def _wait_impl() -> int:
+                await writing_done.wait()
                 await asyncio.sleep(wait_delay)
                 if wait_exception is not None:
                     raise wait_exception
@@ -432,14 +447,35 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], chunk_timestamps[-1])
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_stops_capture_after_partial_upload(
         self,
         mock_create_ffmpeg,
+        mock_now_utc,
     ) -> None:
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
+        import datetime  # noqa: PLC0415
+
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+
+        class MockClock:
+            def __init__(self, start_time: datetime.datetime) -> None:
+                self.current = start_time
+
+            def __call__(self) -> datetime.datetime:
+                return self.current
+
+            def advance(self, seconds: float) -> None:
+                self.current += datetime.timedelta(seconds=seconds)
+
+        clock = MockClock(t0)
+        mock_now_utc.side_effect = clock
+
         feed = await self._lease_feed("shutdown-feed")
 
         # Mock ffmpeg: 3 finalized segments; shutdown is checked between yields
@@ -448,7 +484,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _FLAC_MAGIC + b"\xcd" * 100,
             _FLAC_MAGIC + b"\xef" * 110,
         ]
-        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(segments)
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
+            segments, clock=clock
+        )
 
         shutdown = asyncio.Event()
         gcs_paths = []

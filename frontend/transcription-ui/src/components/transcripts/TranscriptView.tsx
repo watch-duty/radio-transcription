@@ -270,6 +270,7 @@ export function TranscriptView({
     centerWindowOn,
   } = useAudioTimelineWindow({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,

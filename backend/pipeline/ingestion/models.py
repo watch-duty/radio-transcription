@@ -191,7 +191,8 @@ class CapturedChunk:
             anchor, which would conflate real backlog with ordinary
             long-session source-clock drift). ``None`` when there is no
             prior segment to compare against, or the collector doesn't
-            support the measurement.
+            support the measurement. In the Icecast collector, this lag also
+            drives timeline re-anchoring when it exceeds the drift threshold.
     """
 
     audio_bytes: bytes
