@@ -23,6 +23,7 @@ class AnnotationType(StrEnum):
     """Enum for annotation type."""
 
     TRANSCRIPT = "TRANSCRIPT"
+    USER_GENERATED_TRANSCRIPT = "USER_GENERATED_TRANSCRIPT"
     EVALUATION = "EVALUATION"
     WAVEFORM = "WAVEFORM"
 
@@ -58,6 +59,17 @@ class TranscriptAnnotation(BaseModel):
     created_at: datetime
 
 
+class UserGeneratedTranscriptAnnotation(BaseModel):
+    """Annotation for a user labeled transcript."""
+
+    audio_segment_id: str
+    type: Literal[AnnotationType.USER_GENERATED_TRANSCRIPT] = (
+        AnnotationType.USER_GENERATED_TRANSCRIPT
+    )
+    data: TranscriptAnnotationData
+    created_at: datetime
+
+
 class EvaluationAnnotation(BaseModel):
     """Annotation for an evaluation."""
 
@@ -77,7 +89,12 @@ class WaveformAnnotation(BaseModel):
 
 
 Annotation = Annotated[
-    Union[TranscriptAnnotation, EvaluationAnnotation, WaveformAnnotation],
+    Union[
+        TranscriptAnnotation,
+        UserGeneratedTranscriptAnnotation,
+        EvaluationAnnotation,
+        WaveformAnnotation,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -86,6 +103,15 @@ class TranscriptAnnotationCreate(BaseModel):
     """Model for creating a transcript annotation."""
 
     type: Literal[AnnotationType.TRANSCRIPT] = AnnotationType.TRANSCRIPT
+    data: TranscriptAnnotationData
+
+
+class UserGeneratedTranscriptAnnotationCreate(BaseModel):
+    """Model for creating a user labeled transcript annotation."""
+
+    type: Literal[AnnotationType.USER_GENERATED_TRANSCRIPT] = (
+        AnnotationType.USER_GENERATED_TRANSCRIPT
+    )
     data: TranscriptAnnotationData
 
 
@@ -106,6 +132,7 @@ class WaveformAnnotationCreate(BaseModel):
 AnnotationCreate = Annotated[
     Union[
         TranscriptAnnotationCreate,
+        UserGeneratedTranscriptAnnotationCreate,
         EvaluationAnnotationCreate,
         WaveformAnnotationCreate,
     ],

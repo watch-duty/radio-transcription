@@ -17,6 +17,7 @@ from backend.services.audio_segments.models import (
     ListAudioSegmentsResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
+    UserGeneratedTranscriptAnnotation,
     WaveformAnnotation,
     WaveformAnnotationData,
 )
@@ -219,6 +220,30 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data["audio_segment_id"], _SEGMENT_ID)
         self.assertEqual(data["type"], "TRANSCRIPT")
         self.assertEqual(data["data"]["text"], "hello test")
+        self.mock_service.add_annotation.assert_called_once()
+
+    def test_add_user_generated_transcript_annotation_success(self) -> None:
+        """Test adding a user labeled transcript annotation successfully."""
+        payload = {
+            "type": "USER_GENERATED_TRANSCRIPT",
+            "data": {"text": "hello test manual", "errors": []},
+        }
+        mock_annotation = UserGeneratedTranscriptAnnotation(
+            audio_segment_id=_SEGMENT_ID,
+            type=AnnotationType.USER_GENERATED_TRANSCRIPT,
+            data=TranscriptAnnotationData(text="hello test manual", errors=[]),
+            created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.mock_service.add_annotation.return_value = mock_annotation
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["audio_segment_id"], _SEGMENT_ID)
+        self.assertEqual(data["type"], "USER_GENERATED_TRANSCRIPT")
+        self.assertEqual(data["data"]["text"], "hello test manual")
         self.mock_service.add_annotation.assert_called_once()
 
     def test_add_evaluation_annotation_success(self) -> None:
