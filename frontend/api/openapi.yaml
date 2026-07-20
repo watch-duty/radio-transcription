@@ -384,6 +384,26 @@ components:
           type: string
       type: object
       additionalProperties: false
+    FeedSearchOptionsResponse:
+      properties:
+        sourceTypes:
+          items:
+            type: string
+          type: array
+        statuses:
+          items:
+            type: string
+          type: array
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      required:
+        - sourceTypes
+        - statuses
+        - tags
+      type: object
+      additionalProperties: false
     AuditTrailValues:
       properties:
         id:
@@ -1240,6 +1260,55 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/FeedCreate"
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/search-options:
+    get:
+      operationId: GetFeedSearchOptions
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedSearchOptionsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters: []
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}:
     get:
