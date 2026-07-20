@@ -62,7 +62,7 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         """
         self._executor = executor
         self._concurrency = _require_positive(concurrency, "concurrency")
-        self._queue: asyncio.Queue[_QueuedBatch[BatchT, ResultT] | None] = (
+        self._queue: asyncio.Queue[_QueuedBatch[BatchT, ResultT]] = (
             asyncio.Queue(
                 maxsize=_require_positive(queue_capacity, "queue_capacity")
             )
@@ -76,6 +76,7 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         self._submissions_drained = asyncio.Event()
         self._submissions_drained.set()
         self._workers_started = asyncio.Event()
+        self._workers_stopped = asyncio.Event()
         self._worker_owner: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
 
@@ -94,11 +95,26 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
             self._run_workers(),
             name="bcfy-calls-work-pool",
         )
-        await self._workers_started.wait()
-        if self._worker_owner.done():
-            self._worker_owner.result()
-        self._started = True
-        self._admission_open = True
+        started_wait = asyncio.create_task(self._workers_started.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                (started_wait, self._worker_owner),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self._worker_owner in done:
+                self._worker_owner.result()
+            self._started = True
+            self._admission_open = True
+        except BaseException:
+            self._worker_owner.cancel()
+            await asyncio.gather(
+                self._worker_owner,
+                return_exceptions=True,
+            )
+            raise
+        finally:
+            started_wait.cancel()
+            await asyncio.gather(started_wait, return_exceptions=True)
 
     async def submit(
         self,
@@ -124,12 +140,29 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         queued = _QueuedBatch(batch=batch, completion=completion)
         self._submitting += 1
         self._submissions_drained.clear()
+        admission = asyncio.create_task(self._queue.put(queued))
+        workers_stopped = asyncio.create_task(self._workers_stopped.wait())
+        accepted = False
         try:
-            await self._queue.put(queued)
-        except BaseException:
-            completion.cancel()
-            raise
+            done, _pending = await asyncio.wait(
+                (admission, workers_stopped),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if admission not in done:
+                message = "Broadcastify Calls work pool workers have terminated"
+                raise RuntimeError(message)
+            admission.result()
+            accepted = True
         finally:
+            if not accepted:
+                completion.cancel()
+            admission.cancel()
+            workers_stopped.cancel()
+            await asyncio.gather(
+                admission,
+                workers_stopped,
+                return_exceptions=True,
+            )
             self._submitting -= 1
             if self._submitting == 0:
                 self._submissions_drained.set()
@@ -141,7 +174,8 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         Repeated and concurrent close calls await the same drain operation.
 
         Raises:
-            RuntimeError: The pool has not been started.
+            RuntimeError: The pool has not been started or workers stopped
+                before the accepted work drained.
         """
         if not self._started:
             message = "Broadcastify Calls work pool has not been started"
@@ -159,29 +193,42 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
 
     async def _run_workers(self) -> None:
         """Own all fixed workers in one structured-concurrency scope."""
-        async with asyncio.TaskGroup() as task_group:
-            for worker_index in range(self._concurrency):
-                task_group.create_task(
-                    self._worker(),
-                    name=f"bcfy-calls-work-pool-{worker_index}",
-                )
-            self._workers_started.set()
+        try:
+            async with asyncio.TaskGroup() as task_group:
+                for worker_index in range(self._concurrency):
+                    task_group.create_task(
+                        self._worker(),
+                        name=f"bcfy-calls-work-pool-{worker_index}",
+                    )
+                self._workers_started.set()
+        finally:
+            self._admission_open = False
+            self._workers_stopped.set()
+            await self._submissions_drained.wait()
+            self._cancel_queued_completions()
 
     async def _worker(self) -> None:
-        """Execute queued batches until the post-drain stop marker arrives."""
+        """Execute queued batches until the worker owner stops the pool."""
         while True:
             queued = await self._queue.get()
             try:
-                if queued is None:
-                    return
                 try:
                     result = await self._executor.execute(queued.batch)
                 except asyncio.CancelledError:
                     queued.completion.cancel()
-                    raise
+                    worker = asyncio.current_task()
+                    if worker is None or worker.cancelling():
+                        raise
                 except Exception as error:
                     if not queued.completion.done():
                         queued.completion.set_exception(error)
+                    worker = asyncio.current_task()
+                    if worker is not None and worker.cancelling():
+                        raise asyncio.CancelledError from error
+                except BaseException as error:
+                    if not queued.completion.done():
+                        queued.completion.set_exception(error)
+                    raise
                 else:
                     if not queued.completion.done():
                         queued.completion.set_result(result)
@@ -190,14 +237,34 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
 
     async def _drain_and_close(self) -> None:
         """Close the admission race, drain work, and stop fixed workers."""
-        await self._submissions_drained.wait()
-        await self._queue.join()
-        for _worker_index in range(self._concurrency):
-            await self._queue.put(None)
+        try:
+            await self._submissions_drained.wait()
+            await self._queue.join()
 
-        worker_owner = self._worker_owner
-        if worker_owner is None:
-            message = "started pool is missing its worker owner"
-            raise RuntimeError(message)
-        await worker_owner
-        self._closed = True
+            worker_owner = self._worker_owner
+            if worker_owner is None:
+                message = "started pool is missing its worker owner"
+                raise RuntimeError(message)
+            if worker_owner.done():
+                if worker_owner.cancelled():
+                    message = "Broadcastify Calls work pool workers terminated"
+                    raise RuntimeError(message)
+                worker_owner.result()
+            else:
+                worker_owner.cancel()
+                try:
+                    await worker_owner
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            self._closed = True
+
+    def _cancel_queued_completions(self) -> None:
+        """Settle work left behind by an unexpectedly stopped worker owner."""
+        while True:
+            try:
+                queued = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            queued.completion.cancel()
+            self._queue.task_done()

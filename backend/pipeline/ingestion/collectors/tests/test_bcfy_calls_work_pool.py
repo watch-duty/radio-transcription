@@ -146,6 +146,34 @@ class TestBcfyCallsWorkPool(unittest.IsolatedAsyncioTestCase):
         finally:
             await pool.close()
 
+    async def test_batch_local_cancellation_only_settles_its_batch(
+        self,
+    ) -> None:
+        executed: list[str] = []
+
+        async def execute(batch: str) -> str:
+            executed.append(batch)
+            if batch == "cancelled":
+                raise asyncio.CancelledError
+            return batch.upper()
+
+        pool = work_pool.BcfyCallsWorkPool(
+            _Executor(execute),
+            concurrency=1,
+            queue_capacity=1,
+        )
+        await pool.start()
+        try:
+            cancelled = await pool.submit("cancelled")
+            succeeded = await pool.submit("good")
+
+            with self.assertRaises(asyncio.CancelledError):
+                await cancelled
+            self.assertEqual(await succeeded, "GOOD")
+            self.assertEqual(executed, ["cancelled", "good"])
+        finally:
+            await pool.close()
+
     async def test_cancelled_worker_settles_active_completion(self) -> None:
         started = asyncio.Event()
 
@@ -172,6 +200,136 @@ class TestBcfyCallsWorkPool(unittest.IsolatedAsyncioTestCase):
             await completion
         with self.assertRaises(asyncio.CancelledError):
             await owner_task
+
+    async def test_cancelled_worker_exits_when_executor_reports_uncertainty(
+        self,
+    ) -> None:
+        started = asyncio.Event()
+
+        async def execute(batch: str) -> str:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as error:
+                message = "outcome unknown"
+                raise RuntimeError(message) from error
+            return batch
+
+        pool = work_pool.BcfyCallsWorkPool(
+            _Executor(execute),
+            concurrency=1,
+            queue_capacity=1,
+        )
+        await pool.start()
+        completion = await pool.submit("one")
+        await started.wait()
+
+        worker_owner = pool._worker_owner
+        self.assertIsNotNone(worker_owner)
+        owner_task = typing.cast("asyncio.Task[None]", worker_owner)
+        owner_task.cancel()
+
+        with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
+            await completion
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(owner_task, timeout=1)
+
+    async def test_cancelled_worker_settles_queued_completions(self) -> None:
+        started = asyncio.Event()
+
+        async def execute(batch: str) -> str:
+            started.set()
+            await asyncio.Event().wait()
+            return batch
+
+        pool = work_pool.BcfyCallsWorkPool(
+            _Executor(execute),
+            concurrency=1,
+            queue_capacity=2,
+        )
+        await pool.start()
+        active = await pool.submit("active")
+        await started.wait()
+        queued = await pool.submit("queued")
+
+        worker_owner = pool._worker_owner
+        self.assertIsNotNone(worker_owner)
+        owner_task = typing.cast("asyncio.Task[None]", worker_owner)
+        owner_task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await active
+        with self.assertRaises(asyncio.CancelledError):
+            await queued
+        with self.assertRaises(asyncio.CancelledError):
+            await owner_task
+        with self.assertRaisesRegex(RuntimeError, "workers terminated"):
+            await asyncio.wait_for(pool.close(), timeout=1)
+
+    async def test_start_cancellation_stops_worker_owner(self) -> None:
+        entered = asyncio.Event()
+        stopped = asyncio.Event()
+
+        class _BlockedStartPool(
+            work_pool.BcfyCallsWorkPool[str, str],
+        ):
+            async def _run_workers(self) -> None:
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.set()
+
+        pool = _BlockedStartPool(
+            _Executor(lambda batch: asyncio.sleep(0, batch)),
+            concurrency=1,
+            queue_capacity=1,
+        )
+
+        start_task = asyncio.create_task(pool.start())
+        await entered.wait()
+        start_task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await start_task
+        await asyncio.wait_for(stopped.wait(), timeout=1)
+        worker_owner = pool._worker_owner
+        self.assertIsNotNone(worker_owner)
+        self.assertTrue(typing.cast("asyncio.Task[None]", worker_owner).done())
+
+    async def test_cancelled_completion_does_not_discard_accepted_work(
+        self,
+    ) -> None:
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        executed: list[str] = []
+
+        async def execute(batch: str) -> str:
+            executed.append(batch)
+            if batch == "first":
+                first_started.set()
+                await release_first.wait()
+            return batch
+
+        pool = work_pool.BcfyCallsWorkPool(
+            _Executor(execute),
+            concurrency=1,
+            queue_capacity=1,
+        )
+        await pool.start()
+        try:
+            first = await pool.submit("first")
+            await first_started.wait()
+            abandoned_observer = await pool.submit("second")
+            abandoned_observer.cancel()
+
+            release_first.set()
+            self.assertEqual(await first, "first")
+            await asyncio.wait_for(pool.close(), timeout=1)
+            self.assertEqual(executed, ["first", "second"])
+        finally:
+            release_first.set()
+            await pool.close()
 
     async def test_close_rejects_new_work_and_drains_accepted_batches(
         self,
