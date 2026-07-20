@@ -184,6 +184,7 @@ export function RuleConfigurationView({
         targetFeeds: rule.scope.targetFeeds || [],
       },
       conditions: rule.conditions,
+      tags: rule.tags ?? [],
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };

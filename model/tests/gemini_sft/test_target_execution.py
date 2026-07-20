@@ -470,7 +470,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
 
         mock_genai.Client.assert_called_once_with(
-            vertexai=True,
+            enterprise=True,
             project="project",
             location="us-central1",
         )

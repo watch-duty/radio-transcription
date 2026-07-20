@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
@@ -104,6 +104,11 @@ class TestHandle:
         mock_publisher = MagicMock()
         mock_publisher.publish.return_value.result.return_value = "msg-id"
 
+        mock_executor = MagicMock()
+        mock_executor.submit.side_effect = lambda fn, *args, **kwargs: fn(
+            *args, **kwargs
+        )
+
         with (
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.feed_store",
@@ -118,6 +123,10 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main._MIRROR_EXECUTOR",
+                mock_executor,
+            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -860,48 +869,42 @@ class TestHandle:
         # matches the source object name (we preserve the path).
         copy_args = gcs.bucket.return_value.copy_blob.call_args
         assert copy_args[0][2] == "fire-ca/20260326/fire_20260326_143022.mp3"
-        # timeout kwarg is set so the rewrite cannot hang past the
-        # Cloud Run request deadline.
         assert copy_args.kwargs["timeout"] == 30
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_dual_write_failure_does_not_fail_handler(
+    def test_dual_write_mirrors_even_when_feed_unresolved_or_deactivated(
         self, mock_store, _patch_globals
     ) -> None:
-        feed = self._active_feed()
-        self._set_feed(mock_store, feed)
-
-        # Capture call order across both mocks so the heartbeat-before-mirror
-        # invariant is verified explicitly — guards against a future refactor
-        # that swaps the two lines and silently suppresses the heartbeat.
-        call_order: list[str] = []
-        mock_store.record_heartbeat.side_effect = lambda *_args, **_kwargs: (
-            call_order.append("heartbeat")
-        )
-
-        gcs = _patch_globals["gcs"]
-
-        def _failing_copy(*_args: object, **_kw: object) -> None:
-            call_order.append("copy_blob")
-            msg = "Cross-project IAM denied"
-            raise RuntimeError(msg)
-
-        gcs.bucket.return_value.copy_blob.side_effect = _failing_copy
+        self._set_feed(mock_store, None)
 
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
             "wd-echo-recordings-dev",
         ):
-            # Must complete without raising — mirror failure is best-effort.
             _handle(self._make_event())
 
-        # Ordering invariant: heartbeat fires first; mirror is best-effort after.
-        assert call_order == ["heartbeat", "copy_blob"], call_order
-        # Prod path completed (heartbeat recorded) and the feed was NOT
-        # punished for the dev-side failure.
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.assert_called_once()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_precondition_failed_swallowed(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed = self._active_feed()
+        self._set_feed(mock_store, feed)
+
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.side_effect = PreconditionFailed(
+            "Already exists"
+        )
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
+            "wd-echo-recordings-dev",
+        ):
+            _handle(self._make_event())
+
         self._assert_heartbeat_recorded(mock_store, feed["id"])
-        mock_store.record_failure.assert_not_called()
-        mock_store.record_non_budgeted_failure.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

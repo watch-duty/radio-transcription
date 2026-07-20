@@ -18,7 +18,6 @@ from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion import (
     collector_runtime,
-    failure_policy,
     memory_watchdog,
 )
 from backend.pipeline.ingestion.collector_runtime import (
@@ -276,7 +275,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
             SourceType.BCFY_FEEDS: 240,
             SourceType.BCFY_CALLS: 600,
             SourceType.OPENMHZ: 900,
-            SourceType.FIRE_NOTIFICATIONS: 300,
+            SourceType.FIRE_NOTIFICATIONS: 600,
         },
     }
     defaults.update(overrides)
@@ -588,7 +587,7 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
                 SourceType.OPENMHZ: 900,
-                SourceType.FIRE_NOTIFICATIONS: 300,
+                SourceType.FIRE_NOTIFICATIONS: 600,
             },
         )
         rt._shutdown = asyncio.Event()
@@ -812,6 +811,35 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         rt._store.release_feed.assert_not_called()
+
+    async def test_shutdown_drains_remaining_chunks_successfully(self) -> None:
+        """When shutdown is set, in-flight/flushed chunks from the generator are still uploaded and bookmarked."""
+
+        async def _drain_generator(feed, shutdown, _resources):
+            if shutdown.is_set():
+                yield _make_captured_chunk(b"drained_audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_drain_generator,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._shutdown.set()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        mock_upload = _mock_upload_audio()
+        mock_publish = _mock_pubsub_publish()
+        with mock_upload as upload_sp, mock_publish as publish_sp:
+            await rt._process_feed(_FEED)
+
+        upload_sp.assert_called_once()
+        rt._store.update_feed_progress.assert_called_once()
+        publish_sp.assert_called_once()
 
 
 class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
@@ -1935,7 +1963,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         SourceType.BCFY_FEEDS: 240,
         SourceType.BCFY_CALLS: 600,
         SourceType.OPENMHZ: 900,
-        SourceType.FIRE_NOTIFICATIONS: 300,
+        SourceType.FIRE_NOTIFICATIONS: 600,
     }
 
     def test_cold_start_bounds_sum_at_total_slack(self) -> None:
@@ -1952,7 +1980,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertEqual(sum(limits.values()), 800)
 
     def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
-        # total_slack=3000 > sum(caps)=2040 → each branch gets its cap,
+        # total_slack=3000 > sum(caps)=2340 → each branch gets its cap,
         # leftover slack is unassigned.
         held = dict.fromkeys(self.CAPS, 0)
         limits = CollectorRuntime._calculate_branch_limits(
@@ -1961,8 +1989,8 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertEqual(limits[SourceType.OPENMHZ], 900)
-        self.assertEqual(limits[SourceType.FIRE_NOTIFICATIONS], 300)
-        self.assertEqual(sum(limits.values()), 2040)
+        self.assertEqual(limits[SourceType.FIRE_NOTIFICATIONS], 600)
+        self.assertEqual(sum(limits.values()), 2340)
 
     def test_type_at_cap_yields_zero_for_that_branch(self) -> None:
         held = {
@@ -2009,7 +2037,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
-        self.assertLessEqual(limits[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertLessEqual(limits[SourceType.FIRE_NOTIFICATIONS], 600)
 
     def test_held_missing_keys_treated_as_zero(self) -> None:
         # Future caller passes a sparse dict (only types it currently
@@ -2035,7 +2063,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
                 SourceType.OPENMHZ: 900,
-                SourceType.FIRE_NOTIFICATIONS: 300,
+                SourceType.FIRE_NOTIFICATIONS: 600,
             },
         )
         rt._shutdown = asyncio.Event()
@@ -2081,7 +2109,7 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         SourceType.BCFY_FEEDS: 240,
         SourceType.BCFY_CALLS: 600,
         SourceType.OPENMHZ: 900,
-        SourceType.FIRE_NOTIFICATIONS: 300,
+        SourceType.FIRE_NOTIFICATIONS: 600,
     }
 
     def test_recovery_limit_helper_includes_primary_counts(self) -> None:
@@ -2370,7 +2398,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
         SourceType.BCFY_FEEDS: 240,
         SourceType.BCFY_CALLS: 600,
         SourceType.OPENMHZ: 900,
-        SourceType.FIRE_NOTIFICATIONS: 300,
+        SourceType.FIRE_NOTIFICATIONS: 600,
     }
 
     async def test_normal_cycle_emits_required_schema_and_counts(self) -> None:
@@ -3249,10 +3277,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._releasing_feeds = set()
 
         with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-            return_value=(
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ),
+            "backend.pipeline.ingestion.collector_runtime.failure_policy.consumes_failure_budget",
+            return_value=True,
         ):
             await rt._process_feed(_FEED)
 
@@ -3700,10 +3726,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
             ),
             mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-                return_value=(
-                    failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-                ),
+                "backend.pipeline.ingestion.collector_runtime.failure_policy.consumes_failure_budget",
+                return_value=True,
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",

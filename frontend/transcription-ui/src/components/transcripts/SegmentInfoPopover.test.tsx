@@ -101,4 +101,24 @@ describe('SegmentInfoPopover', () => {
       screen.queryByLabelText('copy external segment id')
     ).not.toBeInTheDocument();
   });
+
+  it('renders degradation reasons as segment errors inside the popover', async () => {
+    render(
+      <SegmentInfoPopover
+        audioSegment={mockAudioSegment}
+        triggerSnackbar={mockTriggerSnackbar}
+        degradationReasons={[
+          'Audio cut off at the end',
+          'System max tokens reached',
+        ]}
+      />
+    );
+
+    const infoButton = screen.getByLabelText('view segment info');
+    fireEvent.click(infoButton);
+
+    expect(await screen.findByText('Segment error(s)')).toBeInTheDocument();
+    expect(screen.getByText('Audio cut off at the end')).toBeInTheDocument();
+    expect(screen.getByText('System max tokens reached')).toBeInTheDocument();
+  });
 });

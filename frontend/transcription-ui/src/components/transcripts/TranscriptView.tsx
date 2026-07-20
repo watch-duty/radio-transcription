@@ -269,6 +269,7 @@ export function TranscriptView({
     centerWindowOn,
   } = useAudioTimelineWindow({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,
@@ -317,17 +318,21 @@ export function TranscriptView({
   // Resolve a target id to a playable segment — the raw segment by id, else the
   // consolidated entry containing it (a raw id inside a silence bundle) — and play it.
   const playSegmentById = useCallback(
-    (targetId: string) => {
+    (targetId: string, offsetSeconds?: number) => {
       const raw = rawAudioSegments.find((s) => s.id === targetId);
       if (raw?.playbackAudioUri) {
-        togglePlay(raw.id, raw.playbackAudioUri);
+        togglePlay(raw.id, raw.playbackAudioUri, offsetSeconds);
         return;
       }
       const consolidated = audioSegments.find((t) =>
         isWithinSegment(t, targetId)
       );
       if (consolidated?.playbackAudioUri) {
-        togglePlay(consolidated.id, consolidated.playbackAudioUri);
+        togglePlay(
+          consolidated.id,
+          consolidated.playbackAudioUri,
+          offsetSeconds
+        );
       }
     },
     [rawAudioSegments, audioSegments, togglePlay]
@@ -474,7 +479,7 @@ export function TranscriptView({
     }
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
-  const handleClipClick = (segmentId: string) => {
+  const handleClipClick = (segmentId: string, offsetSeconds?: number) => {
     const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -483,7 +488,12 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
+    setPlaybackIntent('playing');
     setHighlightedSegmentId(segmentId);
+    playSegmentById(segmentId, offsetSeconds);
+    if (offsetSeconds !== undefined) {
+      handleSeek();
+    }
   };
 
   const scrollListToNearestTime = useCallback(

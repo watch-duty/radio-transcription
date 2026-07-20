@@ -144,11 +144,14 @@ def get_pipeline(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
         )
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ).with_resource_hints(min_ram="8GB").with_outputs(
+        DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+    )
 
     uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
+        publish_with_ordering_key=True,
     )
 
     # Route all DLQ outputs to a dedicated topic
@@ -160,6 +163,7 @@ def get_pipeline(
     dlq_messages | "WriteDlqToPubSub" >> WriteToPubSub(
         topic=options.dlq_topic or f"{options.output_topic}-dlq",
         with_attributes=True,
+        publish_with_ordering_key=True,
     )
 
     return pipeline

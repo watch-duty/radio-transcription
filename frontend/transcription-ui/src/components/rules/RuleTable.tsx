@@ -102,8 +102,8 @@ function VirtuosoTableRow(
   const gridTemplateColumns = isMobile
     ? '1fr auto'
     : allowEdit
-      ? '1.5fr 1fr 2fr 0.8fr 60px'
-      : '1.5fr 1fr 2fr 0.8fr';
+      ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+      : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   return (
     <TableRow
@@ -114,12 +114,13 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
-        gridTemplateRows: isMobile ? 'auto auto auto' : 'unset',
+        gridTemplateRows: isMobile ? 'auto auto auto auto' : 'unset',
         gridTemplateAreas: isMobile
           ? `
             "name-desc  actions"
             "scope      status"
             "conditions conditions"
+            "tags       tags"
           `
           : 'unset',
         width: '100%',
@@ -259,13 +260,14 @@ export function RuleTable({
   ]);
 
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 2fr 0.8fr 60px'
-    : '1.5fr 1fr 2fr 0.8fr';
+    ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+    : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   const columns = [
     { key: 'name', display: 'Rule Name' },
     { key: 'scope', display: 'Scope' },
     { key: 'conditions', display: 'Conditions' },
+    { key: 'tags', display: 'Tags' },
     { key: 'status', display: 'Status' },
   ];
 
@@ -288,7 +290,7 @@ export function RuleTable({
             bgcolor: 'background.paper',
           }}
         >
-          {key === 'conditions' ? (
+          {key === 'conditions' || key === 'tags' ? (
             display
           ) : (
             <TableSortLabel
