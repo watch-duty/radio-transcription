@@ -11,6 +11,13 @@ from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvide
 MockCacheProvider
 _.get_value
 
+# Calls batch execution lands before the later stacked runtime-composition PR
+# wires these public classes. Vulture excludes their focused tests.
+from backend.pipeline.ingestion.collectors.bcfy_calls.pipeline import BcfyCallsFeedBatchExecutor
+from backend.pipeline.ingestion.collectors.bcfy_calls.work_pool import BcfyCallsWorkPool
+BcfyCallsFeedBatchExecutor
+BcfyCallsWorkPool
+
 # These PRs intentionally introduce the Lease lifecycle and membership storage
 # boundaries before the generic runtime starts calling them. Vulture excludes
 # the focused tests, so keep only dormant public methods, returned result fields,
