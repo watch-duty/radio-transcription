@@ -36,8 +36,10 @@ import {
   DEFAULT_VOLUME_DB,
   PAN_OPTIONS,
   SPEED_OPTIONS,
+  STORAGE_KEYS,
   VOLUME_MAX_DB,
   VOLUME_MIN_DB,
+  feedKey,
 } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -54,17 +56,6 @@ export interface FeedAudioOverride {
   volumeDb: number;
   pan: number;
   speed: number;
-}
-
-const STORAGE_KEYS = {
-  themeMode: 'radio.themeMode',
-  volumeDb: 'radio.audio.volumeDb',
-  pan: 'radio.audio.pan',
-  speed: 'radio.audio.speed',
-};
-
-function feedKey(base: string, feedId: string): string {
-  return `${base}.${feedId}`;
 }
 
 function readStoredNumber(key: string): number | null {
@@ -247,17 +238,25 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
       feedKey(STORAGE_KEYS.volumeDb, feedId),
       String(clamped)
     );
-    setFeedOverrides(getStoredFeedOverrides());
+    setFeedOverrides((prev) =>
+      prev.map((item) =>
+        item.feedId === feedId ? { ...item, volumeDb: clamped } : item
+      )
+    );
   }, []);
 
   const handleFeedPanChange = useCallback((feedId: string, pan: number) => {
     localStorage.setItem(feedKey(STORAGE_KEYS.pan, feedId), String(pan));
-    setFeedOverrides(getStoredFeedOverrides());
+    setFeedOverrides((prev) =>
+      prev.map((item) => (item.feedId === feedId ? { ...item, pan } : item))
+    );
   }, []);
 
   const handleFeedSpeedChange = useCallback((feedId: string, speed: number) => {
     localStorage.setItem(feedKey(STORAGE_KEYS.speed, feedId), String(speed));
-    setFeedOverrides(getStoredFeedOverrides());
+    setFeedOverrides((prev) =>
+      prev.map((item) => (item.feedId === feedId ? { ...item, speed } : item))
+    );
   }, []);
 
   const handleRemoveFeedOverride = useCallback(

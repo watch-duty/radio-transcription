@@ -23,3 +23,16 @@ export const DEFAULT_SPEED = 1;
 // pulled to exactly the default so the slider settles there when dragged near
 // it. See `snapVolumeToDefault` in `WebAudioPlayer.ts`.
 export const VOLUME_SNAP_DB = 1;
+
+// Persistence keys for audio and application settings in localStorage.
+export const STORAGE_KEYS = {
+  themeMode: 'radio.themeMode',
+  volumeDb: 'radio.audio.volumeDb',
+  pan: 'radio.audio.pan',
+  speed: 'radio.audio.speed',
+} as const;
+
+export function feedKey(base: string, feedId?: string): string {
+  return feedId ? `${base}.${feedId}` : base;
+}
+
