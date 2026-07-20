@@ -11,13 +11,9 @@ import math
 import typing
 import uuid
 
-from backend.pipeline.ingestion import failure_policy, grant_control
+from backend.pipeline.ingestion import failure_policy, grant_control, models
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline, provider
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemBatchOutcome,
-    ItemFailure,
-)
-from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 logger = logging.getLogger(__name__)
@@ -88,7 +84,13 @@ class _BatchPool(typing.Protocol):
 
 
 class _FeedState:
-    """Grant-local publication and duplicate-suppression state for one Feed."""
+    """Grant-local publication and duplicate-suppression state for one Feed.
+
+    Attributes:
+        session_id: Publication session shared by this grant-local Feed run.
+        next_sequence: Next publication sequence after settled Feed work.
+        recent_committed_urls: Bounded set of recently committed source URLs.
+    """
 
     def __init__(self) -> None:
         self.session_id = str(uuid.uuid4())
@@ -123,15 +125,27 @@ def _utc_timestamp(value: object) -> datetime.datetime | None:
 def _valid_page_boundary(
     raw_last_pos: object,
     requested_position: datetime.datetime | None,
+    response_received_at: datetime.datetime,
 ) -> datetime.datetime | None:
+    """Return a monotonic, non-future cursor from one provider response.
+
+    Args:
+        raw_last_pos: Untrusted ``lastPos`` value from Broadcastify.
+        requested_position: Durable position used for the page request.
+        response_received_at: Local UTC time when the response completed.
+
+    Returns:
+        A safe page boundary, or None when the provider value is invalid.
+    """
     boundary = _utc_timestamp(raw_last_pos)
     if boundary is None:
         return None
-    if requested_position is None:
-        return boundary
-    issued_second = int(requested_position.timestamp())
-    if int(boundary.timestamp()) < issued_second:
+    if boundary > response_received_at:
         return None
+    if requested_position is not None:
+        issued_second = int(requested_position.timestamp())
+        if int(boundary.timestamp()) < issued_second:
+            return None
     return boundary
 
 
@@ -157,6 +171,46 @@ def _storage_failure_action(
             backoff_max_sec=treatment.backoff_max_sec,
         )
     return ingestion_lease_store.NonBudgetedFailure(treatment.retry_after)
+
+
+def _promoted_parent_failure(
+    results: collections.abc.Sequence[pipeline.FeedBatchResult],
+) -> failure_classification.ItemFailure | None:
+    """Promote a shared all-participant failure to the SID boundary."""
+    participants = [result for result in results if result.attempted_count > 0]
+    if len(participants) < 2:
+        return None
+    outcome = failure_classification.ItemBatchOutcome()
+    for result in participants:
+        outcome.record_attempt()
+        if result.published_count > 0:
+            outcome.record_chunk_produced()
+        if isinstance(
+            result.terminal,
+            failure_classification.ItemFailure,
+        ):
+            outcome.record_failure(result.terminal)
+    return outcome.promoted_failure()
+
+
+def _log_poll_settled(
+    grant: ingestion_lease_store.LeaseGrant,
+    *,
+    status: str,
+    error: str | None,
+) -> None:
+    """Emit the single operational settlement event for one initiated poll."""
+    fields: dict[str, object] = {
+        "event_type": "bcfy_calls_sid_poll_settled",
+        "sid": grant.lease_key,
+        "status": status,
+    }
+    if error is not None:
+        fields["error"] = error
+    logger.info(
+        "Broadcastify Calls SID poll settled",
+        extra={"json_fields": fields},
+    )
 
 
 async def _settle_accepted(
@@ -231,7 +285,20 @@ class BcfyCallsSidRunner:
         payload: grant_control.ClaimMode,
         context: grant_control.RunContext,
     ) -> grant_control.RunOutcome:
-        """Poll, settle, and durably close pages until stopped or failed."""
+        """Poll, settle, and durably close pages until stopped or failed.
+
+        Args:
+            grant: Exact fenced SID ownership generation.
+            payload: Claim mode supplied by the generic grant runtime.
+            context: Cooperative stop and lost-authority signals.
+
+        Returns:
+            The terminal outcome consumed by the generic grant runtime.
+
+        Raises:
+            GrantControlIntegrityError: Durable page commit outcome is unknown.
+            CancelledError: The runner task is cancelled outside a commit.
+        """
         del payload
         states: dict[uuid.UUID, _FeedState] = {}
         consecutive_failures = 0
@@ -280,9 +347,14 @@ class BcfyCallsSidRunner:
                     shutdown_event=context.stop_requested,
                 )
             except provider.TokenLoadStopped:
+                _log_poll_settled(
+                    grant,
+                    status="stopped",
+                    error=None,
+                )
                 return grant_control.RunCompleted()
-            except FeedFailure as error:
-                self._log_poll_settled(
+            except models.FeedFailure as error:
+                _log_poll_settled(
                     grant,
                     status="metadata_failed",
                     error=error.reason,
@@ -300,6 +372,21 @@ class BcfyCallsSidRunner:
                     )
                 await self._finish_poll_wait(poll_started)
                 continue
+            except asyncio.CancelledError:
+                _log_poll_settled(
+                    grant,
+                    status="cancelled",
+                    error=None,
+                )
+                raise
+            except Exception as error:
+                _log_poll_settled(
+                    grant,
+                    status="integrity_failed",
+                    error=type(error).__name__,
+                )
+                raise
+            response_received_at = self._clock()
 
             consecutive_failures = 0
             poll_status = "integrity_failed"
@@ -363,6 +450,7 @@ class BcfyCallsSidRunner:
                 boundary = _valid_page_boundary(
                     page.last_pos,
                     requested_position,
+                    response_received_at,
                 )
                 if boundary is None:
                     logger.error(
@@ -376,7 +464,7 @@ class BcfyCallsSidRunner:
                             }
                         },
                     )
-                promoted = self._promoted_parent_failure(results)
+                promoted = _promoted_parent_failure(results)
                 try:
                     mutation_result = await self._commit_page(
                         grant,
@@ -420,7 +508,7 @@ class BcfyCallsSidRunner:
                 poll_error = type(error).__name__
                 raise
             finally:
-                self._log_poll_settled(
+                _log_poll_settled(
                     grant,
                     status=poll_status,
                     error=poll_error,
@@ -461,12 +549,12 @@ class BcfyCallsSidRunner:
             timestamp = _utc_timestamp(call.get("ts"))
 
             raw_group_id = call.get("groupId")
-            group_id = (
-                str(raw_group_id)
-                if isinstance(raw_group_id, (str, int))
-                and not isinstance(raw_group_id, bool)
-                else None
-            )
+            group_id = None
+            if isinstance(raw_group_id, (str, int)) and not isinstance(
+                raw_group_id,
+                bool,
+            ):
+                group_id = str(raw_group_id)
             member = by_group.get(group_id) if group_id is not None else None
             if member is None or member.identity.feed_id in adopting_ids:
                 continue
@@ -528,24 +616,6 @@ class BcfyCallsSidRunner:
             )
         return tuple(batches)
 
-    @staticmethod
-    def _promoted_parent_failure(
-        results: collections.abc.Sequence[pipeline.FeedBatchResult],
-    ) -> ItemFailure | None:
-        participants = [
-            result for result in results if result.attempted_count > 0
-        ]
-        if len(participants) < 2:
-            return None
-        outcome = ItemBatchOutcome()
-        for result in participants:
-            outcome.record_attempt()
-            if result.published_count > 0:
-                outcome.record_chunk_produced()
-            if isinstance(result.terminal, ItemFailure):
-                outcome.record_failure(result.terminal)
-        return outcome.promoted_failure()
-
     async def _commit_page(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -557,7 +627,7 @@ class BcfyCallsSidRunner:
             pipeline.FeedBatchResult,
         ],
         boundary: datetime.datetime | None,
-        promoted: ItemFailure | None,
+        promoted: failure_classification.ItemFailure | None,
     ) -> (
         ingestion_lease_store.BatchCommitted
         | ingestion_lease_store.GrantRejected
@@ -569,7 +639,10 @@ class BcfyCallsSidRunner:
             if promoted is not None and result is not None:
                 continue
             terminal = result.terminal if result is not None else None
-            if isinstance(terminal, ItemFailure):
+            if isinstance(
+                terminal,
+                failure_classification.ItemFailure,
+            ):
                 plan = self._failure_planner(
                     terminal.status_reason,
                     terminal.reason,
@@ -612,22 +685,3 @@ class BcfyCallsSidRunner:
     ) -> None:
         elapsed = (self._clock() - poll_started).total_seconds()
         await asyncio.sleep(max(0.0, self._poll_interval_sec - elapsed))
-
-    @staticmethod
-    def _log_poll_settled(
-        grant: ingestion_lease_store.LeaseGrant,
-        *,
-        status: str,
-        error: str | None,
-    ) -> None:
-        fields: dict[str, object] = {
-            "event_type": "bcfy_calls_sid_poll_settled",
-            "sid": grant.lease_key,
-            "status": status,
-        }
-        if error is not None:
-            fields["error"] = error
-        logger.info(
-            "Broadcastify Calls SID poll settled",
-            extra={"json_fields": fields},
-        )

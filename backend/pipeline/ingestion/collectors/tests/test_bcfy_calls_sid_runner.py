@@ -1,3 +1,5 @@
+"""Behavioral tests for page-sequential Broadcastify Calls SID ingestion."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,16 +10,13 @@ from unittest import mock
 
 import pytest
 
-from backend.pipeline.ingestion import failure_policy, grant_control
+from backend.pipeline.ingestion import failure_policy, grant_control, models
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     pipeline,
     provider,
     sid_runner,
 )
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemFailure,
-)
-from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _NOW = datetime.datetime(2026, 7, 19, 12, tzinfo=datetime.UTC)
@@ -62,7 +61,11 @@ def _result(
     *,
     attempted: int | None = None,
     published: int | None = None,
-    terminal: (ItemFailure | ingestion_lease_store.GrantRejected | None) = None,
+    terminal: (
+        failure_classification.ItemFailure
+        | ingestion_lease_store.GrantRejected
+        | None
+    ) = None,
 ) -> pipeline.FeedBatchResult:
     attempted_count = len(batch.calls) if attempted is None else attempted
     published_count = attempted_count if published is None else published
@@ -162,9 +165,13 @@ def _failure_planner(
         status_reason,
         reason,
         budgeted=failure_policy.ConsumeFailureBudget(5, 60, 900),
-        non_budgeted=lambda: failure_policy.RetryWithoutBudget(
-            _NOW + datetime.timedelta(minutes=5)
-        ),
+        non_budgeted=_retry_without_budget,
+    )
+
+
+def _retry_without_budget() -> failure_policy.RetryWithoutBudget:
+    return failure_policy.RetryWithoutBudget(
+        _NOW + datetime.timedelta(minutes=5)
     )
 
 
@@ -366,6 +373,73 @@ async def test_routes_due_members_and_adopts_null_cursor_at_boundary(
 
 
 @pytest.mark.asyncio
+async def test_routes_only_new_well_formed_calls_for_current_members() -> None:
+    grant = _grant()
+    bookmark = _NOW - datetime.timedelta(seconds=30)
+    member = _member("100", bookmark=bookmark)
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/equal",
+                "ts": bookmark.timestamp(),
+            },
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/older",
+                "ts": (bookmark - datetime.timedelta(seconds=1)).timestamp(),
+            },
+            {
+                "groupId": "7017-999",
+                "url": "https://audio/untracked",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": True,
+                "url": "https://audio/bool-group",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-100",
+                "url": "",
+                "ts": _NOW.timestamp(),
+            },
+            "not-a-call",
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/new",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    pool = _Pool()
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        _Provider([page], context),
+        pool,
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert len(pool.batches) == 1
+    assert [call.audio_url for call in pool.batches[0].calls] == [
+        "https://audio/new"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_all_null_members_start_at_live_edge_without_routing() -> None:
     grant = _grant()
     first = _member("100", bookmark=None)
@@ -410,7 +484,9 @@ async def test_all_null_members_start_at_live_edge_without_routing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_metadata_fetch_uses_supervisor_stop_event() -> None:
+async def test_metadata_fetch_uses_supervisor_stop_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     grant = _grant()
     member = _member(
         "100",
@@ -448,14 +524,23 @@ async def test_metadata_fetch_uses_supervisor_stop_event() -> None:
         clock=lambda: _NOW,
     )
 
-    outcome = await runner.run(
-        grant,
-        grant_control.ClaimMode.PRIMARY,
-        context,
-    )
+    with caplog.at_level(logging.INFO, sid_runner.__name__):
+        outcome = await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
 
     assert isinstance(outcome, grant_control.RunCompleted)
     assert calls_provider.shutdown_event is context.stop_requested
+    settled = [
+        record
+        for record in caplog.records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == "bcfy_calls_sid_poll_settled"
+    ]
+    assert len(settled) == 1
+    assert getattr(settled[0], "json_fields", {}).get("status") == "stopped"
 
 
 @pytest.mark.asyncio
@@ -482,7 +567,7 @@ async def test_authentication_failure_retries_the_owned_sid() -> None:
         ) -> provider.CallsPageEnvelope:
             if not self.failed_once:
                 self.failed_once = True
-                raise FeedFailure(
+                raise models.FeedFailure(
                     feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                     "calls_api_http_401",
                 )
@@ -559,6 +644,41 @@ async def test_invalid_boundary_replays_bookmark_and_deduplicates_url() -> None:
     assert len(store.batches) == 2
     assert store.batches[0].mutations == ()
     assert len(store.batches[1].mutations) == 1
+
+
+@pytest.mark.asyncio
+async def test_future_page_boundary_does_not_advance_member() -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(seconds=30),
+    )
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (),
+        (_NOW + datetime.timedelta(seconds=1)).timestamp(),
+    )
+    store = _Store(_snapshot(grant, member))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert len(store.batches) == 1
+    assert store.batches[0].mutations == ()
 
 
 @pytest.mark.asyncio
@@ -697,11 +817,11 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
         ),
         _NOW.timestamp(),
     )
-    first_failure = ItemFailure(
+    first_failure = failure_classification.ItemFailure(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "first",
     )
-    second_failure = ItemFailure(
+    second_failure = failure_classification.ItemFailure(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "second",
     )
@@ -765,7 +885,7 @@ async def test_single_feed_failure_stays_child_local() -> None:
         ),
         _NOW.timestamp(),
     )
-    item_failure = ItemFailure(
+    item_failure = failure_classification.ItemFailure(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "audio unavailable",
     )

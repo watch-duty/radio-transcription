@@ -1054,6 +1054,40 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
                     "00123",
                 )
 
+    async def test_membership_progress_timestamps_must_be_utc_datetimes(
+        self,
+    ) -> None:
+        non_utc = datetime.timezone(datetime.timedelta(hours=1))
+        cases = (
+            ("last_bookmark_time", "invalid", TypeError),
+            ("retry_after", "invalid", TypeError),
+            (
+                "last_bookmark_time",
+                _NOW.replace(tzinfo=None),
+                ValueError,
+            ),
+            ("retry_after", _NOW.replace(tzinfo=None), ValueError),
+            (
+                "last_bookmark_time",
+                _NOW.astimezone(non_utc),
+                ValueError,
+            ),
+            ("retry_after", _NOW.astimezone(non_utc), ValueError),
+        )
+
+        for field_name, value, error_type in cases:
+            with self.subTest(field_name=field_name, value=value):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
+                connection.fetch.return_value = [
+                    _member_row(**{field_name: value})
+                ]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with self.assertRaises(error_type):
+                    await store.load_membership(_grant("00123"))
+
     async def test_revision_changes_snapshot_but_not_grant_identity(
         self,
     ) -> None:
