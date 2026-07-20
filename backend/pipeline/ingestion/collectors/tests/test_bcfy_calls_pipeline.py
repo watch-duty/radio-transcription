@@ -504,3 +504,22 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 await task
 
         self.assertTrue(publish_settled.is_set())
+
+    async def test_publish_completion_race_still_propagates_cancellation(
+        self,
+    ) -> None:
+        async def exercise_race() -> str:
+            owner = asyncio.current_task()
+            self.assertIsNotNone(owner)
+
+            async def publish() -> str:
+                asyncio.get_running_loop().call_soon(
+                    typing.cast("asyncio.Task[object]", owner).cancel
+                )
+                return "message-id"
+
+            return await pipeline._settle_postcommit_publish(publish())
+
+        task = asyncio.create_task(exercise_race())
+        with self.assertRaises(asyncio.CancelledError):
+            await task

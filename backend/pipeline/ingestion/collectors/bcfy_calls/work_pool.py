@@ -24,7 +24,19 @@ class _QueuedBatch[BatchT, ResultT]:
 
 
 def _require_positive(value: int, field_name: str) -> int:
-    """Validate one externally configured positive integer."""
+    """Validate one externally configured positive integer.
+
+    Args:
+        value: Configured integer.
+        field_name: Name included in validation errors.
+
+    Returns:
+        The validated value.
+
+    Raises:
+        TypeError: The value is boolean.
+        ValueError: The value is not positive.
+    """
     if isinstance(value, bool):
         message = f"{field_name} must be an integer"
         raise TypeError(message)
@@ -71,7 +83,6 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         self._start_called = False
         self._started = False
         self._admission_open = False
-        self._closed = False
         self._submitting = 0
         self._submissions_drained = asyncio.Event()
         self._submissions_drained.set()
@@ -154,18 +165,20 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
             admission.result()
             accepted = True
         finally:
-            if not accepted:
-                completion.cancel()
-            admission.cancel()
-            workers_stopped.cancel()
-            await asyncio.gather(
-                admission,
-                workers_stopped,
-                return_exceptions=True,
-            )
-            self._submitting -= 1
-            if self._submitting == 0:
-                self._submissions_drained.set()
+            try:
+                if not accepted:
+                    completion.cancel()
+                admission.cancel()
+                workers_stopped.cancel()
+                await asyncio.gather(
+                    admission,
+                    workers_stopped,
+                    return_exceptions=True,
+                )
+            finally:
+                self._submitting -= 1
+                if self._submitting == 0:
+                    self._submissions_drained.set()
         return completion
 
     async def close(self) -> None:
@@ -180,8 +193,6 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         if not self._started:
             message = "Broadcastify Calls work pool has not been started"
             raise RuntimeError(message)
-        if self._closed:
-            return
 
         if self._close_task is None:
             self._admission_open = False
@@ -232,32 +243,32 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
                 else:
                     if not queued.completion.done():
                         queued.completion.set_result(result)
+                    worker = asyncio.current_task()
+                    if worker is not None and worker.cancelling():
+                        raise asyncio.CancelledError
             finally:
                 self._queue.task_done()
 
     async def _drain_and_close(self) -> None:
         """Close the admission race, drain work, and stop fixed workers."""
-        try:
-            await self._submissions_drained.wait()
-            await self._queue.join()
+        await self._submissions_drained.wait()
+        await self._queue.join()
 
-            worker_owner = self._worker_owner
-            if worker_owner is None:
-                message = "started pool is missing its worker owner"
+        worker_owner = self._worker_owner
+        if worker_owner is None:
+            message = "started pool is missing its worker owner"
+            raise RuntimeError(message)
+        if worker_owner.done():
+            if worker_owner.cancelled():
+                message = "Broadcastify Calls work pool workers terminated"
                 raise RuntimeError(message)
-            if worker_owner.done():
-                if worker_owner.cancelled():
-                    message = "Broadcastify Calls work pool workers terminated"
-                    raise RuntimeError(message)
-                worker_owner.result()
-            else:
-                worker_owner.cancel()
-                try:
-                    await worker_owner
-                except asyncio.CancelledError:
-                    pass
-        finally:
-            self._closed = True
+            worker_owner.result()
+        else:
+            worker_owner.cancel()
+            try:
+                await worker_owner
+            except asyncio.CancelledError:
+                pass
 
     def _cancel_queued_completions(self) -> None:
         """Settle work left behind by an unexpectedly stopped worker owner."""

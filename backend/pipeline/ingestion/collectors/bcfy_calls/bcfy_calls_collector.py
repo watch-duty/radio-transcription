@@ -57,7 +57,14 @@ class _CallChunkResult:
 
 
 def _provider_timestamp(value: object) -> datetime.datetime | None:
-    """Decode one finite provider timestamp without rejecting its audio."""
+    """Decode one finite provider timestamp without rejecting its audio.
+
+    Args:
+        value: Untrusted timestamp value from one provider call.
+
+    Returns:
+        The UTC timestamp, or ``None`` when the value is invalid.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     try:

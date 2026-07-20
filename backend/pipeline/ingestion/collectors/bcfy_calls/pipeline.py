@@ -153,7 +153,19 @@ def _mime_staging_parameters(
 async def _settle_postcommit_publish(
     operation: collections.abc.Coroutine[object, object, str],
 ) -> str:
-    """Settle a committed publication before propagating cancellation."""
+    """Settle a committed publication before propagating cancellation.
+
+    Args:
+        operation: Publication coroutine that must settle after progress
+            commits.
+
+    Returns:
+        The downstream publication identifier.
+
+    Raises:
+        asyncio.CancelledError: The caller was cancelled while publishing.
+        Exception: The publication operation failed.
+    """
     task = asyncio.create_task(operation)
     cancellation: asyncio.CancelledError | None = None
 
@@ -161,10 +173,10 @@ async def _settle_postcommit_publish(
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError as error:
-            if task.done():
-                break
             if cancellation is None:
                 cancellation = error
+            if task.done():
+                break
         except Exception:
             break
 
