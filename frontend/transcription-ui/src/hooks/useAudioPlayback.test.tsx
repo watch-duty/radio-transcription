@@ -26,6 +26,7 @@ const engineMock = vi.hoisted(() => ({
   setVolumeDbSpy: vi.fn(),
   setPanSpy: vi.fn(),
   setSpeedSpy: vi.fn(),
+  setCurrentTimeSpy: vi.fn(),
 }));
 
 vi.mock('../audio/WebAudioPlayer', () => ({
@@ -66,7 +67,9 @@ vi.mock('../audio/WebAudioPlayer', () => ({
         },
         stop: () => {},
         getCurrentTime: () => 0,
-        setCurrentTime: () => {},
+        setCurrentTime: (time: number) => {
+          engineMock.setCurrentTimeSpy(time);
+        },
         unload: () => engineMock.unloadSpy(),
         off: () => {},
       };
@@ -249,5 +252,15 @@ describe('useAudioPlayback', () => {
     unmount();
 
     expect(engineMock.closeSpy).toHaveBeenCalled();
+  });
+
+  it('seeks to initialSeekTime when provided in togglePlay', () => {
+    const { result } = renderPlayback([makeSegment('a')]);
+
+    act(() => result.current.togglePlay('a', 'a.m4a', 3.5));
+
+    expect(engineMock.setCurrentTimeSpy).toHaveBeenCalledWith(3.5);
+    expect(result.current.isAudioPlaying).toBe(true);
+    expect(result.current.currentlyPlayingSegmentId).toBe('a');
   });
 });
