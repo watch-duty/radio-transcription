@@ -17,6 +17,8 @@ from backend.pipeline.schema_types import (
 )
 from backend.pipeline.segmentation.constants import (
     DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
+    DEFAULT_BACKFILL_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_BACKFILL_STALE_TIMEOUT_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
 )
@@ -147,6 +149,9 @@ class OrderRestorerConfig:
     """Configuration parameters for the sequence Jitter Buffer."""
 
     out_of_order_timeout_ms: int = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
+    backfill_out_of_order_timeout_ms: int = (
+        DEFAULT_BACKFILL_OUT_OF_ORDER_TIMEOUT_MS
+    )
     chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
 
 
@@ -161,6 +166,7 @@ class StitchAudioConfig:
     max_transmission_duration_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
+    backfill_stale_timeout_ms: int = DEFAULT_BACKFILL_STALE_TIMEOUT_MS
     isolate_segmented_chunks: bool = False
     analyze_audio: bool = True
 
@@ -171,6 +177,9 @@ class StitchAudioConfig:
             raise ValueError(msg)
         if self.stale_timeout_ms <= 0:
             msg = "stale_timeout_ms must be > 0"
+            raise ValueError(msg)
+        if self.backfill_stale_timeout_ms <= 0:
+            msg = "backfill_stale_timeout_ms must be > 0"
             raise ValueError(msg)
         if self.max_transmission_duration_ms <= 0:
             msg = "max_transmission_duration_ms must be > 0"

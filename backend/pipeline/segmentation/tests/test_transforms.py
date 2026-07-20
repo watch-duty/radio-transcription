@@ -4004,6 +4004,8 @@ class DlqTaggingTest(unittest.TestCase):
 
         self.assertTrue(watermark_timer.set.called)
         self.assertTrue(processing_timer.set.called)
+        live_proc_arg = processing_timer.set.call_args[0][0].micros / 1000000.0
+        self.assertLess(live_proc_arg - time.time(), 100.0)
 
         # Scenario 2: Backfill mode (is_backfill = True)
         old_ts_ms = int(time.time() * 1000) - (10 * 60 * 1000)
@@ -4044,23 +4046,41 @@ class DlqTaggingTest(unittest.TestCase):
 
         self.assertTrue(watermark_timer.set.called)
         self.assertTrue(processing_timer.set.called)
+        backfill_proc_arg = (
+            processing_timer.set.call_args[0][0].micros / 1000000.0
+        )
+        self.assertGreater(backfill_proc_arg - time.time(), 300.0)
 
     def test_stale_timer_manager_schedules_both_timers(self) -> None:
-        """Verifies StaleTimerManager schedules both event and proc timers when deadline > 0, and clears both when deadline <= 0."""
+        """Verifies StaleTimerManager schedules both event and proc timers with live vs backfill deadlines."""
         event_timer = MagicMock()
         proc_timer = MagicMock()
-        stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000,
+            backfill_stale_timeout_ms=600000,
+        )
         manager = StaleTimerManager(event_timer, proc_timer, stitch_config)
 
-        # Case 1: deadline > 0
-        manager.schedule(deadline_ms=10000)
+        # Case 1: Live mode (is_backfill=False)
+        manager.schedule(deadline_ms=10000, is_backfill=False)
         self.assertTrue(event_timer.set.called)
         self.assertTrue(proc_timer.set.called)
+        live_deadline = proc_timer.set.call_args[0][0].micros / 1000000.0
+        self.assertLess(live_deadline - time.time(), 10.0)
 
-        # Case 2: deadline <= 0
+        # Case 2: Backfill mode (is_backfill=True)
         event_timer.reset_mock()
         proc_timer.reset_mock()
-        manager.schedule(deadline_ms=0)
+        manager.schedule(deadline_ms=10000, is_backfill=True)
+        self.assertTrue(event_timer.set.called)
+        self.assertTrue(proc_timer.set.called)
+        backfill_deadline = proc_timer.set.call_args[0][0].micros / 1000000.0
+        self.assertGreater(backfill_deadline - time.time(), 500.0)
+
+        # Case 3: deadline <= 0
+        event_timer.reset_mock()
+        proc_timer.reset_mock()
+        manager.schedule(deadline_ms=0, is_backfill=False)
         self.assertTrue(event_timer.clear.called)
         self.assertTrue(proc_timer.clear.called)
 

@@ -213,18 +213,21 @@ class StaleTimerManager:
         self.proc_timer = proc_timer
         self.config = config
 
-    def schedule(self, deadline_ms: int) -> None:
-        """Schedules both event-time and processing-time timers."""
+    def schedule(self, deadline_ms: int, *, is_backfill: bool) -> None:
+        """Schedules both event-time and processing-time timers using backfill-aware timeouts."""
         if deadline_ms > 0:
             # Set event time timer based on data timeline
             deadline_s = deadline_ms / common_constants.MS_PER_SECOND
             self.event_timer.set(Timestamp(seconds=deadline_s))
 
             # Set processing time timer based on wall-clock time
-            deadline_proc_s = (
-                time.time()
-                + self.config.stale_timeout_ms
-                / float(common_constants.MS_PER_SECOND)
+            stale_timeout_ms = (
+                self.config.backfill_stale_timeout_ms
+                if is_backfill
+                else self.config.stale_timeout_ms
+            )
+            deadline_proc_s = time.time() + stale_timeout_ms / float(
+                common_constants.MS_PER_SECOND
             )
             self.proc_timer.set(Timestamp(seconds=deadline_proc_s))
         else:
@@ -290,6 +293,7 @@ def _manage_out_of_order_timers(
     clamped: bool,
     has_buffer_elements: bool,
     order_timer_active: bool,
+    is_backfill: bool,
     old_expected_ts: int | None,
     new_expected_next_ts: int | None,
 ) -> bool:
@@ -332,9 +336,13 @@ def _manage_out_of_order_timers(
                 / float(common_constants.MS_PER_SECOND)
             )
             gap_timer_event.set(deadline_watermark)
+            timeout_ms = (
+                order_config.backfill_out_of_order_timeout_ms
+                if is_backfill
+                else order_config.out_of_order_timeout_ms
+            )
             deadline_proc = time.time() + (
-                order_config.out_of_order_timeout_ms
-                / float(common_constants.MS_PER_SECOND)
+                timeout_ms / float(common_constants.MS_PER_SECOND)
             )
             gap_timer_proc.set(Timestamp(seconds=deadline_proc))
             return True
@@ -495,6 +503,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
         clamped=clamped,
         has_buffer_elements=has_buffer_elements,
         order_timer_active=curr_context.order_timer_active,
+        is_backfill=is_backfill,
         old_expected_ts=old_expected_ts,
         new_expected_next_ts=expected_next_ts,
     )
@@ -535,6 +544,7 @@ def _reschedule_gap_timeout(
     *,
     timestamp: Timestamp,
     clamped: bool,
+    is_backfill: bool,
     new_expected: int | None,
     new_expected_next_ts: int | None,
 ) -> bool:
@@ -552,10 +562,15 @@ def _reschedule_gap_timeout(
         deadline_watermark = timestamp + advance_sec
         deadline_proc = time.time() + advance_sec
     else:
-        timeout_sec = order_config.out_of_order_timeout_ms / float(
-            common_constants.MS_PER_SECOND
+        deadline_watermark = timestamp + (
+            order_config.out_of_order_timeout_ms
+            / float(common_constants.MS_PER_SECOND)
         )
-        deadline_watermark = timestamp + timeout_sec
+        timeout_sec = (
+            order_config.backfill_out_of_order_timeout_ms
+            if is_backfill
+            else order_config.out_of_order_timeout_ms
+        ) / float(common_constants.MS_PER_SECOND)
         deadline_proc = time.time() + timeout_sec
 
     gap_timer_event.set(deadline_watermark)
@@ -1109,6 +1124,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         order_config=self.order_config,
                         timestamp=timestamp,
                         clamped=True,
+                        is_backfill=is_backfill,
                         new_expected=original_expected_ts,
                         new_expected_next_ts=previous_expected_ts,
                     )
@@ -1274,6 +1290,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         order_config=self.order_config,
                         timestamp=timestamp,
                         clamped=clamped,
+                        is_backfill=is_backfill,
                         new_expected=new_expected,
                         new_expected_next_ts=new_expected_next_ts,
                     )
