@@ -5,7 +5,9 @@ import { cleanup } from '@testing-library/react';
 
 afterEach(() => {
   cleanup();
-  localStorage.clear();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
 });
 
 // JSDOM does not implement HTMLMediaElement methods (like play, pause, load)
@@ -15,6 +17,7 @@ if (typeof window !== 'undefined') {
   window.HTMLMediaElement.prototype.pause = () => {};
   window.HTMLMediaElement.prototype.load = () => {};
 }
+
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
@@ -34,4 +37,9 @@ const localStorageMock = (() => {
     key: vi.fn((i: number) => Object.keys(store)[i] || null),
   };
 })();
-global.localStorage = localStorageMock as unknown as Storage;
+
+const target = typeof window !== 'undefined' ? window : globalThis;
+Object.defineProperty(target, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
