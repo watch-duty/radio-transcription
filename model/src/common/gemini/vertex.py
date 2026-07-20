@@ -316,7 +316,7 @@ def get_tuning_job_status(
 ) -> tuple[str, str | None]:
     """Return the current tuning job state and endpoint if one is exposed."""
     _require_vertex()
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = genai.Client(enterprise=True, project=project, location=location)
     cur = client.tunings.get(name=name)
     state = getattr(cur.state, "name", str(cur.state))
     tuned = getattr(cur, "tuned_model", None)
@@ -365,7 +365,7 @@ def submit_tuning_job(
     if adapter_size not in _ADAPTER_ENUM:
         msg = f"adapter_size must be one of {sorted(_ADAPTER_ENUM)}; got {adapter_size!r}"
         raise ValueError(msg)
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = genai.Client(enterprise=True, project=project, location=location)
 
     cfg_kwargs: dict[str, typing.Any] = {
         "tuned_model_display_name": display_name,
@@ -417,7 +417,7 @@ def poll_tuning_job(
         TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = genai.Client(enterprise=True, project=project, location=location)
     last_state: str | None = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
@@ -542,7 +542,7 @@ def submit_batch_inference(
             location,
         )
     client = genai.Client(
-        vertexai=True, project=project, location=batch_location
+        enterprise=True, project=project, location=batch_location
     )
 
     batch_job = _create_batch_inference_job(
@@ -599,7 +599,7 @@ def poll_batch_inference_job(
     _require_vertex()
     job_location = resource_location(name, location) or location
     client = genai.Client(
-        vertexai=True,
+        enterprise=True,
         project=project,
         location=job_location,
     )

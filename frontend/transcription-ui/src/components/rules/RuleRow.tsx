@@ -9,6 +9,8 @@ import TableCell from '@mui/material/TableCell';
 import Typography from '@mui/material/Typography';
 import type { Feed, Rule } from '@transcription/common';
 
+import { groupTagsByKey } from '../feeds/tagDisplay';
+
 export interface RuleRowProps {
   rule: Rule;
   feedMap: Map<string, Feed>;
@@ -17,6 +19,7 @@ export interface RuleRowProps {
   allowEdit: boolean;
   onEditRule?: (rule: Rule) => void;
   isSubmitting?: boolean;
+  isMobile?: boolean;
 }
 
 export function RuleRow({
@@ -27,6 +30,7 @@ export function RuleRow({
   allowEdit,
   onEditRule,
   isSubmitting = false,
+  isMobile = false,
 }: RuleRowProps) {
   const isEditing = editingRuleId === rule.ruleId;
   const targetFeedNames = rule.scope.targetFeeds
@@ -102,6 +106,7 @@ export function RuleRow({
         component="div"
         role="cell"
         sx={{
+          gridArea: { xs: 'name-desc', sm: 'unset' },
           py: 1,
           display: 'flex',
           flexDirection: 'column',
@@ -138,7 +143,8 @@ export function RuleRow({
         component="div"
         role="cell"
         sx={{
-          py: 1,
+          gridArea: { xs: 'scope', sm: 'unset' },
+          py: { xs: 0.5, sm: 1 },
           display: 'flex',
           flexDirection: 'column',
           borderBottom: 'none',
@@ -146,14 +152,32 @@ export function RuleRow({
           alignItems: 'flex-start',
         }}
       >
-        <Chip label={rule.scope.level} size="small" variant="outlined" />
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+          }}
+        >
+          {isMobile && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontWeight: 600 }}
+            >
+              Scope:
+            </Typography>
+          )}
+          <Chip label={rule.scope.level} size="small" variant="outlined" />
+        </Box>
         {rule.scope.level === 'FEED_SPECIFIC' &&
         rule.scope.targetFeeds.length > 0 ? (
           <Typography
             variant="caption"
             color="text.secondary"
             noWrap
-            sx={{ maxWidth: '100%', mt: 0.5 }}
+            sx={{ maxWidth: '100%', mt: 0.5, pl: isMobile ? 5 : 0 }}
             title={targetFeedNames}
           >
             Feeds: {targetFeedNames}
@@ -165,7 +189,8 @@ export function RuleRow({
         component="div"
         role="cell"
         sx={{
-          py: 1,
+          gridArea: { xs: 'conditions', sm: 'unset' },
+          py: { xs: 0.5, sm: 1 },
           borderBottom: 'none',
           minWidth: 0,
         }}
@@ -176,7 +201,49 @@ export function RuleRow({
       <TableCell
         component="div"
         role="cell"
-        sx={{ borderBottom: 'none', minWidth: 0 }}
+        sx={{
+          gridArea: { xs: 'tags', sm: 'unset' },
+          py: { xs: 0.5, sm: 1 },
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 0.5,
+          borderBottom: 'none',
+          minWidth: 0,
+        }}
+      >
+        {isMobile && rule.tags && rule.tags.length > 0 && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 600 }}
+          >
+            Tags:
+          </Typography>
+        )}
+        {rule.tags && rule.tags.length > 0
+          ? groupTagsByKey(rule.tags).map((group) => (
+              <Chip
+                key={group.key}
+                label={`${group.key}: ${group.values.join(', ')}`}
+                size="small"
+                variant="outlined"
+              />
+            ))
+          : null}
+      </TableCell>
+
+      <TableCell
+        component="div"
+        role="cell"
+        sx={{
+          gridArea: { xs: 'status', sm: 'unset' },
+          borderBottom: 'none',
+          minWidth: 0,
+          py: { xs: 0.5, sm: 1 },
+          display: 'flex',
+          justifyContent: { xs: 'flex-end', sm: 'flex-start' },
+        }}
       >
         <Box
           sx={{
@@ -215,11 +282,13 @@ export function RuleRow({
           component="div"
           role="cell"
           sx={{
+            gridArea: { xs: 'actions', sm: 'unset' },
             borderBottom: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
             minWidth: 0,
+            py: { xs: 0.5, sm: 1 },
           }}
         >
           <IconButton

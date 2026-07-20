@@ -87,15 +87,23 @@ VirtuosoTable.displayName = 'VirtuosoTable';
 function VirtuosoTableRow(
   props: ComponentProps<typeof TableRow> & {
     item?: Rule;
-    context?: { editingRuleId?: string; allowEdit?: boolean };
+    context?: {
+      editingRuleId?: string;
+      allowEdit?: boolean;
+      isMobile?: boolean;
+    };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingRuleId === item.ruleId);
   const allowEdit = context?.allowEdit ?? false;
-  const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 2fr 0.8fr 60px'
-    : '1.5fr 1fr 2fr 0.8fr';
+  const isMobile = context?.isMobile ?? false;
+
+  const gridTemplateColumns = isMobile
+    ? '1fr auto'
+    : allowEdit
+      ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+      : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   return (
     <TableRow
@@ -106,6 +114,15 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
+        gridTemplateRows: isMobile ? 'auto auto auto auto' : 'unset',
+        gridTemplateAreas: isMobile
+          ? `
+            "name-desc  actions"
+            "scope      status"
+            "conditions conditions"
+            "tags       tags"
+          `
+          : 'unset',
         width: '100%',
         alignItems: 'center',
         borderBottom: '1px solid',
@@ -243,13 +260,14 @@ export function RuleTable({
   ]);
 
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 2fr 0.8fr 60px'
-    : '1.5fr 1fr 2fr 0.8fr';
+    ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+    : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   const columns = [
     { key: 'name', display: 'Rule Name' },
     { key: 'scope', display: 'Scope' },
     { key: 'conditions', display: 'Conditions' },
+    { key: 'tags', display: 'Tags' },
     { key: 'status', display: 'Status' },
   ];
 
@@ -272,7 +290,7 @@ export function RuleTable({
             bgcolor: 'background.paper',
           }}
         >
-          {key === 'conditions' ? (
+          {key === 'conditions' || key === 'tags' ? (
             display
           ) : (
             <TableSortLabel
@@ -481,15 +499,12 @@ export function RuleTable({
           sx={{ flexGrow: 1, overflowY: 'visible' }}
         >
           <Table component="div" sx={{ display: 'block', width: '100%' }}>
-            <TableHead component="div" sx={{ display: 'block' }}>
-              {tableHeader}
-            </TableHead>
             <TableBody component="div" sx={{ display: 'block' }}>
               {filteredAndSortedRules.map((rule) => (
                 <VirtuosoTableRow
                   key={rule.ruleId}
                   item={rule}
-                  context={{ editingRuleId, allowEdit }}
+                  context={{ editingRuleId, allowEdit, isMobile: true }}
                 >
                   <RuleRow
                     rule={rule}
@@ -499,6 +514,7 @@ export function RuleTable({
                     allowEdit={allowEdit}
                     onEditRule={onEditRule}
                     isSubmitting={isSubmitting}
+                    isMobile={true}
                   />
                 </VirtuosoTableRow>
               ))}
@@ -508,7 +524,7 @@ export function RuleTable({
       ) : (
         <TableVirtuoso
           data={filteredAndSortedRules}
-          context={{ editingRuleId, allowEdit }}
+          context={{ editingRuleId, allowEdit, isMobile: false }}
           computeItemKey={(_index, rule) => rule.ruleId}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
@@ -522,6 +538,7 @@ export function RuleTable({
               allowEdit={allowEdit}
               onEditRule={onEditRule}
               isSubmitting={isSubmitting}
+              isMobile={false}
             />
           )}
         />

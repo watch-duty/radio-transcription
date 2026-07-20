@@ -66,16 +66,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Free up disk space (Host SSD)
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /var/lib/mongodb
-          sudo apt-get clean
-          sudo docker system prune --all --volumes --force
+        uses: ./.github/actions/free-disk-space
 
       - name: Pull persistent staging base images from ghcr.io
         run: docker compose -f docker-compose.yml pull --ignore-pull-failures
@@ -89,6 +80,7 @@ jobs:
             --set *.cache-from=type=gha,scope=integration-tests \
             -f docker-compose.yml \
             --load
+          docker builder prune -f
 
       # Note we are not collecting test coverage stats because the tests are run
       # in Docker, so it'll be difficult to collect true coverage.

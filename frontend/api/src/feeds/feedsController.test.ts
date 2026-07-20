@@ -687,9 +687,14 @@ describe('FeedsController', () => {
       expect(url).toBe('https://openmhz.com/system/my-system');
     });
 
-    it('echo always produces undefined', async () => {
-      const url = await listFeedsWithSourceType('echo', 'some-id');
-      expect(url).toBeUndefined();
+    it('echo produces the GCS storage index URL with sourceFeedId hash and trailing slash', async () => {
+      const url = await listFeedsWithSourceType(
+        'echo',
+        'Yakima_Co_LV_Fire_Disp-rapid_deploy-16'
+      );
+      expect(url).toBe(
+        'https://storage.googleapis.com/wd-echo-recordings-prod/index.html#Yakima_Co_LV_Fire_Disp-rapid_deploy-16/'
+      );
     });
 
     it('fire_notifications produces the audioplay URL', async () => {
