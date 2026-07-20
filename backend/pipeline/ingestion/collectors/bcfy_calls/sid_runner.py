@@ -55,19 +55,18 @@ class _FeedState:
     def __init__(self) -> None:
         self.session_id = str(uuid.uuid4())
         self.next_sequence = 0
-        self.recent_urls: collections.deque[str] = collections.deque()
-        self.recent_url_set: set[str] = set()
+        self.recent_committed_urls: collections.OrderedDict[str, None] = (
+            collections.OrderedDict()
+        )
 
     def remember_urls(self, urls: collections.abc.Iterable[str]) -> None:
         """Remember committed URLs within a small grant-local window."""
         for url in urls:
-            if url in self.recent_url_set:
+            if url in self.recent_committed_urls:
                 continue
-            self.recent_urls.append(url)
-            self.recent_url_set.add(url)
-            if len(self.recent_urls) > _RECENT_URL_LIMIT:
-                removed = self.recent_urls.popleft()
-                self.recent_url_set.remove(removed)
+            self.recent_committed_urls[url] = None
+            if len(self.recent_committed_urls) > _RECENT_URL_LIMIT:
+                self.recent_committed_urls.popitem(last=False)
 
 
 def _utc_timestamp(value: object) -> datetime.datetime | None:
@@ -443,7 +442,10 @@ class BcfyCallsSidRunner:
                 member.identity.feed_id,
                 set(),
             )
-            if audio_url in state.recent_url_set or audio_url in page_urls:
+            if (
+                audio_url in state.recent_committed_urls
+                or audio_url in page_urls
+            ):
                 continue
             if (
                 timestamp is not None
