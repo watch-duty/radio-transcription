@@ -756,6 +756,9 @@ function RuleTagsSection({
         )}
       </Box>
     </Box>
+  );
+}
+
 interface DryRunResultsModalProps {
   isOpen: boolean;
   onClose: () => void;

@@ -603,6 +603,7 @@ describe('RuleConfigurationView', () => {
                 keywords: ['evacuate'],
                 caseSensitive: false,
               },
+              tags: [],
             },
           },
           'fake-jwt-token-xyz'
