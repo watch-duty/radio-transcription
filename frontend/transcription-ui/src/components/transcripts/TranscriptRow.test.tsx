@@ -12,6 +12,10 @@ import {
 
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import TranscriptRow from './TranscriptRow';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+const testQueryClient = new QueryClient();
+const customRender = (ui: React.ReactElement) => render(<QueryClientProvider client={testQueryClient}>{ui}</QueryClientProvider>);
 
 // Mocking TranscriptPlayControl to verify it's being called with the correct props.
 // We do not need to test the actual audio player functionality here
@@ -95,7 +99,7 @@ describe('TranscriptRow', () => {
   });
 
   it('renders transcript detail accurately without Day Header when showHeader is false', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -146,7 +150,7 @@ describe('TranscriptRow', () => {
       ],
     };
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={highlightedSegment}
@@ -169,7 +173,7 @@ describe('TranscriptRow', () => {
   });
 
   it('renders Day Header accurately when showHeader is true', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -191,7 +195,7 @@ describe('TranscriptRow', () => {
   });
 
   it('triggers copy transcript clipboard action successfully', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -219,7 +223,7 @@ describe('TranscriptRow', () => {
   });
 
   it('triggers copy deeplink action successfully', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -255,7 +259,7 @@ describe('TranscriptRow', () => {
   });
 
   it('passes playbackAudioUri to AudioPlayer as audioUri prop', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -289,7 +293,7 @@ describe('TranscriptRow', () => {
       blob: () => Promise.resolve(mockBlob),
     } as Response);
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={{
@@ -326,7 +330,7 @@ describe('TranscriptRow', () => {
   });
 
   it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -380,7 +384,7 @@ describe('TranscriptRow', () => {
       sourceAudioUris: [],
     };
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockSilenceBundle}
@@ -420,7 +424,7 @@ describe('TranscriptRow', () => {
       sourceAudioUris: [],
     };
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockSilenceBundle}
@@ -445,7 +449,7 @@ describe('TranscriptRow', () => {
   });
 
   it('does not render segment info button for non-admins', () => {
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -471,7 +475,7 @@ describe('TranscriptRow', () => {
   it('renders segment info button for admins', () => {
     mockIsAdmin = true;
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockAudioSegment}
@@ -507,7 +511,7 @@ describe('TranscriptRow', () => {
       ],
     };
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockFailedTranscript}
@@ -546,7 +550,7 @@ describe('TranscriptRow', () => {
       ],
     };
 
-    render(
+    customRender(
       <MemoryRouter>
         <TranscriptRow
           audioSegment={mockPartialTranscript}

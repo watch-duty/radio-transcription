@@ -2,7 +2,7 @@ import { type Annotation, AnnotationType } from '@transcription/common';
 
 import { apiFetch } from '../utils/apiUtils';
 
-export async function createUserLabeledTranscript(
+export async function createUserGeneratedTranscript(
   segmentId: string,
   token: string,
   text: string
