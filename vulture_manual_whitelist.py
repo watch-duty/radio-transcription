@@ -11,14 +11,11 @@ from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvide
 MockCacheProvider
 _.get_value
 
-# Calls batch execution lands before the later stacked runtime-composition PR
-# wires these public classes. Vulture excludes their focused tests.
-from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline
-from backend.pipeline.ingestion.collectors.bcfy_calls import sid_runner
-from backend.pipeline.ingestion.collectors.bcfy_calls import work_pool
-pipeline.BcfyCallsFeedBatchExecutor
-sid_runner.BcfyCallsSidRunner
-work_pool.BcfyCallsWorkPool
+# SourceObservationResult TypedDict fields are read by key in
+# CollectorRuntime. Vulture cannot connect subscript access to their
+# declarations.
+current_worker
+current_fencing_token
 
 # These PRs intentionally introduce the Lease lifecycle and membership storage
 # boundaries before the generic runtime starts calling them. Vulture excludes
@@ -48,6 +45,11 @@ LeaseReleaseCause.ABANDONMENT
 # Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
 from backend.pipeline.storage.feed_store import FeedStore
 FeedStore.renew_grant_heartbeats
+
+# CollectorRuntime no longer calls these legacy lifecycle helpers. The next
+# stacked cleanup PR deletes them.
+FeedStore.renew_heartbeats_batch_diagnostic
+FeedStore.release_feeds_batch
 
 # The typed Feed/SID control contracts and immutable worker profiles land as a
 # reviewable foundation before CollectorRuntime composition. Vulture excludes
