@@ -457,6 +457,51 @@ class TestBcfyCallsWorkPool(unittest.IsolatedAsyncioTestCase):
             pool._submissions_drained.set()
             await pool.close()
 
+    async def test_cancelled_submit_settles_already_admitted_batch(
+        self,
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        settled = asyncio.Event()
+
+        async def execute(batch: str) -> str:
+            started.set()
+            try:
+                await release.wait()
+                return batch
+            finally:
+                settled.set()
+
+        pool = work_pool.BcfyCallsWorkPool(
+            _Executor(execute),
+            concurrency=1,
+            queue_capacity=1,
+        )
+        await pool.start()
+        cancellation_gate = _CleanupCancellationEvent()
+        pool._workers_stopped = cancellation_gate
+
+        submission = asyncio.create_task(pool.submit("accepted"))
+        await cancellation_gate.cleanup_entered.wait()
+        await started.wait()
+        submission.cancel()
+        done, _pending = await asyncio.wait(
+            (submission,),
+            timeout=0.05,
+        )
+
+        try:
+            self.assertFalse(done)
+            self.assertFalse(settled.is_set())
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await submission
+            self.assertTrue(settled.is_set())
+        finally:
+            release.set()
+            pool._submissions_drained.set()
+            await pool.close()
+
     async def test_repeated_close_preserves_worker_failure(self) -> None:
         async def execute(batch: str) -> str:
             return batch

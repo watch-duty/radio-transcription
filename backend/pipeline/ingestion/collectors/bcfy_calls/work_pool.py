@@ -46,6 +46,34 @@ def _require_positive(value: int, field_name: str) -> int:
     return value
 
 
+async def _settle_before_reraising_cancellation[ResultT](
+    completion: asyncio.Future[ResultT],
+    cancellation: asyncio.CancelledError,
+) -> typing.NoReturn:
+    """Settle accepted work before preserving caller cancellation.
+
+    Args:
+        completion: Result of work whose queue admission already committed.
+        cancellation: Original cancellation to propagate after settlement.
+
+    Raises:
+        asyncio.CancelledError: Always, chained from any terminal work failure.
+    """
+    while not completion.done():
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            break
+
+    try:
+        completion.result()
+    except BaseException as error:
+        raise cancellation from error
+    raise cancellation
+
+
 class BcfyCallsWorkPool[BatchT, ResultT]:
     """Run complete Feed batches through a fixed bounded worker pool.
 
@@ -155,30 +183,49 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         workers_stopped = asyncio.create_task(self._workers_stopped.wait())
         accepted = False
         try:
-            done, _pending = await asyncio.wait(
-                (admission, workers_stopped),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if admission not in done:
-                message = "Broadcastify Calls work pool workers have terminated"
-                raise RuntimeError(message)
-            admission.result()
-            accepted = True
-        finally:
             try:
-                if not accepted:
-                    completion.cancel()
-                admission.cancel()
-                workers_stopped.cancel()
-                await asyncio.gather(
-                    admission,
-                    workers_stopped,
-                    return_exceptions=True,
+                done, _pending = await asyncio.wait(
+                    (admission, workers_stopped),
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+                if admission not in done:
+                    message = (
+                        "Broadcastify Calls work pool workers have terminated"
+                    )
+                    raise RuntimeError(message)
+                admission.result()
+                accepted = True
             finally:
-                self._submitting -= 1
-                if self._submitting == 0:
-                    self._submissions_drained.set()
+                try:
+                    admission.cancel()
+                    workers_stopped.cancel()
+                    await asyncio.gather(
+                        admission,
+                        workers_stopped,
+                        return_exceptions=True,
+                    )
+                finally:
+                    # Admission may commit concurrently with caller
+                    # cancellation before asyncio.wait returns its done set.
+                    if (
+                        not accepted
+                        and admission.done()
+                        and not admission.cancelled()
+                    ):
+                        admission.result()
+                        accepted = True
+                    if not accepted:
+                        completion.cancel()
+                    self._submitting -= 1
+                    if self._submitting == 0:
+                        self._submissions_drained.set()
+        except asyncio.CancelledError as cancellation:
+            if accepted:
+                await _settle_before_reraising_cancellation(
+                    completion,
+                    cancellation,
+                )
+            raise
         return completion
 
     async def close(self) -> None:
