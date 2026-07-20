@@ -39,7 +39,7 @@ describe('listFeeds', () => {
     expect(feeds).toStrictEqual({ feeds: mockData, total: mockData.length });
   });
 
-  it('should fetch single page when calling listFeedsPage', async () => {
+  it('should fetch single page when calling listFeeds', async () => {
     const page1Feeds = [{ id: '1', name: 'Feed 1' }];
 
     mockFetch.mockResolvedValueOnce({

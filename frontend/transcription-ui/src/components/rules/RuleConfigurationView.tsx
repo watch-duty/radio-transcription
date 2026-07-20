@@ -15,7 +15,7 @@ import type { Rule, RuleCreate, RuleUpdate } from '@transcription/common';
 import { useAuth } from '../../context/AuthContext';
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
-import { listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
 import { RuleConfigurationEdit } from './RuleConfigurationEdit';
@@ -84,7 +84,7 @@ export function RuleConfigurationView({
   } = useInfiniteQuery({
     queryKey: ['listFeeds', token, debouncedFeedSearchQuery],
     queryFn: ({ pageParam }) =>
-      listFeedsPage(token!, {
+      listFeeds(token!, {
         limit: 50,
         nextToken: pageParam || undefined,
         name: debouncedFeedSearchQuery || undefined,

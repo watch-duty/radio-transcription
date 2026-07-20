@@ -15,7 +15,7 @@ import { type Feed, type Rule, SourceType } from '@transcription/common';
 
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
-import { listFeeds, listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -40,7 +40,6 @@ vi.mock('../../service/deleteRule', () => ({
 
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
-  listFeedsPage: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -95,10 +94,6 @@ describe('RuleConfigurationView', () => {
 
     mockUseAuth.mockReturnValue({ token: 'fake-jwt-token-xyz', isAdmin: true });
     vi.mocked(listRules).mockResolvedValue(mockRules);
-    vi.mocked(listFeedsPage).mockResolvedValue({
-      feeds: mockFeeds,
-      total: mockFeeds.length,
-    });
     vi.mocked(listFeeds).mockResolvedValue({
       feeds: mockFeeds,
       total: mockFeeds.length,

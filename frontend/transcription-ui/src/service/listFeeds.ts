@@ -12,7 +12,7 @@ export interface ListFeedsParams {
   tags?: { key: string; value: string }[];
 }
 
-export async function listFeedsPage(
+export async function listFeeds(
   token: string,
   params?: ListFeedsParams
 ): Promise<ListFeedsResponse> {
@@ -55,11 +55,4 @@ export async function listFeedsPage(
       return resp;
     }
   });
-}
-
-export async function listFeeds(
-  token: string,
-  params?: Omit<ListFeedsParams, 'limit' | 'nextToken'>
-): Promise<Omit<ListFeedsResponse, 'nextToken'>> {
-  return listFeedsPage(token, params);
 }

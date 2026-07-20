@@ -12,7 +12,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import { listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -275,7 +275,7 @@ export function FeedSearchView({
       filters.tags.length,
     ],
     queryFn: ({ pageParam }) =>
-      listFeedsPage(token!, {
+      listFeeds(token!, {
         limit: 50,
         nextToken: pageParam || undefined,
         name: debouncedSearchQuery || undefined,

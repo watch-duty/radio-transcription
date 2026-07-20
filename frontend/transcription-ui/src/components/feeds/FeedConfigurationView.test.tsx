@@ -21,7 +21,7 @@ import { SourceType } from '@transcription/common';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
-import { listFeeds, listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -43,7 +43,6 @@ vi.hoisted(() => {
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
-  listFeedsPage: vi.fn(),
 }));
 
 vi.mock('../../service/createFeed', () => ({
@@ -110,7 +109,6 @@ describe('FeedConfigurationView', () => {
       }
       return Promise.resolve({ feeds: filtered, total: filtered.length });
     };
-    vi.mocked(listFeedsPage).mockImplementation(mockListFeedsFn);
     vi.mocked(listFeeds).mockImplementation(mockListFeedsFn);
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
@@ -913,10 +911,6 @@ describe('FeedConfigurationView', () => {
       substatus: 'unclaimed',
       tags: [],
     };
-    vi.mocked(listFeedsPage).mockResolvedValue({
-      feeds: [...mockFeeds, unclaimedFeed],
-      total: mockFeeds.length + 1,
-    });
     vi.mocked(listFeeds).mockResolvedValue({
       feeds: [...mockFeeds, unclaimedFeed],
       total: mockFeeds.length + 1,
@@ -1178,10 +1172,6 @@ describe('FeedConfigurationView', () => {
       substatus: 'active',
       tags: [{ key: 'system/timezone', value: 'America/Los_Angeles' }],
     };
-    vi.mocked(listFeedsPage).mockResolvedValue({
-      feeds: [timezoneFeed],
-      total: 1,
-    });
     vi.mocked(listFeeds).mockResolvedValue({
       feeds: [timezoneFeed],
       total: 1,
@@ -1312,10 +1302,6 @@ describe('FeedConfigurationView', () => {
       substatus: 'active',
       tags: [],
     };
-    vi.mocked(listFeedsPage).mockResolvedValue({
-      feeds: [fireFeed],
-      total: 1,
-    });
     vi.mocked(listFeeds).mockResolvedValue({
       feeds: [fireFeed],
       total: 1,

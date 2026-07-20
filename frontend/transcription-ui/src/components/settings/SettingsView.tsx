@@ -42,7 +42,7 @@ import {
   feedKey,
 } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
-import { listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 
 export interface SettingsViewProps {
   triggerSnackbar?: (message: string) => void;
@@ -171,7 +171,7 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
   } = useInfiniteQuery({
     queryKey: ['listFeeds', token, debouncedFeedSearchQuery],
     queryFn: ({ pageParam }) =>
-      listFeedsPage(token!, {
+      listFeeds(token!, {
         limit: 50,
         nextToken: pageParam || undefined,
         name: debouncedFeedSearchQuery || undefined,

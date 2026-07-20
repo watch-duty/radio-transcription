@@ -22,7 +22,7 @@ import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
-import { listFeedsPage } from '../../service/listFeeds';
+import { listFeeds } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
@@ -92,7 +92,7 @@ export function FeedConfigurationView({
       filters.tags.length,
     ],
     queryFn: ({ pageParam }) =>
-      listFeedsPage(token!, {
+      listFeeds(token!, {
         limit: 50,
         nextToken: pageParam || undefined,
         name: debouncedSearchQuery || undefined,
