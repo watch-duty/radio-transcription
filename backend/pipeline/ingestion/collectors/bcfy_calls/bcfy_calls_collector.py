@@ -76,6 +76,15 @@ def _provider_timestamp(value: object) -> datetime.datetime | None:
         return None
 
 
+def _provider_timestamp_sort_key(
+    call: dict[str, Any],
+) -> datetime.datetime:
+    """Return one consistently typed provider timestamp sort key."""
+    return _provider_timestamp(call.get("ts")) or datetime.datetime.min.replace(
+        tzinfo=datetime.UTC
+    )
+
+
 def _extract_calls_from_response(
     bcfy_calls: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
@@ -307,7 +316,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 # Sort the page by the API index time `ts` so the per-call
                 # resume cursor advances monotonically; data-loss is then
                 # bounded to the accepted tie case (calls sharing a `ts`).
-                calls.sort(key=lambda c: c.get("ts") or 0)
+                calls.sort(key=_provider_timestamp_sort_key)
                 for result in calls:
                     if shutdown_event.is_set():
                         break
