@@ -2,7 +2,9 @@ import { useCallback, useState } from 'react';
 
 import { type AudioSegment } from '@transcription/common';
 
+import { isWithinSegment } from '../utils/playbackUtils';
 import { MAX_WINDOW_DURATION_MS } from '../utils/timeUtils';
+import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
 // A window end within this of the live edge still counts as "live".
 const LIVE_EDGE_EPS_MS = 1000;
@@ -44,12 +46,9 @@ export interface AudioTimelineWindow {
 }
 
 interface UseAudioTimelineWindowParams {
-  // The consolidated (rendered) segments the timeline displays, newest-first —
-  // not the raw query stream. The window follows the head the user actually
-  // sees, so it keys off the rendered list; this can differ from the raw head
-  // mid-bundle (an ongoing silence bundle keeps one rendered entry while its
-  // raw segments change), which is why list anchoring keys off raw instead.
-  audioSegments: AudioSegment[];
+  // The consolidated (rendered) segments the timeline displays, newest-first.
+  audioSegments: RenderableAudioSegment[];
+  rawAudioSegments?: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   // Changes when the list is replaced wholesale (feed / timestamp / filter).
@@ -62,6 +61,7 @@ interface UseAudioTimelineWindowParams {
 // the date/time chip) and, later, the mini-map.
 export function useAudioTimelineWindow({
   audioSegments,
+  rawAudioSegments = [],
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   resetKey,
@@ -134,7 +134,8 @@ export function useAudioTimelineWindow({
     if (selectionChanged) {
       const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
       const target = targetId
-        ? audioSegments.find((t) => t.id === targetId)
+        ? rawAudioSegments.find((s) => s.id === targetId) ||
+          audioSegments.find((t) => isWithinSegment(t, targetId))
         : undefined;
       if (target) {
         const tStart = new Date(target.startTimestamp).getTime();
@@ -162,14 +163,14 @@ export function useAudioTimelineWindow({
 
   const jumpToLive = useCallback(() => {
     setWindowEndTime(null);
-  }, []);
+  }, [setWindowEndTime]);
 
   const centerWindowOn = useCallback(
     (centerMs: number) => {
       const target = centerMs + windowDurationMs / 2;
       setWindowEndTime(liveEnd != null ? Math.min(target, liveEnd) : target);
     },
-    [windowDurationMs, liveEnd]
+    [windowDurationMs, liveEnd, setWindowEndTime]
   );
 
   return {
