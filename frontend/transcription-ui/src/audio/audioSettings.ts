@@ -35,4 +35,3 @@ export const STORAGE_KEYS = {
 export function feedKey(base: string, feedId?: string): string {
   return feedId ? `${base}.${feedId}` : base;
 }
-
