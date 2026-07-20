@@ -185,26 +185,6 @@ def _storage_failure_action(
     return ingestion_lease_store.NonBudgetedFailure(treatment.retry_after)
 
 
-def _promoted_parent_failure(
-    results: collections.abc.Sequence[pipeline.FeedBatchResult],
-) -> failure_classification.ItemFailure | None:
-    """Promote a shared all-participant failure to the SID boundary."""
-    participants = [result for result in results if result.attempted_count > 0]
-    if len(participants) < 2:
-        return None
-    outcome = failure_classification.ItemBatchOutcome()
-    for result in participants:
-        outcome.record_attempt()
-        if result.published_count > 0:
-            outcome.record_chunk_produced()
-        if isinstance(
-            result.terminal,
-            failure_classification.ItemFailure,
-        ):
-            outcome.record_failure(result.terminal)
-    return outcome.promoted_failure()
-
-
 def _log_poll_settled(
     grant: ingestion_lease_store.LeaseGrant,
     *,
@@ -354,6 +334,7 @@ class BcfyCallsSidRunner:
                 ),
                 default=None,
             )
+            request_started = self._clock()
             try:
                 page = await self._calls_provider.fetch_sid_page(
                     grant.lease_key,
@@ -478,15 +459,13 @@ class BcfyCallsSidRunner:
                             }
                         },
                     )
-                promoted = _promoted_parent_failure(results)
                 try:
                     mutation_result = await self._commit_page(
                         grant,
                         due_members,
                         result_by_feed,
                         boundary,
-                        poll_started,
-                        promoted,
+                        request_started,
                     )
                 except asyncio.CancelledError as error:
                     msg = "SID page commit cancellation left outcome unknown"
@@ -508,13 +487,6 @@ class BcfyCallsSidRunner:
                     poll_status = "grant_lost"
                     return grant_control.RunLost()
 
-                if promoted is not None:
-                    poll_status = "failed"
-                    poll_error = promoted.reason
-                    return grant_control.RunFailed(
-                        promoted.status_reason,
-                        promoted.reason,
-                    )
                 poll_status = "completed"
             except asyncio.CancelledError:
                 poll_status = "cancelled"
@@ -647,7 +619,6 @@ class BcfyCallsSidRunner:
         ],
         boundary: datetime.datetime | None,
         adoption_boundary: datetime.datetime,
-        promoted: failure_classification.ItemFailure | None,
     ) -> (
         ingestion_lease_store.BatchCommitted
         | ingestion_lease_store.GrantRejected
@@ -656,8 +627,6 @@ class BcfyCallsSidRunner:
         for member in due_members:
             feed_id = member.identity.feed_id
             result = results.get(feed_id)
-            if promoted is not None and result is not None:
-                continue
             terminal = result.terminal if result is not None else None
             if isinstance(
                 terminal,
@@ -682,24 +651,18 @@ class BcfyCallsSidRunner:
                 if member.last_bookmark_time is None
                 else boundary
             )
-            if observation is not None:
-                mutations.append(
-                    ingestion_lease_store.SourceObservation(
-                        member.identity,
-                        observation,
-                    )
+            mutations.append(
+                ingestion_lease_store.SourceObservation(
+                    member.identity,
+                    observation,
                 )
+            )
 
-        lease_effect: ingestion_lease_store.LeaseEffect
-        if promoted is None:
-            lease_effect = ingestion_lease_store.FinalizeLeaseRecovery()
-        else:
-            lease_effect = ingestion_lease_store.NoLeaseEffect()
         return await self._store.commit_child_mutations(
             grant,
             ingestion_lease_store.ChildMutationBatch(
                 tuple(mutations),
-                lease_effect,
+                ingestion_lease_store.FinalizeLeaseRecovery(),
             ),
             actor_id=self._actor_id,
         )

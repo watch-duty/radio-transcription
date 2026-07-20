@@ -191,6 +191,20 @@ def test_page_boundary_rejects_epoch_without_requested_position() -> None:
     assert sid_runner._valid_page_boundary(0, None, _NOW) is None
 
 
+def test_page_boundary_uses_the_integer_position_sent_to_provider() -> None:
+    requested = _NOW + datetime.timedelta(microseconds=800_000)
+    boundary = _NOW + datetime.timedelta(microseconds=100_000)
+
+    assert (
+        sid_runner._valid_page_boundary(
+            boundary.timestamp(),
+            requested,
+            _NOW + datetime.timedelta(seconds=1),
+        )
+        == boundary
+    )
+
+
 @pytest.mark.asyncio
 async def test_accepted_batches_settle_before_an_error_surfaces() -> None:
     first = asyncio.get_running_loop().create_future()
@@ -338,6 +352,14 @@ async def test_routes_due_members_and_adopts_null_cursor_at_live_edge(
     store = _Store(_snapshot(grant, due, adopter, deferred))
     calls_provider = _Provider([page], context)
     pool = _Pool()
+    request_started = _NOW + datetime.timedelta(seconds=2)
+    clock = mock.Mock(
+        side_effect=(
+            _NOW,
+            request_started,
+            _NOW + datetime.timedelta(seconds=3),
+        )
+    )
     runner = sid_runner.BcfyCallsSidRunner(
         store,
         calls_provider,
@@ -345,7 +367,7 @@ async def test_routes_due_members_and_adopts_null_cursor_at_live_edge(
         _failure_planner,
         actor_id="test",
         poll_interval_sec=0,
-        clock=lambda: _NOW,
+        clock=clock,
     )
 
     with caplog.at_level(logging.INFO, sid_runner.__name__):
@@ -374,7 +396,7 @@ async def test_routes_due_members_and_adopts_null_cursor_at_live_edge(
     }
     assert observations == {
         due.identity.feed_id: historical_boundary,
-        adopter.identity.feed_id: _NOW,
+        adopter.identity.feed_id: request_started,
     }
     assert isinstance(
         store.batches[0].lease_effect,
@@ -679,7 +701,9 @@ async def test_invalid_boundary_replays_bookmark_and_deduplicates_url() -> None:
     assert calls_provider.positions == [bookmark, bookmark]
     assert len(pool.batches) == 1
     assert len(store.batches) == 2
-    assert store.batches[0].mutations == ()
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(member.identity, None),
+    )
     assert len(store.batches[1].mutations) == 1
 
 
@@ -715,7 +739,9 @@ async def test_future_page_boundary_does_not_advance_member() -> None:
 
     assert isinstance(outcome, grant_control.RunCompleted)
     assert len(store.batches) == 1
-    assert store.batches[0].mutations == ()
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(member.identity, None),
+    )
 
 
 @pytest.mark.asyncio
@@ -828,9 +854,7 @@ async def test_batch_grant_rejection_stops_sid_without_page_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_all_failed_participants_promote_parent_and_commit_quiet_feed() -> (
-    None
-):
+async def test_failed_feed_batches_stay_child_local() -> None:
     grant = _grant()
     first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
     second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
@@ -893,11 +917,26 @@ async def test_all_failed_participants_promote_parent_and_commit_quiet_feed() ->
         context,
     )
 
-    assert outcome == grant_control.RunFailed(
-        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        "first",
-    )
+    assert isinstance(outcome, grant_control.RunCompleted)
     assert store.batches[0].mutations == (
+        ingestion_lease_store.FeedFailureTransition(
+            member=first.identity,
+            action=ingestion_lease_store.NonBudgetedFailure(
+                _NOW + datetime.timedelta(minutes=5)
+            ),
+            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            reason="first",
+            completion_cursor=None,
+        ),
+        ingestion_lease_store.FeedFailureTransition(
+            member=second.identity,
+            action=ingestion_lease_store.NonBudgetedFailure(
+                _NOW + datetime.timedelta(minutes=5)
+            ),
+            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            reason="second",
+            completion_cursor=None,
+        ),
         ingestion_lease_store.SourceObservation(
             quiet.identity,
             _NOW,
@@ -905,7 +944,7 @@ async def test_all_failed_participants_promote_parent_and_commit_quiet_feed() ->
     )
     assert isinstance(
         store.batches[0].lease_effect,
-        ingestion_lease_store.NoLeaseEffect,
+        ingestion_lease_store.FinalizeLeaseRecovery,
     )
 
 
