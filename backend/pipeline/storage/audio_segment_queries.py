@@ -79,7 +79,7 @@ ADD_ANNOTATION_SQL = """
 INSERT INTO annotations (audio_segment_id, type, data)
 VALUES ($1, $2, $3)
 ON CONFLICT (audio_segment_id, type) DO UPDATE
-SET audio_segment_id = annotations.audio_segment_id
+SET data = EXCLUDED.data, updated_at = NOW()
 RETURNING audio_segment_id, type, data, created_at, updated_at
 """
 
