@@ -100,16 +100,18 @@ class FeedBatchResult:
         published_count: Calls completing the full physical pipeline.
         next_sequence: First unused Feed-local GCS sequence.
         committed_urls: URLs whose fenced progress commit completed.
-        failure: Selected Feed failure, if the batch failed.
-        grant_lost: Parent authority was rejected by the progress commit.
+        terminal: Selected Feed failure or rejected parent grant.
     """
 
     attempted_count: int
     published_count: int
     next_sequence: int
     committed_urls: tuple[str, ...]
-    failure: failure_classification.ItemFailure | None
-    grant_lost: bool = False
+    terminal: (
+        failure_classification.ItemFailure
+        | ingestion_lease_contracts.GrantRejected
+        | None
+    )
 
 
 def _leased_feed(
@@ -303,8 +305,7 @@ class BcfyCallsFeedBatchExecutor:
                     published_count,
                     next_sequence,
                     committed_urls,
-                    None,
-                    grant_lost=True,
+                    commit_result,
                 )
 
             child = self._committed_child(commit_result, batch)
@@ -483,15 +484,16 @@ class BcfyCallsFeedBatchExecutor:
         published_count: int,
         next_sequence: int,
         committed_urls: list[str],
-        failure: failure_classification.ItemFailure | None,
-        *,
-        grant_lost: bool = False,
+        terminal: (
+            failure_classification.ItemFailure
+            | ingestion_lease_contracts.GrantRejected
+            | None
+        ),
     ) -> FeedBatchResult:
         return FeedBatchResult(
             attempted_count=outcome.attempted_count,
             published_count=published_count,
             next_sequence=next_sequence,
             committed_urls=tuple(committed_urls),
-            failure=failure,
-            grant_lost=grant_lost,
+            terminal=terminal,
         )

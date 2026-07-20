@@ -229,8 +229,7 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 "https://audio.example/1.mp3",
             ),
         )
-        self.assertIsNone(result.failure)
-        self.assertFalse(result.grant_lost)
+        self.assertIsNone(result.terminal)
         self.assertEqual(len(store.calls), 2)
         for grant, batch, actor_id in store.calls:
             self.assertEqual(grant, _grant())
@@ -289,7 +288,7 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
             result.committed_urls,
             ("https://audio.example/1.mp3",),
         )
-        self.assertIsNone(result.failure)
+        self.assertIsNone(result.terminal)
 
     @mock.patch.object(
         bcfy_calls_collector,
@@ -316,7 +315,7 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.published_count, 0)
         self.assertEqual(result.next_sequence, 12)
         self.assertEqual(result.committed_urls, ())
-        self.assertEqual(result.failure, failure)
+        self.assertEqual(result.terminal, failure)
         self.assertEqual(store.calls, [])
 
     @mock.patch.object(
@@ -341,7 +340,7 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.attempted_count, 1)
         self.assertEqual(result.next_sequence, 11)
         self.assertEqual(
-            result.failure,
+            result.terminal,
             failure_classification.ItemFailure(
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                 "gcs_upload_failed",
@@ -365,28 +364,25 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         _upload: mock.AsyncMock,
         _create_chunk: mock.AsyncMock,
     ) -> None:
+        rejection = ingestion_lease_store.GrantRejected(
+            ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
+        )
         cases = (
-            (
-                ingestion_lease_store.GrantRejected(
-                    ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
-                ),
-                True,
-            ),
+            (rejection, rejection),
             (
                 _committed(ingestion_lease_store.ChildDisposition.REJECTED),
-                False,
+                None,
             ),
         )
 
-        for index, (commit, grant_lost) in enumerate(cases):
+        for index, (commit, terminal) in enumerate(cases):
             with self.subTest(index=index):
                 result = await _executor(_Store(commit)).execute(
                     _batch(_work(0))
                 )
 
                 self.assertEqual(result.committed_urls, ())
-                self.assertIsNone(result.failure)
-                self.assertEqual(result.grant_lost, grant_lost)
+                self.assertEqual(result.terminal, terminal)
 
     @mock.patch.object(
         bcfy_calls_collector,
@@ -446,13 +442,19 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
             ("https://audio.example/0.mp3",),
         )
         self.assertEqual(result.attempted_count, 1)
-        self.assertIsNotNone(result.failure)
-        assert result.failure is not None
+        self.assertIsInstance(
+            result.terminal,
+            failure_classification.ItemFailure,
+        )
+        assert isinstance(
+            result.terminal,
+            failure_classification.ItemFailure,
+        )
         self.assertIs(
-            result.failure.status_reason,
+            result.terminal.status_reason,
             feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
-        self.assertIn("schema validation", result.failure.reason.lower())
+        self.assertIn("schema validation", result.terminal.reason.lower())
 
     @mock.patch.object(
         bcfy_calls_collector,
