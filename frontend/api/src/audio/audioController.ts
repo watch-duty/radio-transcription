@@ -1,15 +1,18 @@
 import { AnnotationType } from '@transcription/common';
 import type {
   Annotation,
+  AnnotationCreate,
   AudioClassification,
   AudioSegment,
   RuleAnnotation,
 } from '@transcription/common';
 import {
+  Body,
   Controller,
   Extension,
   Get,
   Path,
+  Post,
   Queries,
   Response,
   Route,
@@ -28,6 +31,14 @@ interface BaseAnnotationBackend {
 
 interface TranscriptAnnotationBackend extends BaseAnnotationBackend {
   type: AnnotationType.TRANSCRIPT;
+  data: {
+    text: string;
+    errors: string[];
+  };
+}
+
+interface UserGeneratedTranscriptAnnotationBackend extends BaseAnnotationBackend {
+  type: AnnotationType.USER_GENERATED_TRANSCRIPT;
   data: {
     text: string;
     errors: string[];
@@ -63,6 +74,7 @@ interface WaveformAnnotationBackend extends BaseAnnotationBackend {
 
 type AnnotationBackend =
   | TranscriptAnnotationBackend
+  | UserGeneratedTranscriptAnnotationBackend
   | EvaluationAnnotationBackend
   | WaveformAnnotationBackend;
 
@@ -219,6 +231,31 @@ export class AudioController extends Controller {
       const { status, message } = handleBackendError(
         error,
         'fetching audio segments'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Post('{segmentId}/annotations')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async createAnnotation(
+    @Path() segmentId: string,
+    @Body() requestBody: AnnotationCreate
+  ): Promise<Annotation> {
+    try {
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+      const response = await client.request({
+        url: `${AUDIO_SEGMENTS_API_URL}/${segmentId}/annotations`,
+        method: 'POST',
+        data: requestBody,
+      });
+
+      return convertAnnotationBackend(response.data as AnnotationBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'creating annotation'
       );
       throw new HttpError(status, message);
     }

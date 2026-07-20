@@ -6,6 +6,7 @@ export enum AudioClassification {
 
 export enum AnnotationType {
   TRANSCRIPT = 'TRANSCRIPT',
+  USER_GENERATED_TRANSCRIPT = 'USER_GENERATED_TRANSCRIPT',
   EVALUATION = 'EVALUATION',
   WAVEFORM = 'WAVEFORM',
 }
@@ -43,6 +44,14 @@ export interface WaveformAnnotationData {
 export interface Annotation {
   type: AnnotationType;
   createdAt: string;
+  data:
+    | TranscriptAnnotationData
+    | EvaluationAnnotationData
+    | WaveformAnnotationData;
+}
+
+export interface AnnotationCreate {
+  type: AnnotationType;
   data:
     | TranscriptAnnotationData
     | EvaluationAnnotationData

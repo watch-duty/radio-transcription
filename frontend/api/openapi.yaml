@@ -550,6 +550,7 @@ components:
     AnnotationType:
       enum:
         - TRANSCRIPT
+        - USER_GENERATED_TRANSCRIPT
         - EVALUATION
         - WAVEFORM
       type: string
@@ -700,6 +701,20 @@ components:
           type: boolean
         textQuery:
           type: string
+      type: object
+      additionalProperties: false
+    AnnotationCreate:
+      properties:
+        type:
+          $ref: "#/components/schemas/AnnotationType"
+        data:
+          anyOf:
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
+            - $ref: "#/components/schemas/WaveformAnnotationData"
+      required:
+        - type
+        - data
       type: object
       additionalProperties: false
   securitySchemes:
@@ -1971,6 +1986,77 @@ paths:
           required: false
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{segmentId}/annotations:
+    post:
+      operationId: CreateAnnotation
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Annotation"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: segmentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnnotationCreate"
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/

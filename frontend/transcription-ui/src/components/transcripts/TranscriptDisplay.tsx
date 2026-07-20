@@ -134,6 +134,11 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         increaseViewportBy={PREFETCH_THRESHOLD_PX}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
         endReached={fetchOlderAudioSegments}
+        computeItemKey={(index) => {
+          const position = index - firstItemIndex;
+          const audioSegment = audioSegments[position];
+          return audioSegment ? audioSegment.id : index;
+        }}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (

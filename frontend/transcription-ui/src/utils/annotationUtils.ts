@@ -29,10 +29,29 @@ export function segmentHasAlert(segment: AudioSegment): boolean {
 export function findTranscriptAnnotationData(
   annotations: Annotation[]
 ): TranscriptAnnotationData | null {
-  for (const annotation of annotations) {
-    if (annotation.type === AnnotationType.TRANSCRIPT) {
-      return annotation.data as TranscriptAnnotationData;
-    }
+  const userLabeled = annotations.find(
+    (annotation) => annotation.type === AnnotationType.USER_GENERATED_TRANSCRIPT
+  );
+  if (userLabeled) {
+    return userLabeled.data as TranscriptAnnotationData;
+  }
+  const modelPrediction = annotations.find(
+    (annotation) => annotation.type === AnnotationType.TRANSCRIPT
+  );
+  if (modelPrediction) {
+    return modelPrediction.data as TranscriptAnnotationData;
+  }
+  return null;
+}
+
+export function findOriginalTranscriptAnnotationData(
+  annotations: Annotation[]
+): TranscriptAnnotationData | null {
+  const modelPrediction = annotations.find(
+    (annotation) => annotation.type === AnnotationType.TRANSCRIPT
+  );
+  if (modelPrediction) {
+    return modelPrediction.data as TranscriptAnnotationData;
   }
   return null;
 }

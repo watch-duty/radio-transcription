@@ -43,6 +43,14 @@ app.use(
       return;
     }
 
+    if (err.name === 'ValidateError') {
+      res.status(400).json({
+        message: 'Validation failed',
+        details: (err as unknown as { fields: unknown }).fields,
+      });
+      return;
+    }
+
     res.status(500).json({ message: 'Internal Server Error' });
   }
 );

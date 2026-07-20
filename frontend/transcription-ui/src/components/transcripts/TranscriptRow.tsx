@@ -4,22 +4,29 @@ import { saveAs } from 'file-saver';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DonwloadIcon from '@mui/icons-material/Download';
+import EditIcon from '@mui/icons-material/Edit';
 import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
+import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  AnnotationType,
   AudioClassification,
   type TranscriptAnnotationData,
 } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { createUserGeneratedTranscript } from '../../service/createUserGeneratedTranscript';
 import {
   findEvaluationAnnotationData,
+  findOriginalTranscriptAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -65,9 +72,28 @@ export function TranscriptRow({
   isMobile = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
-  const { isAdmin } = useAuth();
+  const { isAdmin, token } = useAuth();
+  const queryClient = useQueryClient();
 
   const [isHovered, setIsHovered] = useState(false);
+  const [isEditingTranscript, setIsEditingTranscript] = useState(false);
+  const [editedTranscript, setEditedTranscript] = useState('');
+
+  const editMutation = useMutation({
+    mutationFn: (text: string) =>
+      createUserGeneratedTranscript(audioSegment.id, token ?? '', text),
+    onSuccess: () => {
+      setIsEditingTranscript(false);
+      triggerSnackbar('Manual transcript submitted');
+
+      queryClient.invalidateQueries({ queryKey: ['listAudioSegments'] });
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      triggerSnackbar(`Failed to edit transcript: ${errorMessage}`);
+    },
+  });
 
   const currentDate = new Date(audioSegment.startTimestamp);
 
@@ -76,6 +102,14 @@ export function TranscriptRow({
 
   const transcriptAnnotation = findTranscriptAnnotationData(
     audioSegment.annotations
+  );
+
+  const originalTranscriptAnnotation = findOriginalTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const isUserGenerated = audioSegment.annotations.some(
+    (a) => a.type === AnnotationType.USER_GENERATED_TRANSCRIPT
   );
 
   const hasErrors = transcriptAnnotation
@@ -356,49 +390,111 @@ export function TranscriptRow({
             mt: { xs: 0.5, sm: 0 },
           }}
         >
-          <Typography
-            variant={isPlaceholder ? 'caption' : 'body1'}
-            color={
-              hasErrors
-                ? 'error'
-                : isPlaceholder
-                  ? 'text.secondary'
-                  : 'text.primary'
-            }
-            sx={{
-              flexGrow: 1,
-              whiteSpace: 'pre-wrap',
-              transition: 'filter 0.3s ease, opacity 0.3s ease',
-              filter: redactTranscripts ? 'blur(6px)' : 'none',
-              opacity: redactTranscripts ? 0.6 : 1,
-              fontStyle: isPlaceholder ? 'italic' : 'normal',
-            }}
-          >
-            {isPlaceholder ? (
-              renderTranscriptionText(transcriptAnnotation)
-            ) : (
-              <>
-                {hasErrorsWithText && (
-                  <Box
-                    component="span"
-                    sx={{
-                      display: 'block',
-                      typography: 'caption',
-                      fontStyle: 'italic',
-                      color: 'error.main',
-                      mb: 1,
-                    }}
-                  >
-                    [Transcript may be incomplete]
-                  </Box>
-                )}
-                <HighlightedTranscript
-                  text={transcriptAnnotation?.text ?? ''}
-                  ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
-                />
-              </>
-            )}
-          </Typography>
+          {isEditingTranscript ? (
+            <Box
+              sx={{
+                width: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <TextField
+                fullWidth
+                multiline
+                size="small"
+                value={editedTranscript}
+                onChange={(e) => setEditedTranscript(e.target.value)}
+                autoFocus
+              />
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                <Button
+                  size="small"
+                  onClick={() => setIsEditingTranscript(false)}
+                  disabled={editMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={() => editMutation.mutate(editedTranscript)}
+                  disabled={editMutation.isPending}
+                >
+                  {editMutation.isPending ? 'Saving...' : 'Save'}
+                </Button>
+              </Box>
+            </Box>
+          ) : (
+            <Typography
+              variant={isPlaceholder ? 'caption' : 'body1'}
+              color={
+                hasErrors
+                  ? 'error'
+                  : isPlaceholder
+                    ? 'text.secondary'
+                    : 'text.primary'
+              }
+              sx={{
+                flexGrow: 1,
+                whiteSpace: 'pre-wrap',
+                transition: 'filter 0.3s ease, opacity 0.3s ease',
+                filter: redactTranscripts ? 'blur(6px)' : 'none',
+                opacity: redactTranscripts ? 0.6 : 1,
+                fontStyle: isPlaceholder ? 'italic' : 'normal',
+              }}
+            >
+              {isPlaceholder ? (
+                renderTranscriptionText(transcriptAnnotation)
+              ) : (
+                <>
+                  {hasErrorsWithText && (
+                    <Box
+                      component="span"
+                      sx={{
+                        display: 'block',
+                        typography: 'caption',
+                        fontStyle: 'italic',
+                        color: 'error.main',
+                        mb: 1,
+                      }}
+                    >
+                      [Transcript may be incomplete]
+                    </Box>
+                  )}
+                  <HighlightedTranscript
+                    text={transcriptAnnotation?.text ?? ''}
+                    ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+                  />
+                  {isUserGenerated && (
+                    <Tooltip
+                      title={
+                        originalTranscriptAnnotation?.text
+                          ? `Original Model Transcript: "${originalTranscriptAnnotation.text}"`
+                          : 'Original transcript not available'
+                      }
+                      arrow
+                    >
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          ml: 1,
+                          fontStyle: 'italic',
+                          alignSelf: 'center',
+                          cursor: 'help',
+                        }}
+                      >
+                        (edited)
+                      </Typography>
+                    </Tooltip>
+                  )}
+                </>
+              )}
+            </Typography>
+          )}
         </Box>
         <Box
           sx={{
@@ -411,6 +507,23 @@ export function TranscriptRow({
             mt: { xs: 0.5, sm: 0 },
           }}
         >
+          {!isSilence && !isOutage && isAdmin && (
+            <Tooltip title="Edit transcript">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="edit transcript"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditedTranscript(transcriptAnnotation?.text ?? '');
+                    setIsEditingTranscript(true);
+                  }}
+                >
+                  <EditIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
           {!isSilence && !isOutage && (
             <Tooltip title="Copy transcript">
               <span>
