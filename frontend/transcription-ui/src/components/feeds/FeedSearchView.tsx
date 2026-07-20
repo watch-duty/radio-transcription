@@ -266,24 +266,13 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
-  // Fallback for tags if backend precomputation options are loading
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed && !searchOptionsData,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
-
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     if (searchOptionsData?.tags && searchOptionsData.tags.length > 0) {
       return searchOptionsData.tags;
     }
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds.length > 0 ? allFeeds : feeds;
-    sourceFeeds.forEach((feed) => {
+    (feeds || []).forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
         if (!seen.has(identifier)) {
@@ -295,7 +284,7 @@ export function FeedSearchView({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [searchOptionsData, allFeeds, feeds]);
+  }, [searchOptionsData, feeds]);
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
