@@ -1421,3 +1421,23 @@ class FeedStore:
                 )
             )
         return PaginatedFeedAuditEvents(events, new_next_token, total)
+
+    async def get_feed_search_options(self) -> dict[str, list[Any]]:
+        """Fetch precomputed search filter options for feeds."""
+        async with self._pool.acquire() as conn:
+            tag_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_TAGS_SQL
+            )
+            st_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL
+            )
+            status_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL
+            )
+            return {
+                "source_types": [r["source_type"] for r in st_rows],
+                "statuses": [r["status"] for r in status_rows],
+                "tags": [
+                    {"key": r["key"], "value": r["value"]} for r in tag_rows
+                ],
+            }

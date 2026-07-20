@@ -12,6 +12,7 @@ from .models import (
     FeedCreate,
     FeedHistoryEvent,
     FeedUpdate,
+    FeedSearchOptionsResponse,
     ListFeedHistoryResponse,
     ListFeedsResponse,
 )
@@ -254,3 +255,8 @@ class FeedService:
             next_token=store_events.next_token,
             total=store_events.total,
         )
+
+    async def get_feed_search_options(self) -> FeedSearchOptionsResponse:
+        """Fetch precomputed search filter options for feeds."""
+        data = await self._store.get_feed_search_options()
+        return FeedSearchOptionsResponse.model_validate(data)

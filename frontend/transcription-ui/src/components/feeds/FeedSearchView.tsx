@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
 import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
@@ -257,27 +258,31 @@ export function FeedSearchView({
   const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
   const feedTotal = feedsData?.total ?? 0;
 
+  const { data: searchOptionsData } = useFeedSearchOptions(token);
+
   useEffect(() => {
     if (feedsError) {
       onError(feedsError, 'Loading Feeds');
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
+  // Fallback for tags if backend precomputation options are loading
   const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
     queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed,
+    enabled: !!token && !condensed && !searchOptionsData,
     refetchOnWindowFocus: false,
   });
 
   const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
   const tags = useMemo<{ key: string; value: string }[]>(() => {
+    if (searchOptionsData?.tags && searchOptionsData.tags.length > 0) {
+      return searchOptionsData.tags;
+    }
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
+    const sourceFeeds = allFeeds.length > 0 ? allFeeds : feeds;
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -290,7 +295,7 @@ export function FeedSearchView({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [allFeeds]);
+  }, [searchOptionsData, allFeeds, feeds]);
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));

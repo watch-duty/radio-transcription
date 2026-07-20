@@ -71,6 +71,12 @@ export interface ListFeedsResponse {
   total: number;
 }
 
+export interface FeedSearchOptionsResponse {
+  sourceTypes: string[];
+  statuses: string[];
+  tags: Tag[];
+}
+
 export interface AuditTrailValues { 
   id?: string;
   name?: string;
