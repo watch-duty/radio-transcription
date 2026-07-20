@@ -135,7 +135,8 @@ export function validateRule(
  */
 export function buildRulePayload(
   editingRule: RuleCreate,
-  inProgressKeyword?: string
+  inProgressKeyword?: string,
+  tags?: Tag[]
 ): RuleCreate {
   const finalKeywords =
     editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
@@ -196,6 +197,7 @@ export function buildRulePayload(
     isActive: editingRule.isActive,
     scope: scopePayload,
     conditions: conditionsPayload,
+    tags: tags ?? editingRule.tags ?? [],
   };
 }
 

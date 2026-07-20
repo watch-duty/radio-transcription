@@ -388,6 +388,42 @@ describe('buildRulePayload', () => {
     expect(result.scope.targetFeeds).toEqual(['feed-1']);
   });
 
+  it('includes explicitly provided tags in the payload', () => {
+    const input: RuleCreate = {
+      ruleName: 'Alert Rule',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: [] },
+      conditions: {
+        evaluationType: 'REGEX_MATCH',
+        expression: '.*',
+        flags: 'i',
+      },
+    };
+
+    const result = buildRulePayload(input, undefined, [
+      { key: 'geo_event_type', value: 'flooding' },
+    ]);
+    expect(result.tags).toEqual([{ key: 'geo_event_type', value: 'flooding' }]);
+  });
+
+  it("falls back to the rule's existing tags, then an empty list", () => {
+    const withTags: RuleCreate = {
+      ruleName: 'Alert Rule',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: [] },
+      conditions: {
+        evaluationType: 'REGEX_MATCH',
+        expression: '.*',
+        flags: 'i',
+      },
+      tags: [{ key: 'team', value: 'goo' }],
+    };
+    expect(buildRulePayload(withTags).tags).toEqual([
+      { key: 'team', value: 'goo' },
+    ]);
+    expect(buildRulePayload({ ...withTags, tags: undefined }).tags).toEqual([]);
+  });
+
   describe('timezone validation', () => {
     describe('isValidTimezone', () => {
       it('returns true for valid timezones', () => {
