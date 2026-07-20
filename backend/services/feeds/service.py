@@ -11,8 +11,8 @@ from .models import (
     Feed,
     FeedCreate,
     FeedHistoryEvent,
-    FeedUpdate,
     FeedSearchOptionsResponse,
+    FeedUpdate,
     ListFeedHistoryResponse,
     ListFeedsResponse,
 )
