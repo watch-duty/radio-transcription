@@ -8,11 +8,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useQuery } from '@tanstack/react-query';
-import {
-  AudioClassification,
-  type AudioSegment,
-  SourceType,
-} from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
@@ -30,6 +26,7 @@ import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
@@ -251,9 +248,16 @@ export function TranscriptView({
     preloadWindowMs: TIMELINE_RANGE_DURATION_MS,
   });
 
+  const { data: feedHistoryData } = useQuery({
+    queryKey: ['feedHistory', searchedFeedId, token],
+    queryFn: () => listFeedHistory(searchedFeedId!, token!, 100),
+    enabled: !!searchedFeedId && !!token,
+  });
+
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
-    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+    searchedFeed?.sourceType,
+    feedHistoryData?.historyEvents
   );
 
   // View-intent key: a deliberate context switch resets the window and scroll
@@ -270,6 +274,7 @@ export function TranscriptView({
     centerWindowOn,
   } = useAudioTimelineWindow({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,
@@ -318,17 +323,21 @@ export function TranscriptView({
   // Resolve a target id to a playable segment — the raw segment by id, else the
   // consolidated entry containing it (a raw id inside a silence bundle) — and play it.
   const playSegmentById = useCallback(
-    (targetId: string) => {
+    (targetId: string, offsetSeconds?: number) => {
       const raw = rawAudioSegments.find((s) => s.id === targetId);
       if (raw?.playbackAudioUri) {
-        togglePlay(raw.id, raw.playbackAudioUri);
+        togglePlay(raw.id, raw.playbackAudioUri, offsetSeconds);
         return;
       }
       const consolidated = audioSegments.find((t) =>
         isWithinSegment(t, targetId)
       );
       if (consolidated?.playbackAudioUri) {
-        togglePlay(consolidated.id, consolidated.playbackAudioUri);
+        togglePlay(
+          consolidated.id,
+          consolidated.playbackAudioUri,
+          offsetSeconds
+        );
       }
     },
     [rawAudioSegments, audioSegments, togglePlay]
@@ -475,7 +484,7 @@ export function TranscriptView({
     }
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
-  const handleClipClick = (segmentId: string) => {
+  const handleClipClick = (segmentId: string, offsetSeconds?: number) => {
     const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -484,7 +493,12 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
+    setPlaybackIntent('playing');
     setHighlightedSegmentId(segmentId);
+    playSegmentById(segmentId, offsetSeconds);
+    if (offsetSeconds !== undefined) {
+      handleSeek();
+    }
   };
 
   const scrollListToNearestTime = useCallback(

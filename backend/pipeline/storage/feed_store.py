@@ -34,7 +34,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
@@ -63,7 +68,13 @@ class SourceType(enum.StrEnum):
         deploy.
     """
 
+    # Continuous Icecast-protocol stream for Broadcastify feeds
+    # (handled by icecast_collector.py). Currently the primary stream source
+    # using the Icecast collector; feeds into Dataflow segmentation.
+    # Note: Do not confuse with BCFY_CALLS (discrete REST polling collector).
     BCFY_FEEDS = "bcfy_feeds"
+    # Discrete call REST polling API collector for Broadcastify Calls
+    # (bcfy_calls_collector.py). Does NOT pass through Dataflow segmentation.
     BCFY_CALLS = "bcfy_calls"
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"

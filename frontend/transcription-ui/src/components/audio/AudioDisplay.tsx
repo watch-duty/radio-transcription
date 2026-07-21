@@ -14,11 +14,12 @@ import {
   findWaveformAnnotationData,
   segmentHasSpeech,
 } from '../../utils/annotationUtils';
-import { type PlaybackState } from '../../utils/playbackUtils';
+import { type PlaybackState, isWithinSegment } from '../../utils/playbackUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 import TimelineMiniMap from './TimelineMiniMap';
 import TimelinePlayhead from './TimelinePlayhead';
 import { computePlayhead } from './computePlayhead';
+import { resolveClickSegmentAndOffset } from './timelineMath';
 
 interface AudioDisplayProps {
   audioSegments: RenderableAudioSegment[];
@@ -26,7 +27,7 @@ interface AudioDisplayProps {
   rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
-  onClipClick: (segmentId: string) => void;
+  onClipClick: (segmentId: string, offsetSeconds?: number) => void;
   // Visible window, owned by useAudioTimelineWindow; null follows the live edge.
   windowEndTime: number | null;
   windowDurationMs: number;
@@ -133,14 +134,28 @@ interface TimelineClipProps {
     duration?: number;
     isSpeech?: boolean;
     isOutageBundle?: boolean;
+    startTimestamp: string;
+    endTimestamp: string;
+    bundledSegmentIds?: string[];
   };
-  onClipClick: (segmentId: string) => void;
+  windowStartTime: number;
+  windowDurationMs: number;
+  rawAudioSegments: AudioSegment[];
+  onClipClick: (segmentId: string, offsetSeconds?: number) => void;
   isDarkTheme: boolean;
   theme: Theme;
 }
 
 const TimelineClip = React.memo(
-  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
+  ({
+    clip,
+    windowStartTime,
+    windowDurationMs,
+    rawAudioSegments,
+    onClipClick,
+    isDarkTheme,
+    theme,
+  }: TimelineClipProps) => {
     const renderWaveform = !!clip.peaks?.[0]?.length;
 
     if (clip.isOutageBundle) {
@@ -174,9 +189,35 @@ const TimelineClip = React.memo(
       );
     }
 
+    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0) {
+        onClipClick(clip.id);
+        return;
+      }
+      const clickX = e.clientX - rect.left;
+      const fraction = Math.max(0, Math.min(1, clickX / rect.width));
+
+      const tStart = new Date(clip.startTimestamp).getTime();
+      const tEnd = new Date(clip.endTimestamp).getTime();
+      const visibleStart = Math.max(tStart, windowStartTime);
+      const visibleEnd = Math.min(tEnd, windowStartTime + windowDurationMs);
+
+      const clickedTimeMs =
+        visibleStart + fraction * (visibleEnd - visibleStart);
+
+      const { segmentId, offsetSeconds } = resolveClickSegmentAndOffset(
+        clip,
+        clickedTimeMs,
+        rawAudioSegments
+      );
+
+      onClipClick(segmentId, offsetSeconds);
+    };
+
     return (
       <Box
-        onClick={() => onClipClick(clip.id)}
+        onClick={handleClick}
         sx={{
           position: 'absolute',
           left: `${clip.left}%`,
@@ -239,6 +280,12 @@ const TimelineClip = React.memo(
       prevProps.clip.duration === nextProps.clip.duration &&
       prevProps.clip.isSpeech === nextProps.clip.isSpeech &&
       prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
+      prevProps.clip.startTimestamp === nextProps.clip.startTimestamp &&
+      prevProps.clip.endTimestamp === nextProps.clip.endTimestamp &&
+      prevProps.clip.bundledSegmentIds === nextProps.clip.bundledSegmentIds &&
+      prevProps.windowStartTime === nextProps.windowStartTime &&
+      prevProps.windowDurationMs === nextProps.windowDurationMs &&
+      prevProps.rawAudioSegments === nextProps.rawAudioSegments &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme
     );
@@ -354,14 +401,21 @@ export function AudioDisplay({
           id: t.id,
           left,
           width,
-          isAudioPlaying: t.id === currentlyPlayingSegmentId,
-          isHighlighted: t.id === highlightedSegmentId,
+          isAudioPlaying: currentlyPlayingSegmentId
+            ? isWithinSegment(t, currentlyPlayingSegmentId)
+            : false,
+          isHighlighted: highlightedSegmentId
+            ? isWithinSegment(t, highlightedSegmentId)
+            : false,
           hasAlert:
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
           peaks: waveform?.peaks,
           duration: waveform?.durationSeconds,
           isSpeech: segmentHasSpeech(t),
           isOutageBundle: !!t.isOutageBundle,
+          startTimestamp: t.startTimestamp,
+          endTimestamp: t.endTimestamp,
+          bundledSegmentIds: t.bundledSegmentIds,
         };
       });
 
@@ -402,6 +456,9 @@ export function AudioDisplay({
             <TimelineClip
               key={clip.id}
               clip={clip}
+              windowStartTime={startTime}
+              windowDurationMs={windowDuration}
+              rawAudioSegments={rawAudioSegments}
               onClipClick={onClipClick}
               isDarkTheme={isDarkTheme}
               theme={theme}

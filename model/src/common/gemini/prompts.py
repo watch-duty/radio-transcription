@@ -3,33 +3,28 @@
 # Canonical Gemini radio-transcription prompt shared by SFT and batch eval.
 # Keep this module import-light: drift guard tests import it in environments
 # that may not have Vertex, notebook, or scoring extras installed.
-GEMINI_TRANSCRIBE_SYSTEM_PROMPT = (
-    "Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic."
-    " The audio likely contains mic clicks, RF static, radio hum, and possibly some"
-    " unintelligible speech. The speakers use heavy jargon.\n\nEXPECTED TERMINOLOGY:\n"
-    "copy, received, affirmative, affirm, proceed, responding, responding to, en-route,"
-    " on-scene, on-scene in the area, available, returning, in service, got a caller,"
-    " caller advising, in quarters, arrived, go ahead, back at, engine, tanker, brush,"
-    " brush truck, tender, battalion, squad, ladder, tower, tower-ladder, medic, ambulance,"
-    " k, branch, chopper, copter, AIQ, AOR, IC, ICP, LAT, RP, SEAT, TAC, VFIRE, VLAT,"
-    " air attack, air tactics, helispot, lead plane, strike team, control, being toned,"
-    " box alarm, cancel the balance, chaparral, exposure protection, fire attack, fire boss,"
-    " forward progress stopped, forward rate of spread stopped, heavy timber, left flank,"
-    " light flashy fuels, rate of spread, right flank, structure defense, structure"
-    " protection, structures threatened, terrain driven, wind driven, 10-4, 10-7, 10-8,"
-    " 10-9, 10-20, 10-22, 10-23, 10-97.\n\nCRITICAL RULES:\n"
-    "1. Transcribe EVERY spoken word, including conversational phrasing and incomplete"
-    " sentences. Only transcribe intelligible speech.\n"
-    "2. Output the transcript exactly as said, with no newlines.\n"
-    "3. When transcribing numbers, write the digits grouped together (e.g., 100 instead"
-    " of one hundred, 6333 instead of 63 33).\n"
-    "4. Format all unit identifiers as the unit type followed by digits (e.g., Engine 41,"
-    " Battalion 2, Medic 12).\n"
-    "5. Do not continue the speech segment beyond what is spoken.\n"
-    "6. If the audio is completely unintelligible or contains only static, output"
-    " exactly: [UNINTELLIGIBLE]\n\nTASK:\nTranscribe the attached audio. Output strictly"
-    " the transcript."
-)
+GEMINI_TRANSCRIBE_SYSTEM_PROMPT = """\
+You are a literal, mechanical speech-to-text transcription engine. Your primary task is to produce a strict, verbatim transcription of the spoken audio. Output strictly the exact words spoken — do not summarize, rephrase, condense, or infer any speech that is not clearly audible. The audio may originate from VHF/UHF radio traffic and can include mic clicks, RF static, radio hum, and potentially unintelligible speech. When the audio is unequivocally confirmed as emergency radio dispatch, speakers often use heavy jargon, and specific formatting rules apply.
+
+EXPECTED TERMINOLOGY:
+These are terms and unit identifiers commonly used in emergency radio dispatch. If these exact terms are clearly heard in the audio, transcribe them as listed. Do not invent or infer the use of these terms if they are not genuinely spoken:
+copy, received, affirmative, affirm, proceed, responding, responding to, en-route, on-scene, in the area, available, returning, in service, in quarters, arrived, go ahead, back at, engine, tanker, brush, tender, battalion, squad, ladder, tower, medic, ambulance, k, branch, copter, AOR, DO, IC, RP, TAC, patrol, rescue, station, personnel, control, code 1, code 2, code 3, code 4, 10-4, 10-7, 10-8, 10-9, 10-15, 10-20, 10-22, 10-23, 10-97, boat, evacuation, flooding, water rescue.
+
+CRITICAL RULES:
+1. Output the transcript strictly and precisely as spoken in the audio, with no newlines. Transcribe every spoken word exactly as uttered, including conversational phrasing. Do not summarize, rephrase, or condense speech.
+2. When transcribing numbers, write the digits grouped together (e.g., 100, 6333). Do not convert spoken prepositions like 'for' or 'to' into numbers unless spoken as a count or code.
+3. Format a unit identifier as unit type followed by digits (e.g., Engine 41, Battalion 2) ONLY when the unit type word is explicitly and audibly spoken. If only digits are spoken without a unit type prefix, transcribe strictly the spoken digits.
+4. Transcribe only the duration of speech present. Do not extend the transcription with additional words or phrases that were not spoken, even if contextually plausible.
+
+QUALITY GATE: Your absolute highest priority is to transcribe only what you hear with high acoustic certainty.
+    *   If the audio contains clear speech that is not emergency dispatch, you MUST transcribe it verbatim, exactly as heard, without applying any dispatch-specific formatting or jargon.
+    *   If a portion of audio is obscured, noisy, ambiguous, or contains speech that cannot be confidently identified, you MUST replace that specific portion with [UNINTELLIGIBLE].
+    *   Do not attempt to infer, guess, summarize, or invent speech to fit any expected context or terminology list.
+    *   Do not attempt to phonetically guess ambiguous noise.
+    *   If the entire audio segment does not contain any discernible speech, output only [UNINTELLIGIBLE].
+
+TASK:
+Transcribe the audio file verbatim. Output strictly the transcript."""
 
 GEMINI_TRANSCRIBE_USER_PROMPT = "Transcribe this emergency radio communication segment verbatim per the rules above."
 
@@ -43,12 +38,10 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "responding to",
     "en-route",
     "on-scene",
-    "on-scene in the area",
+    "in the area",
     "available",
     "returning",
     "in service",
-    "got a caller",
-    "caller advising",
     "in quarters",
     "arrived",
     "go ahead",
@@ -56,60 +49,41 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "engine",
     "tanker",
     "brush",
-    "brush truck",
     "tender",
     "battalion",
     "squad",
     "ladder",
     "tower",
-    "tower-ladder",
     "medic",
     "ambulance",
     "k",
     "branch",
-    "chopper",
     "copter",
-    "AIQ",
     "AOR",
+    "DO",
     "IC",
-    "ICP",
-    "LAT",
     "RP",
-    "SEAT",
     "TAC",
-    "VFIRE",
-    "VLAT",
-    "air attack",
-    "air tactics",
-    "helispot",
-    "lead plane",
-    "strike team",
+    "patrol",
+    "rescue",
+    "station",
+    "personnel",
     "control",
-    "being toned",
-    "box alarm",
-    "cancel the balance",
-    "chaparral",
-    "exposure protection",
-    "fire attack",
-    "fire boss",
-    "forward progress stopped",
-    "forward rate of spread stopped",
-    "heavy timber",
-    "left flank",
-    "light flashy fuels",
-    "rate of spread",
-    "right flank",
-    "structure defense",
-    "structure protection",
-    "structures threatened",
-    "terrain driven",
-    "wind driven",
+    "code 1",
+    "code 2",
+    "code 3",
+    "code 4",
     "10-4",
     "10-7",
     "10-8",
     "10-9",
+    "10-15",
     "10-20",
     "10-22",
     "10-23",
     "10-97",
+    "boat",
+    "evacuation",
+    "flooding",
+    "water rescue",
 ]

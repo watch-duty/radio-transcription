@@ -63,6 +63,7 @@ class TestCollectorSettings(unittest.TestCase):
             "CAP_BCFY_FEEDS": "200",
             "CAP_BCFY_CALLS": "400",
             "CAP_OPENMHZ": "700",
+            "CAP_FIRE_NOTIFICATIONS": "500",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -191,7 +192,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
 
     def test_two_process_epochs_with_same_index_get_distinct_worker_ids(
         self,
@@ -622,7 +623,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
 
     def test_caps_keys_match_default_caps_registry(self) -> None:
         """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
