@@ -349,13 +349,14 @@ class TestTracingUtils(unittest.TestCase):
         # Clean up
         tracing_utils._state.custom_provider = None
 
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
     @patch(
         "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
     )
     @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
     @patch("backend.pipeline.common.tracing_utils.BatchSpanProcessor")
     def test_setup_tracing_batch_processor_config(
-        self, mock_batch_processor, mock_exporter, mock_is_gcp
+        self, mock_batch_processor, mock_exporter, mock_is_gcp, mock_set_global
     ) -> None:
         """Verifies setup_tracing configures BatchSpanProcessor using env overrides."""
         tracing_utils._state.custom_provider = None
