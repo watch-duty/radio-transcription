@@ -391,12 +391,6 @@ class GeminiTranscriber(base.Transcriber):
         log_helper.record_pipeline_stage(
             "transcription_status", enums.TranscriptionStatus.FALLBACK
         )
-        logger.info(
-            "Tuned model %s failed: %s. Falling back to foundation model %s...",
-            self.config.model,
-            reason,
-            fallback_model,
-        )
 
         fallback_location = self._resolve_location(
             fallback_model, self.fallback_location
