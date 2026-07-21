@@ -5,23 +5,18 @@ import {
   type AudioSegment,
   type FeedHistoryEvent,
   SourceType,
+  isContinuousSource,
 } from '@transcription/common';
 
 import { segmentHasSpeech } from '../utils/annotationUtils';
+
+export { isContinuousSource };
 
 /**
  * Tolerance threshold to distinguish between minor timestamp rounding errors
  * and actual missing audio (outages) in continuous feeds.
  */
 const MIN_GAP_FOR_OUTAGE_MS = 10;
-
-/**
- * Determines whether an audio source type represents a continuous stream.
- * Defaults to false if audioSource is omitted or not SourceType.BCFY_FEEDS.
- */
-export function isContinuousSource(audioSource?: SourceType): boolean {
-  return audioSource === SourceType.BCFY_FEEDS;
-}
 
 export interface RenderableAudioSegment extends AudioSegment {
   /**
