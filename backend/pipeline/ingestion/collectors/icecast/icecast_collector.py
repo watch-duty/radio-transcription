@@ -762,14 +762,25 @@ class IcecastTimelineManager:
                 )
 
             if chunk.chunk_start_time < self._last_yielded_end_time:
-                msg = (
-                    f"Feed {self.feed_id} ({self.feed_name}): "
-                    f"Non-monotonic chunk start time: "
-                    f"start={chunk.chunk_start_time.isoformat()} "
-                    f"is before last_end="
-                    f"{self._last_yielded_end_time.isoformat()}"
+                duration = chunk.chunk_end_time - chunk.chunk_start_time
+                new_start = self._last_yielded_end_time
+                new_end = new_start + duration
+                logger.warning(
+                    "Feed %s (%s): Non-monotonic chunk start time detected "
+                    "(start=%s < last_end=%s). Clamping chunk start to last end: "
+                    "new_start=%s, new_end=%s",
+                    self.feed_id,
+                    self.feed_name,
+                    chunk.chunk_start_time.isoformat(),
+                    self._last_yielded_end_time.isoformat(),
+                    new_start.isoformat(),
+                    new_end.isoformat(),
                 )
-                raise ValueError(msg)
+                chunk = dataclasses.replace(
+                    chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
         self._last_yielded_end_time = chunk.chunk_end_time
         return chunk
 
