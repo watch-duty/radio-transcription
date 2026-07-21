@@ -1,13 +1,8 @@
 import logging
 
 import httpx
-from tenacity import Retrying
 
-from backend.pipeline.common import auth_client, env
-from backend.pipeline.common.clients.session_helper import (
-    get_httpx_retry_config,
-)
-from backend.pipeline.common.tracing_utils import get_current_traceparent
+from backend.pipeline.common.clients.session_helper import authenticated_get
 from backend.services.feeds.models import Tag
 
 logger = logging.getLogger(__name__)
@@ -42,33 +37,11 @@ class RulesClient:
             return []
 
         url = f"{self.base_url}/v1/rules"
-        headers = {}
-
-        traceparent = get_current_traceparent()
-        if traceparent:
-            headers["traceparent"] = traceparent
-
-        if env.is_gcp_env():
-            token = auth_client.get_id_token(self.base_url)
-            headers["Authorization"] = f"Bearer {token}"
 
         try:
-            for attempt in Retrying(
-                **get_httpx_retry_config(
-                    total_attempts=4,
-                    multiplier=0.5,
-                    min_seconds=0.5,
-                    max_seconds=2.0,
-                )
-            ):
-                with attempt:
-                    response = self.client.get(
-                        url,
-                        params={"rule_ids": rule_ids},
-                        headers=headers,
-                        timeout=5,
-                    )
-                    response.raise_for_status()
+            response = authenticated_get(
+                self.client, self.base_url, url, params={"rule_ids": rule_ids}
+            )
         except httpx.HTTPError:
             logger.exception("Error fetching rules %s from rules API", rule_ids)
             return None
