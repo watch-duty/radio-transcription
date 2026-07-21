@@ -12,10 +12,11 @@ import type { Feed, FeedStatus } from '@transcription/common';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import FeedSearchView from '../feeds/FeedSearchView';
+import AddToScannerButton from '../scanner/AddToScannerButton';
 
 interface FeedHeaderProps {
   searchedFeed: Feed | null;
-  onSelectFeed: (feedId: string) => void;
+  onSelectFeed: (feed: Feed) => void;
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
@@ -98,6 +99,10 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
               gap: { xs: 1, sm: 2 },
             }}
           >
+            <AddToScannerButton
+              variant="button"
+              feed={{ id: searchedFeed.id, name: searchedFeed.name }}
+            />
             <Tooltip title="Copy feed deep link">
               <Button
                 variant="outlined"

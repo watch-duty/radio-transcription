@@ -5,11 +5,13 @@ import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import DescriptionIcon from '@mui/icons-material/Description';
+import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import AppBar from '@mui/material/AppBar';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
@@ -26,6 +28,7 @@ import Typography from '@mui/material/Typography';
 import { styled, useTheme } from '@mui/material/styles';
 
 import { useAuth } from '../context/AuthContext';
+import { useScanner } from '../context/ScannerContext';
 import { authLogout } from '../service/authLogout';
 
 const drawerWidth = 240;
@@ -47,6 +50,7 @@ export default function AppContainer({
   const navigate = useNavigate();
   const theme = useTheme();
   const { token, setToken, isAdmin } = useAuth();
+  const { count: scannerCount } = useScanner();
   const [open, setOpen] = useState(false);
 
   const handleDrawerOpen = () => {
@@ -134,6 +138,16 @@ export default function AppContainer({
         </DrawerHeader>
         <Divider />
         <List>
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => handleItemClick('/scanner')}>
+              <ListItemIcon>
+                <Badge badgeContent={scannerCount} color="primary">
+                  <GraphicEqIcon />
+                </Badge>
+              </ListItemIcon>
+              <ListItemText primary={'Scanner'} />
+            </ListItemButton>
+          </ListItem>
           <ListItem disablePadding>
             <ListItemButton onClick={() => handleItemClick('/')}>
               <ListItemIcon>

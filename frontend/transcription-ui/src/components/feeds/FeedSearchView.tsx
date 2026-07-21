@@ -24,7 +24,12 @@ interface FeedSearchViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
   condensed?: boolean;
-  onFeedSelect?: (feedId: string) => void;
+  // Condensed selector fills its container instead of the default half-width.
+  fullWidth?: boolean;
+  // Keep the chosen feed in the field; the consumer controls/reset it via `value`.
+  retainSelection?: boolean;
+  value?: Feed | null;
+  onFeedSelect?: (feed: Feed) => void;
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
@@ -36,7 +41,12 @@ interface CondensedFeedSearchResultsProps {
   onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
   feedTotal: number;
-  onFeedSelect?: (feedId: string) => void;
+  fullWidth?: boolean;
+  // Keep the chosen feed shown in the field (controlled by `value`) instead of
+  // clearing on select. The consumer resets it by setting `value` back to null.
+  retainSelection?: boolean;
+  value?: Feed | null;
+  onFeedSelect?: (feed: Feed) => void;
 }
 
 function CondensedFeedSearchResults({
@@ -44,31 +54,52 @@ function CondensedFeedSearchResults({
   filters,
   onFiltersChange,
   feedsLoading,
+  fullWidth,
+  retainSelection,
+  value,
   onFeedSelect,
 }: CondensedFeedSearchResultsProps) {
   const [inputValue, setInputValue] = useState('');
 
   return (
-    <Box sx={{ width: '50%', textAlign: 'left' }}>
+    <Box
+      sx={{
+        textAlign: 'left',
+        width: fullWidth ? 'auto' : '50%',
+        flexGrow: fullWidth ? 1 : 0,
+        minWidth: 0,
+      }}
+    >
       <Autocomplete
         disablePortal
         options={feeds}
         // Prevents client-side filtering since all filtering is done server-side.
         filterOptions={(x) => x}
         getOptionLabel={(option) => option.name}
+        isOptionEqualToValue={(option, selected) => option.id === selected.id}
         size="small"
-        value={null}
-        inputValue={inputValue}
+        value={retainSelection ? (value ?? null) : null}
+        // In retain mode the field text is derived from the controlled `value`
+        // (shows the picked name, clears when the consumer resets it); otherwise
+        // it's a controlled search box that clears on select.
+        inputValue={retainSelection ? undefined : inputValue}
         onChange={(_, option) => {
           if (option && onFeedSelect) {
-            onFeedSelect(option.id);
-            setInputValue('');
-            onFiltersChange({ ...filters, searchQuery: '' });
+            onFeedSelect(option);
+            if (!retainSelection) {
+              setInputValue('');
+              onFiltersChange({ ...filters, searchQuery: '' });
+            }
           }
         }}
-        onInputChange={(_, newInputValue) => {
-          setInputValue(newInputValue);
-          onFiltersChange({ ...filters, searchQuery: newInputValue });
+        onInputChange={(_, newInputValue, reason) => {
+          if (!retainSelection) {
+            setInputValue(newInputValue);
+            onFiltersChange({ ...filters, searchQuery: newInputValue });
+          } else if (reason === 'input') {
+            // Only user typing drives the server search, not the value → text sync.
+            onFiltersChange({ ...filters, searchQuery: newInputValue });
+          }
         }}
         loading={feedsLoading}
         loadingText={
@@ -203,6 +234,9 @@ export function FeedSearchView({
   title,
   onError,
   condensed = false,
+  fullWidth = false,
+  retainSelection = false,
+  value,
   onFeedSelect,
 }: FeedSearchViewProps) {
   const { token } = useAuth();
@@ -304,6 +338,9 @@ export function FeedSearchView({
         onFiltersChange={setFilters}
         feedsLoading={feedsLoading}
         feedTotal={feedTotal}
+        fullWidth={fullWidth}
+        retainSelection={retainSelection}
+        value={value}
         onFeedSelect={onFeedSelect}
       />
     );
