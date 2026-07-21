@@ -1,0 +1,2294 @@
+[
+  {
+    "name": "openmhz-wmata",
+    "source_feed_id": "wmata",
+    "source_type": "openmhz",
+    "tags": "[]"
+  },
+  {
+    "name": "Frisco TG 103",
+    "source_feed_id": "6630-103",
+    "source_type": "bcfy_calls",
+    "tags": "[]"
+  },
+  {
+    "name": "VT-Middlebury Regional EMS",
+    "source_feed_id": "Middlebury_Regional_EMS-vt_middlebury",
+    "source_type": "echo",
+    "tags": "[]"
+  },
+  {
+    "name": "WA / Benton / Tri-Cities Police and Fire",
+    "source_feed_id": "24268",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"benton-WA_US\"}]"
+  },
+  {
+    "name": "OR / Klamath County Public Safety",
+    "source_feed_id": "23474",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"klamath-OR_US\"}]"
+  },
+  {
+    "name": "OR / Lake County Public Safety & Forestry",
+    "source_feed_id": "42359",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lake-OR_US\"}]"
+  },
+  {
+    "name": "OR / Wasco County (South) Fire and Ambulance Dispatch",
+    "source_feed_id": "36064",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasco-OR_US\"}]"
+  },
+  {
+    "name": "AK / Mat-Su Borough Police, Fire and EMS Dispatch",
+    "source_feed_id": "10341",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"matanuska_susitna-AK_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - Dispatch",
+    "source_feed_id": "2-5653",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 601",
+    "source_feed_id": "2-5652",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 602",
+    "source_feed_id": "2-5651",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 604",
+    "source_feed_id": "2-5649",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 607",
+    "source_feed_id": "2-5646",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 609",
+    "source_feed_id": "2-5644",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bastrop County - 610",
+    "source_feed_id": "2-5643",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bastrop-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bell County Fire/EMS - Dispatch",
+    "source_feed_id": "6897-50593",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bell-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bell County Fire/EMS - Mutual Aid 1",
+    "source_feed_id": "6897-50609",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bell-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bell County - Troy Calls",
+    "source_feed_id": "6897-50605",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bell-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Dispatch",
+    "source_feed_id": "7017-39814",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Ops East",
+    "source_feed_id": "7017-39347",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Access East",
+    "source_feed_id": "7017-39346",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Ops West",
+    "source_feed_id": "7017-39389",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Access West",
+    "source_feed_id": "7017-39390",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - San Antonio Alerting",
+    "source_feed_id": "7017-38529",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - San Antonio Brush/Grass 1",
+    "source_feed_id": "7017-39878",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - San Antonio Brush/Grass 2",
+    "source_feed_id": "7017-39879",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Bexar County - Fire Only",
+    "source_feed_id": "46774",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"bexar-TX_US\"}]"
+  },
+  {
+    "name": "TX / Blanco County - Dispatch 1",
+    "source_feed_id": "2-7088",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"blanco-TX_US\"}]"
+  },
+  {
+    "name": "TX / Blanco County - Dispatch 2",
+    "source_feed_id": "2-7089",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"blanco-TX_US\"}]"
+  },
+  {
+    "name": "TX / Brazos County - Bryan Fire Dispatch",
+    "source_feed_id": "4563-2557",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"brazos-TX_US\"}]"
+  },
+  {
+    "name": "TX / Brazos County - Bryan Fire Response",
+    "source_feed_id": "4563-2558",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"brazos-TX_US\"}]"
+  },
+  {
+    "name": "TX / Donley County - Donley EMS",
+    "source_feed_id": "32246",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"donley-TX_US\"}]"
+  },
+  {
+    "name": "TX / Erath County - Stephenville & Erath County Fire/VFDs",
+    "source_feed_id": "41068",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"erath-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East Dispatch",
+    "source_feed_id": "4563-2314",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 2",
+    "source_feed_id": "4563-2322",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 3",
+    "source_feed_id": "4563-2312",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 4",
+    "source_feed_id": "4563-2318",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 5",
+    "source_feed_id": "4563-2313",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 6",
+    "source_feed_id": "4563-2320",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 7",
+    "source_feed_id": "4563-1241",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "HI - Big Island Hawaii Puna, Volcano, Kau Public Safety",
+    "source_feed_id": "40256",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "HI - Hawaii County Public Safety - Hamakua/North Hilo",
+    "source_feed_id": "40602",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "Yavapai County, AZ Public Safety",
+    "source_feed_id": "15199",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"yavapai-AZ_US\"}]"
+  },
+  {
+    "name": "Santa Clara Co Fire Dispatch (Echo)",
+    "source_feed_id": "Santa_Clara_Co_Fire_Disp-ca_almaden_valley",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"santa_clara-CA_US\"}]"
+  },
+  {
+    "name": "AK / Kenai Peninsula County",
+    "source_feed_id": "17948",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"kenai_peninsula-AK_US\"}]"
+  },
+  {
+    "name": "NY / Albany/Schenectady Counties",
+    "source_feed_id": "8553-10702",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"albany-NY_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 8",
+    "source_feed_id": "4563-2321",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 9",
+    "source_feed_id": "4563-2319",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 10",
+    "source_feed_id": "4563-1243",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM East 11",
+    "source_feed_id": "4563-2315",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Harris County - ECOM West Dispatch",
+    "source_feed_id": "4563-2323",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"harris-TX_US\"}]"
+  },
+  {
+    "name": "TX / Hartley County - Dalhart EMS",
+    "source_feed_id": "33106",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hartley-TX_US\"}]"
+  },
+  {
+    "name": "TX / Hays County - North",
+    "source_feed_id": "19824",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hays-TX_US\"}]"
+  },
+  {
+    "name": "TX / Hays County - Dispatch/Response",
+    "source_feed_id": "6587-5634",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hays-TX_US\"}]"
+  },
+  {
+    "name": "TX / Hutchinson County - Borger Police/Fire",
+    "source_feed_id": "37629",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hutchinson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Mason County - Mason Fire",
+    "source_feed_id": "26006",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"mason-TX_US\"}]"
+  },
+  {
+    "name": "TX / Montague County - Nocona Fire/Police",
+    "source_feed_id": "10597",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"montague-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Fire 1",
+    "source_feed_id": "10007-30201",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Fire 2",
+    "source_feed_id": "10007-30202",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Fire 3",
+    "source_feed_id": "10007-30203",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Fire 4",
+    "source_feed_id": "10007-30204",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Mutual Aid/Interop",
+    "source_feed_id": "10007-20502",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Dispatch",
+    "source_feed_id": "10007-20201",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Tac 2",
+    "source_feed_id": "10007-20202",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Tac 3",
+    "source_feed_id": "10007-20203",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Tac 4",
+    "source_feed_id": "10007-20204",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Tac 5",
+    "source_feed_id": "10007-20205",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Amarillo Police/Fire",
+    "source_feed_id": "14111",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Potter County - Fire/Sheriff",
+    "source_feed_id": "29360",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"potter-TX_US\"}]"
+  },
+  {
+    "name": "TX / Travis County - Austin Firecom East",
+    "source_feed_id": "2-1122",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"travis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Travis County - Austin Firecom West",
+    "source_feed_id": "2-1142",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"travis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Travis County - Austin Firecom South",
+    "source_feed_id": "2-1123",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"travis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Travis County - Austin Firecom North",
+    "source_feed_id": "2-1121",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"travis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Walker County - Op 1",
+    "source_feed_id": "4563-1124",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"walker-TX_US\"}]"
+  },
+  {
+    "name": "TX / Walker County - Tac 2",
+    "source_feed_id": "4563-1126",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"walker-TX_US\"}]"
+  },
+  {
+    "name": "TX / Waller County - Dispatch",
+    "source_feed_id": "4563-1004",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"waller-TX_US\"}]"
+  },
+  {
+    "name": "TX / Waller County - Tac 1",
+    "source_feed_id": "4563-944",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"waller-TX_US\"}]"
+  },
+  {
+    "name": "TX / Waller County - Tac 2",
+    "source_feed_id": "4563-950",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"waller-TX_US\"}]"
+  },
+  {
+    "name": "TX / Waller County - Tac 3",
+    "source_feed_id": "4563-952",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"waller-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Central Fire Dispatch",
+    "source_feed_id": "2-4512",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Central Fire 1",
+    "source_feed_id": "2-4484",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Central Fire 2",
+    "source_feed_id": "2-4426",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Central Fire 3",
+    "source_feed_id": "2-4487",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - East Fire Dispatch",
+    "source_feed_id": "2-4514",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - East Fire 1",
+    "source_feed_id": "2-4504",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - East Fire 2",
+    "source_feed_id": "2-4505",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - East Fire 3",
+    "source_feed_id": "2-4502",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Georgetown Dispatch",
+    "source_feed_id": "2-4846",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Georgetown Fire 1",
+    "source_feed_id": "2-4494",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / Williamson County - Georgetown Fire 2",
+    "source_feed_id": "2-4495",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - El Reno Fire Dispatch (OKWIN)",
+    "source_feed_id": "6949-359",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Mustang Fire Dispatch (OCMPS)",
+    "source_feed_id": "10198-1589",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Mustang Fire Tac 1",
+    "source_feed_id": "10198-1590",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Mustang Fire Tac 2",
+    "source_feed_id": "10198-1591",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Piedmont Fire Dispatch (OCMPS)",
+    "source_feed_id": "10198-453",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Union City Dispatch (OCMPS)",
+    "source_feed_id": "10198-458",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Yukon Fire Dispatch (OCMPS)",
+    "source_feed_id": "10198-1557",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Canadian County - Yukon Fire Tac 1",
+    "source_feed_id": "10198-1558",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"canadian-OK_US\"}]"
+  },
+  {
+    "name": "OK / Caddo County - Cyril Fire",
+    "source_feed_id": "38392",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"caddo-OK_US\"}]"
+  },
+  {
+    "name": "OK / Caddo County - Hinton Fire",
+    "source_feed_id": "29190",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"caddo-OK_US\"}]"
+  },
+  {
+    "name": "OK / Caddo County - Apache Fire",
+    "source_feed_id": "33645",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"caddo-OK_US\"}]"
+  },
+  {
+    "name": "OK / Coal County - Coalgate Fire",
+    "source_feed_id": "16052",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"coal-OK_US\"}]"
+  },
+  {
+    "name": "OK / Comanche County - Public Safety",
+    "source_feed_id": "31352",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"comanche-OK_US\"}]"
+  },
+  {
+    "name": "OK / Craig County - Vinita",
+    "source_feed_id": "6949-1649",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"craig-OK_US\"}]"
+  },
+  {
+    "name": "OK / Craig County - Welch",
+    "source_feed_id": "42338",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"craig-OK_US\"}]"
+  },
+  {
+    "name": "OK / Creek County - Mannford Fire",
+    "source_feed_id": "6949-3913",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"creek-OK_US\"}]"
+  },
+  {
+    "name": "OK / Creek County - Creek County and Kellyville PS",
+    "source_feed_id": "42999",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"creek-OK_US\"}]"
+  },
+  {
+    "name": "OK / Custer County - Clinton Fire",
+    "source_feed_id": "21658",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"custer-OK_US\"}]"
+  },
+  {
+    "name": "OK / Grady County - Bridge Creek, Blanchard, Newcastle & Tuttle Fire",
+    "source_feed_id": "28671",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"grady-OK_US\"}]"
+  },
+  {
+    "name": "OK / Jackson County - Police, Fire, EMS",
+    "source_feed_id": "8394",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"jackson-OK_US\"}]"
+  },
+  {
+    "name": "OK / Kiowa County - Gotebo Fire",
+    "source_feed_id": "20935",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"kiowa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Love County - Fire/EMS",
+    "source_feed_id": "45697",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"love-OK_US\"}]"
+  },
+  {
+    "name": "OK / Nowata County - Nowata City Fire",
+    "source_feed_id": "29642",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"nowata-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - OKC (OCMPS) Fire Station Alerting",
+    "source_feed_id": "10198-530",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - OKC (OCMPS) Dispatch",
+    "source_feed_id": "10198-529",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - OKC (OCMPS) Tac 1",
+    "source_feed_id": "10198-531",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - OKC (OCMPS) Tac 2",
+    "source_feed_id": "10198-532",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - OKWIN Dispatch",
+    "source_feed_id": "6949-3307",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - County Fire Mutual Aid Link",
+    "source_feed_id": "6949-3023",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - Oak Cliff/Deer Creek Dispatch",
+    "source_feed_id": "6949-3429",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - Oak Cliff/Deer Creek FG 1",
+    "source_feed_id": "6949-3431",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Oklahoma County - Oak Cliff/Deer Creek FG 2",
+    "source_feed_id": "6949-3433",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Osage County - Skiatook Fire Calls",
+    "source_feed_id": "6949-673",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"osage-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - Tulsa County Fire Dispatch A Calls",
+    "source_feed_id": "6949-2241",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - City of Tulsa Fire Tac 1",
+    "source_feed_id": "6949-2245",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - City of Tulsa Fire Tac 2",
+    "source_feed_id": "6949-2247",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - City of Tulsa Fire Tac 3",
+    "source_feed_id": "6949-2249",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - City of Tulsa Fire Tac 4",
+    "source_feed_id": "6949-2251",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tulsa County - City of Tulsa Fire Tac 5",
+    "source_feed_id": "6949-2253",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tulsa-OK_US\"}]"
+  },
+  {
+    "name": "OK / Roger Mills County - Fire/EM",
+    "source_feed_id": "17621",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"roger_mills-OK_US\"}]"
+  },
+  {
+    "name": "OK / Washington County - Rural Fire Calls",
+    "source_feed_id": "6949-409",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-OK_US\"}]"
+  },
+  {
+    "name": "OK / Washington County - Bartlesville FG 2",
+    "source_feed_id": "6949-411",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-OK_US\"}]"
+  },
+  {
+    "name": "OK / Washington County - Bartlesville FG 3",
+    "source_feed_id": "6949-413",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-OK_US\"}]"
+  },
+  {
+    "name": "OK / Washington County - Fire",
+    "source_feed_id": "25285",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-OK_US\"}]"
+  },
+  {
+    "name": "OK / Washita County - Fire",
+    "source_feed_id": "24602",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"washita-OK_US\"}]"
+  },
+  {
+    "name": "OK / Woodward County - Woodward County Public Safety",
+    "source_feed_id": "33486",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"woodward-OK_US\"}]"
+  },
+  {
+    "name": "TX / West Fire - Fire 3",
+    "source_feed_id": "TEXAS/WILLIAMSON-W-FIRE-3",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / West Fire - Dispatch",
+    "source_feed_id": "TEXAS/WILLIAMSON-CO-W-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / West Fire - Fire 2",
+    "source_feed_id": "TEXAS/WILLIAMSON-W-FIRE-2",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "TX / West Fire - Fire 1",
+    "source_feed_id": "TEXAS/WILLIAMSON-W-FIRE-1",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"williamson-TX_US\"}]"
+  },
+  {
+    "name": "WA / Pacific County Fire South Dispatch",
+    "source_feed_id": "Pacific_Co_Fire_South_Disp-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"pacific-WA_US\"}]"
+  },
+  {
+    "name": "Spokane Dispatch",
+    "source_feed_id": "RECORDINGS/WA-SPOKANE-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[]"
+  },
+  {
+    "name": "AZ / Yavapai County - Verde Valley Public Safety",
+    "source_feed_id": "41992",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"yavapai-AZ_US\"}]"
+  },
+  {
+    "name": "VT / Addison / Middlebury Fire",
+    "source_feed_id": "Middlebury_Fire-vt_middlebury",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"addison-VT_US\"}]"
+  },
+  {
+    "name": "OR / Crook County Fire",
+    "source_feed_id": "Crook_Co_Fire_Disp-or_redmond2",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"crook-OR_US\"}]"
+  },
+  {
+    "name": "WA / YAKIMA-CO",
+    "source_feed_id": "RECORDINGS/Z-RR-WA-YAKIMA-CO",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"yakima-WA_US\"}]"
+  },
+  {
+    "name": "MT / Flathead County Law, Fire and EMS",
+    "source_feed_id": "6561",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"flathead-MT_US\"}]"
+  },
+  {
+    "name": "MT / Lake County Public Safety",
+    "source_feed_id": "36217",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lake-MT_US\"}]"
+  },
+  {
+    "name": "MT / Ravalli County Sheriff, Hamilton Police, Fire and EMS",
+    "source_feed_id": "30049",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"ravalli-MT_US\"}]"
+  },
+  {
+    "name": "MT / Park County Fire",
+    "source_feed_id": "39165",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"park-MT_US\"}]"
+  },
+  {
+    "name": "MT / Yellowstone County Law Enforcment, Fire and EMS",
+    "source_feed_id": "39839",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"yellowstone-MT_US\"}]"
+  },
+  {
+    "name": "MT / Cascade County Public Safety",
+    "source_feed_id": "43827",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cascade-MT_US\"}]"
+  },
+  {
+    "name": "MT / Great Falls Fire and EMS",
+    "source_feed_id": "33753",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cascade-MT_US\"}]"
+  },
+  {
+    "name": "MT / Great Falls Police",
+    "source_feed_id": "44154",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cascade-MT_US\"}]"
+  },
+  {
+    "name": "HI / Ka'u District Ops Channel / Hawaii County Fire",
+    "source_feed_id": "8598-6505",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "HI / Captain Cook/Keauhou/Kailua/Makalei Ops Channel / Hawaii County Fire",
+    "source_feed_id": "8598-6504",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "HI / Waimea/Waikoloa/Kohala Ops Channel / Hawaii County Fire",
+    "source_feed_id": "8598-6503",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "HI / Honoka'a/Laupahoehoe Ops Channel / Hawaii County Fire",
+    "source_feed_id": "8598-6502",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "HI / Central/Waiakea/Kawailani/Kaumana Ops Channel / Hawaii County Fire",
+    "source_feed_id": "8598-6501",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hawaii-HI_US\"}]"
+  },
+  {
+    "name": "CO / Boulder County Sheriff and Fire",
+    "source_feed_id": "591",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boulder-CO_US\"}, {\"key\": \"stereo\", \"value\": \"true\"}]"
+  },
+  {
+    "name": "CO / Boulder County Fire Tac",
+    "source_feed_id": "42873",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boulder-CO_US\"}]"
+  },
+  {
+    "name": "CO / Jeffcom, Jeffco Mtn Fire Depts, Foothills, Evergreen, Elk Creek, Indian Hills, Inter Canyon",
+    "source_feed_id": "46211",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"jefferson-CO_US\"}]"
+  },
+  {
+    "name": "CO / Clear Creek County Law Enforcement, Fire, EMS and Mountain Rescue",
+    "source_feed_id": "33371",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"clear_creek-CO_US\"}]"
+  },
+  {
+    "name": "CO / Larimer County Emergency Services - Fire/EMS/SAR",
+    "source_feed_id": "45175",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"larimer-CO_US\"}]"
+  },
+  {
+    "name": "CO / Douglas and Elbert County Fire Districts",
+    "source_feed_id": "44285",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"douglas-CO_US\"}]"
+  },
+  {
+    "name": "CO / Fire Dispatch / Weld County Fire-EMS",
+    "source_feed_id": "7768-1907",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"weld-CO_US\"}]"
+  },
+  {
+    "name": "CO / Adams County Fire",
+    "source_feed_id": "COLORADO/Z-RR-CO-ADAMS-CO",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"adams-CO_US\"}]"
+  },
+  {
+    "name": "CO / Grand Junction Fire Dispatch",
+    "source_feed_id": "329-8441",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"mesa-CO_US\"}]"
+  },
+  {
+    "name": "CO / Fire 1 - Dispatch / Colorado Springs Public Safety",
+    "source_feed_id": "329-4620",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"el_paso-CO_US\"}]"
+  },
+  {
+    "name": "CO / Fire 2 - Alternate Dispatch / Colorado Springs Public Safety",
+    "source_feed_id": "329-4621",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"el_paso-CO_US\"}]"
+  },
+  {
+    "name": "CO / County Fire Red - Dispatch / El Paso County",
+    "source_feed_id": "329-4770",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"el_paso-CO_US\"}]"
+  },
+  {
+    "name": "WA / Thurston County Fire Dispatch",
+    "source_feed_id": "12945-50521",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"thurston-WA_US\"}]"
+  },
+  {
+    "name": "WA / Grant County Fire 1",
+    "source_feed_id": "6979-2002",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"grant-WA_US\"}]"
+  },
+  {
+    "name": "WA / Grant County Fire 2",
+    "source_feed_id": "6979-2003",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"grant-WA_US\"}]"
+  },
+  {
+    "name": "WA / Skagit County Police and Fire",
+    "source_feed_id": "4958",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"stereo\", \"value\": \"true\"}, {\"key\": \"region\", \"value\": \"skagit-WA_US\"}]"
+  },
+  {
+    "name": "WA / Centralia and Chehalis Fire Dispatch",
+    "source_feed_id": "28845",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lewis-WA_US\"}]"
+  },
+  {
+    "name": "WA / Whatcom County Fire Dispatch",
+    "source_feed_id": "46809",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"whatcom-WA_US\"}]"
+  },
+  {
+    "name": "WA / Whitman County Fire Dispatch",
+    "source_feed_id": "40808",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"whitman-WA_US\"}]"
+  },
+  {
+    "name": "WA / Department of Natural Resources NE Dispatch",
+    "source_feed_id": "46987",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"pend_oreille-WA_US\"}]"
+  },
+  {
+    "name": "WA / Salkum Fire and EMS",
+    "source_feed_id": "31415",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lewis-WA_US\"}]"
+  },
+  {
+    "name": "WA / Camano Island Fire and Rescue",
+    "source_feed_id": "43916",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"island-WA_US\"}]"
+  },
+  {
+    "name": "WA / Chelan County Fire Dispatch",
+    "source_feed_id": "RECORDINGS/WA-CHELAN-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"chelan-WA_US\"}]"
+  },
+  {
+    "name": "WA / Jefferson County Fire Dispatch",
+    "source_feed_id": "RECORDINGS/WA-JEFFERSON-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"jefferson-WA_US\"}]"
+  },
+  {
+    "name": "WA / Klickitat County Fire Paging",
+    "source_feed_id": "Klickitat_Co_Fire_Disp-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"klickitat-WA_US\"}]"
+  },
+  {
+    "name": "WA / Skamania County Fire Dispatch",
+    "source_feed_id": "Skamania_Co_Fire_Disp-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"skamania-WA_US\"}]"
+  },
+  {
+    "name": "WA / Pacific County Fire North Dispatch",
+    "source_feed_id": "Pacific_Co_Fire_North_Disp-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"pacific-WA_US\"}]"
+  },
+  {
+    "name": "WA / Cowlitz County Fire Dispatch",
+    "source_feed_id": "Cowlitz_Control_1-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"cowlitz-WA_US\"}]"
+  },
+  {
+    "name": "WA / Wahkiakum County Fire Dispatch",
+    "source_feed_id": "Wahkiakum_Fire_Disp-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"wahkiakum-WA_US\"}]"
+  },
+  {
+    "name": "WA / Walla Walla County Fire Dispatch",
+    "source_feed_id": "Walla_Walla_Co_Fire_Primary-wa_walla_walla",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"walla_walla-WA_US\"}]"
+  },
+  {
+    "name": "WA / Hanford Site Fire Department",
+    "source_feed_id": "Benton_Co_Hanford_Site_FD-wa_walla_walla",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"benton-WA_US\"}]"
+  },
+  {
+    "name": "WA / Colville Tribal Fire",
+    "source_feed_id": "Ferry_Co_Colville_Tribe-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"stevens-WA_US\"}]"
+  },
+  {
+    "name": "WA / Lincoln County Fire West",
+    "source_feed_id": "Lincoln_Co_Fire_West-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"lincoln-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR SE Defiance",
+    "source_feed_id": "WA_DNR_SE_Defiance-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"klickitat-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR NE Chewelah",
+    "source_feed_id": "WA_DNR_NE_Chewelah-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"stevens-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Defiance",
+    "source_feed_id": "WA_DNR_PC_Defiance-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"skamania-WA_US\"}]"
+  },
+  {
+    "name": "WA / Lincoln County Fire East",
+    "source_feed_id": "Lincoln_Co_Fire_East-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"lincoln-WA_US\"}]"
+  },
+  {
+    "name": "WA / Lincoln County Fire Odessa",
+    "source_feed_id": "Lincoln_Co_Fire_Odessa-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"lincoln-WA_US\"}]"
+  },
+  {
+    "name": "WA / Okanogan County Fire Brewster",
+    "source_feed_id": "Okanogan_Co_Fire_Brewster-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"okanogan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Southeast",
+    "source_feed_id": "WA_DNR_Southeast-wa_walla_walla",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"benton-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR SE Naneum",
+    "source_feed_id": "WA_DNR_SE_Naneum-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"kittitas-WA_US\"}]"
+  },
+  {
+    "name": "NY / Suffolk County Police, Fire and EMS Dispatch",
+    "source_feed_id": "30065",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"suffolk-NY_US\"}]"
+  },
+  {
+    "name": "WA / Stevens County North Fire",
+    "source_feed_id": "Stevens_Co_Fire_North-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"stevens-WA_US\"}]"
+  },
+  {
+    "name": "WA / Stevens County South Fire",
+    "source_feed_id": "Stevens_Co_Fire_South-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"stevens-WA_US\"}]"
+  },
+  {
+    "name": "WA / Okanogan County Fire Twisp",
+    "source_feed_id": "Okanogan_Co_Fire_Twisp-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"okanogan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR SE Twisp",
+    "source_feed_id": "WA_DNR_SE_Twisp-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"okanogan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR NE Brewster",
+    "source_feed_id": "WA_DNR_NE_Brewster-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"okanogan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR NE Lincoln",
+    "source_feed_id": "WA_DNR_NE_Lincoln-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"lincoln-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR NE Okanogan",
+    "source_feed_id": "WA_DNR_NE_Okanogan-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"okanogan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR SE Chelan",
+    "source_feed_id": "WA_DNR_SE_Chelan-wa_wilbur",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"chelan-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Abernathy",
+    "source_feed_id": "WA_DNR_Pacific_Cascade_-_Abernathy-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"cowlitz-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Naselle",
+    "source_feed_id": "WA_DNR_Pacific_Cascade_-_Naselle-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"pacific-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Baw Faw",
+    "source_feed_id": "WA_DNR_Pacific_Cascade_-_BawFaw-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"lewis-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Nicolai",
+    "source_feed_id": "WA_DNR_Pacific_Cascade_-_Nicolai-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"wahkiakum-WA_US\"}]"
+  },
+  {
+    "name": "WA / DNR Cascade Signal Peak",
+    "source_feed_id": "WA_DNR_Pacific_Cascade_-_Signal_Peak-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"cowlitz-WA_US\"}]"
+  },
+  {
+    "name": "KS / Allen County and Iola Public Safety",
+    "source_feed_id": "37813",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"allen-KS_US\"}]"
+  },
+  {
+    "name": "ID / Gooding, Lincoln, Jerome, and Twin Falls Counties (SIRCOMM) Primary Dispatch",
+    "source_feed_id": "42011",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"twin_falls-ID_US\"}]"
+  },
+  {
+    "name": "ID / Boundary County Public Safety",
+    "source_feed_id": "26892",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boundary-ID_US\"}]"
+  },
+  {
+    "name": "ID / Weiser Police and Fire, Washington County EMS",
+    "source_feed_id": "30818",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-ID_US\"}]"
+  },
+  {
+    "name": "ID / Boise County Public Safety / Boise National Forest",
+    "source_feed_id": "44031",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boise-ID_US\"}]"
+  },
+  {
+    "name": "ID / Boundary County - Panhandle Public Safety",
+    "source_feed_id": "38633",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boundary-ID_US\"}]"
+  },
+  {
+    "name": "ID / Boundary County - South Boundary County Public Safety",
+    "source_feed_id": "41851",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"boundary-ID_US\"}]"
+  },
+  {
+    "name": "ID / Bannock - Pocattello Dispatch",
+    "source_feed_id": "COLORADO/ID-BANNOCK-POCATTELLO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"bannock-ID_US\"}]"
+  },
+  {
+    "name": "ID / Madison County - Dispatch",
+    "source_feed_id": "COLORADO/ID-MADISON-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"madison-ID_US\"}]"
+  },
+  {
+    "name": "ID / Fremont County - Dispatch",
+    "source_feed_id": "COLORADO/ID-FREMONT-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"fremont-ID_US\"}]"
+  },
+  {
+    "name": "OR / Baker County - Sheriff and Fire",
+    "source_feed_id": "500",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"baker-OR_US\"}]"
+  },
+  {
+    "name": "OR / Tillamook County - Police, Fire, EMS, EM, and Public Works",
+    "source_feed_id": "16984",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"tillamook-OR_US\"}]"
+  },
+  {
+    "name": "OR / Benton County - Public Safety",
+    "source_feed_id": "12637",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"benton-OR_US\"}]"
+  },
+  {
+    "name": "OR / Umatilla County - Public Safety",
+    "source_feed_id": "33903",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"umatilla-OR_US\"}]"
+  },
+  {
+    "name": "OR / Deschutes, Crook, Jefferson Counties - Fire / EMS",
+    "source_feed_id": "4654",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"crook-OR_US\"}]"
+  },
+  {
+    "name": "OR / Hood River County - Police-Fire-ODOT-ODF",
+    "source_feed_id": "42041",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"hood_river-OR_US\"}]"
+  },
+  {
+    "name": "OR / Wallowa County - Public Safety",
+    "source_feed_id": "36257",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"wallowa-OR_US\"}]"
+  },
+  {
+    "name": "OR / Harney County - Public Safety",
+    "source_feed_id": "34649",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"harney-OR_US\"}]"
+  },
+  {
+    "name": "OR / Douglas County - DFPA Primary Dispatch & Douglas County Fire Dispatch",
+    "source_feed_id": "42407",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"douglas-OR_US\"}]"
+  },
+  {
+    "name": "OR / Lane County - ODF / Umpqua and Willamette National Forest",
+    "source_feed_id": "32798",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lane-OR_US\"}]"
+  },
+  {
+    "name": "OR / Columbia County - Fire Dispatch",
+    "source_feed_id": "Columbia_Co_Fire_Disp-wa_cathlamet",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"columbia-OR_US\"}]"
+  },
+  {
+    "name": "OR / Umatilla - Milton-Freewater Rural Fire",
+    "source_feed_id": "MFW_Rural_Fire-wa_walla_walla",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"umatilla-OR_US\"}]"
+  },
+  {
+    "name": "OR / Umatilla - Milton-Freewater City Fire",
+    "source_feed_id": "MFW_City_Fire-wa_walla_walla",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"umatilla-OR_US\"}]"
+  },
+  {
+    "name": "ID / Elmore County - Mountain Home Police, Elmore County Sheriff & EMS",
+    "source_feed_id": "38688",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"elmore-ID_US\"}]"
+  },
+  {
+    "name": "Pueblo County Dispatch",
+    "source_feed_id": "COLORADO/CO-PUEBLO-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"pueblo-CO_US\"}]"
+  },
+  {
+    "name": "KS / Cowley County Fire",
+    "source_feed_id": "14332",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cowley-KS_US\"}]"
+  },
+  {
+    "name": "KS / Ellis County Law, Fire and EMS",
+    "source_feed_id": "27134",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-KS_US\"}]"
+  },
+  {
+    "name": "KS / Butler County Area Sheriff, Police, EMS and EMA",
+    "source_feed_id": "6903",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"butler-KS_US\"}]"
+  },
+  {
+    "name": "KS / Osage County Fire and EMS",
+    "source_feed_id": "12151",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"osage-KS_US\"}]"
+  },
+  {
+    "name": "KS / Southwest Kansas Counties Sheriff and Fire",
+    "source_feed_id": "28798",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"finney-KS_US\"}]"
+  },
+  {
+    "name": "KS / Miltonvale Kansas Emergency Services",
+    "source_feed_id": "42078",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cloud-KS_US\"}]"
+  },
+  {
+    "name": "KS / Lyon County Public Safety",
+    "source_feed_id": "46775",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lyon-KS_US\"}]"
+  },
+  {
+    "name": "OR / Warm Springs Fire",
+    "source_feed_id": "Warm_Springs_Fire-or_redmond2",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"jefferson-OR_US\"}]"
+  },
+  {
+    "name": "OR / Wasco Mid Columbia Fire Rescue",
+    "source_feed_id": "Mid_Columbia_Fire_and_Rescue_Disp-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasco-OR_US\"}]"
+  },
+  {
+    "name": "OR / Wasco South Fire",
+    "source_feed_id": "Wasco_Co_South_Fire_Disp-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasco-OR_US\"}]"
+  },
+  {
+    "name": "CA / San Bernardino - Cajon Pass",
+    "source_feed_id": "45331",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"san_bernardino-CA_US\"}]"
+  },
+  {
+    "name": "CA / Mono County & Mammoth Lakes",
+    "source_feed_id": "15208",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"mono-CA_US\"}]"
+  },
+  {
+    "name": "CA / Inyo County Sheriff & Fire",
+    "source_feed_id": "20029",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"inyo-CA_US\"}]"
+  },
+  {
+    "name": "CA / San Diego County Wildland VHF",
+    "source_feed_id": "33036",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"san_diego-CA_US\"}]"
+  },
+  {
+    "name": "UT / Davis County Dispatch",
+    "source_feed_id": "COLORADO/UT-DAVIS-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"davis-UT_US\"}]"
+  },
+  {
+    "name": "UT / Davis County N Dispatch",
+    "source_feed_id": "COLORADO/UT-DAVIS-CO-N-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"davis-UT_US\"}]"
+  },
+  {
+    "name": "UT / Davis County S Dispatch",
+    "source_feed_id": "COLORADO/UT-DAVIS-CO-S-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"davis-UT_US\"}]"
+  },
+  {
+    "name": "UT / Utah County Dispatch",
+    "source_feed_id": "COLORADO/UT-UTAH-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"utah-UT_US\"}]"
+  },
+  {
+    "name": "UT / Washington County Dispatch",
+    "source_feed_id": "COLORADO/UT-WASHINGTON-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"washington-UT_US\"}]"
+  },
+  {
+    "name": "UT / Weber County Dispatch",
+    "source_feed_id": "COLORADO/UT-WEBER-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"weber-UT_US\"}]"
+  },
+  {
+    "name": "UT / Cache County Public Safety",
+    "source_feed_id": "1996",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"cache-UT_US\"}]"
+  },
+  {
+    "name": "UT / Salt Lake City Dispatch",
+    "source_feed_id": "COLORADO/UT-SALT-LAKE-CITY-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"salt_lake-UT_US\"}]"
+  },
+  {
+    "name": "UT / Salt Lake Sandy Dispatch",
+    "source_feed_id": "COLORADO/UT-SALT-LAKE-SANDY-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"salt_lake-UT_US\"}]"
+  },
+  {
+    "name": "UT / Salt Lake County VECC-1 Dispatch",
+    "source_feed_id": "COLORADO/UT-SALT-LAKE-CO-VECC-1",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"salt_lake-UT_US\"}]"
+  },
+  {
+    "name": "UT / Box Elder County Dispatch",
+    "source_feed_id": "COLORADO/UT-BOX-ELDER-CO-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"box_elder-UT_US\"}]"
+  },
+  {
+    "name": "UT / Box Elder County Tac 2",
+    "source_feed_id": "COLORADO/UT-BOX-ELDER-CO-TAC-2",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"box_elder-UT_US\"}]"
+  },
+  {
+    "name": "WA / Columbia County Public Safety",
+    "source_feed_id": "21700",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"columbia-WA_US\"}]"
+  },
+  {
+    "name": "WA / Yakima County",
+    "source_feed_id": "11194",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"yakima-wa_US\"}, {\"key\": \"stereo\", \"value\": \"true\"}]"
+  },
+  {
+    "name": "OR / Morrow County Fire Dispatch",
+    "source_feed_id": "11215-30701",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"morrow-OR_US\"}]"
+  },
+  {
+    "name": "KS / SW Kansas KSICS (Ford, Gray, Edwards, Clark, Meade)",
+    "source_feed_id": "46277",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"ford-KS_US\"}]"
+  },
+  {
+    "name": "KS / Atchison (City) Fire Dispatch",
+    "source_feed_id": "4390-4883",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"atchison-ks_US\"}]"
+  },
+  {
+    "name": "KS / Atchison County Fire Dispatch",
+    "source_feed_id": "4390-4886",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"atchison-KS_US\"}]"
+  },
+  {
+    "name": "KS / Barton County Fire Dispatch",
+    "source_feed_id": "4390-2526",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"barton-KS_US\"}]"
+  },
+  {
+    "name": "OR / Dallas and Polk Counties - Fire Dispatch",
+    "source_feed_id": "42736",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"polk-OR_US\"}]"
+  },
+  {
+    "name": "KS / Clark County Fire Dispatch",
+    "source_feed_id": "4390-2450",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"clark-KS_US\"}]"
+  },
+  {
+    "name": "KS / Clay County Public Safety",
+    "source_feed_id": "4390-4490",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"clay-KS_US\"}]"
+  },
+  {
+    "name": "KS / Coffey County Fire Dispatch",
+    "source_feed_id": "4390-475",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"coffey-KS_US\"}]"
+  },
+  {
+    "name": "KS / Clay County Sheriff, Clay Center Police and EMS",
+    "source_feed_id": "25619",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"clay-KS_US\"}]"
+  },
+  {
+    "name": "KS / Dickinson County Fire Dispatch",
+    "source_feed_id": "4390-1379",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"dickinson-KS_US\"}]"
+  },
+  {
+    "name": "KS / Edwards County Fire Dispatch",
+    "source_feed_id": "4390-707",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"edwards-KS_US\"}]"
+  },
+  {
+    "name": "KS / Finney County Fire Dispatch",
+    "source_feed_id": "4390-2246",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"finney-KS_US\"}]"
+  },
+  {
+    "name": "KS / Garden City Fire Dispatch",
+    "source_feed_id": "4390-2217",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"finney-KS_US\"}]"
+  },
+  {
+    "name": "KS / Ford County Incident 1",
+    "source_feed_id": "4390-2735",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ford-KS_US\"}]"
+  },
+  {
+    "name": "KS / Franklin County/Miami County Public Safety",
+    "source_feed_id": "39193",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"franklin-KS_US\"}]"
+  },
+  {
+    "name": "KS / Geary County Fire Dispatch",
+    "source_feed_id": "4390-5155",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"geary-KS_US\"}]"
+  },
+  {
+    "name": "KS / Junction City Fire Dispatch",
+    "source_feed_id": "4390-5179",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"geary-KS_US\"}]"
+  },
+  {
+    "name": "KS / Gray County Fire Dispatch",
+    "source_feed_id": "4390-2649",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"gray-KS_US\"}]"
+  },
+  {
+    "name": "KS / Sublette Fire Dispatch",
+    "source_feed_id": "4390-527",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"haskell-KS_US\"}]"
+  },
+  {
+    "name": "KS / Hodgeman County Fire Dispatch",
+    "source_feed_id": "4390-631",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"hodgeman-KS_US\"}]"
+  },
+  {
+    "name": "KS / Prairie Band Potawatomi Fire Dispatch",
+    "source_feed_id": "4390-4333",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"jackson-KS_US\"}]"
+  },
+  {
+    "name": "KS / Jefferson County Fire Dispatch",
+    "source_feed_id": "4390-5010",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"jefferson-KS_US\"}]"
+  },
+  {
+    "name": "KS / Kingman County Fire Dispatch",
+    "source_feed_id": "4390-598",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"kingman-KS_US\"}]"
+  },
+  {
+    "name": "KS / Labette County Fire Dispatch",
+    "source_feed_id": "4390-2107",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"labette-KS_US\"}]"
+  },
+  {
+    "name": "KS / Leavenworth City Fire Dispatch",
+    "source_feed_id": "4390-4237",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"leavenworth-KS_US\"}]"
+  },
+  {
+    "name": "KS / Leavenworth County Fire Dispatch",
+    "source_feed_id": "4390-4214",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"leavenworth-KS_US\"}]"
+  },
+  {
+    "name": "KS / Linn County Fire Dispatch",
+    "source_feed_id": "4390-688",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"linn-KS_US\"}]"
+  },
+  {
+    "name": "KS / Marion County Fire Dispatch",
+    "source_feed_id": "4390-4915",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"marion-KS_US\"}]"
+  },
+  {
+    "name": "KS / Marshall County Public Safety",
+    "source_feed_id": "4390-4448",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"marshall-KS_US\"}]"
+  },
+  {
+    "name": "KS / Meade County Fire Dispatch",
+    "source_feed_id": "4390-2950",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"meade-KS_US\"}]"
+  },
+  {
+    "name": "KS / Miami County Fire Dispatch",
+    "source_feed_id": "6916-31190",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"miami-KS_US\"}]"
+  },
+  {
+    "name": "KS / Mitchell County Fire Dispatch",
+    "source_feed_id": "4390-4692",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"mitchell-KS_US\"}]"
+  },
+  {
+    "name": "KS / Sabetha Fire",
+    "source_feed_id": "4390-4580",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"nemaha-KS_US\"}]"
+  },
+  {
+    "name": "KS / Seneca Fire",
+    "source_feed_id": "4390-4969",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"nemaha-KS_US\"}]"
+  },
+  {
+    "name": "KS / Norton County Fire Dispatch",
+    "source_feed_id": "4390-4416",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"norton-KS_US\"}]"
+  },
+  {
+    "name": "KS / Ottawa County Fire Dispatch",
+    "source_feed_id": "4390-5210",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ottawa-KS_US\"}]"
+  },
+  {
+    "name": "KS / Pottawatomie County Fire Alert",
+    "source_feed_id": "4390-4088",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"pottawatomie-KS_US\"}]"
+  },
+  {
+    "name": "KS / Reno County Fire and EMS Automated Dispatch",
+    "source_feed_id": "4390-2387",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"reno-KS_US\"}]"
+  },
+  {
+    "name": "KS / Rice County Fire Dispatch",
+    "source_feed_id": "4390-2852",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"rice-KS_US\"}]"
+  },
+  {
+    "name": "KS / Rooks County Public Safety",
+    "source_feed_id": "38246",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"rooks-KS_US\"}]"
+  },
+  {
+    "name": "KS / Bonner Springs Fire Dispatch",
+    "source_feed_id": "6916-37085",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"wyandotte-KS_US\"}]"
+  },
+  {
+    "name": "KS / Rush County Fire Dispatch",
+    "source_feed_id": "4390-458",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"rush-KS_US\"}]"
+  },
+  {
+    "name": "KS / Russell City Fire Dispatch",
+    "source_feed_id": "4390-4294",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"russell-KS_US\"}]"
+  },
+  {
+    "name": "KS / Russell County Fire Dispatch",
+    "source_feed_id": "4390-4298",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"russell-KS_US\"}]"
+  },
+  {
+    "name": "KS / Saline County Fire Dispatch",
+    "source_feed_id": "4390-5091",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"saline-KS_US\"}]"
+  },
+  {
+    "name": "KS / Sedgwick County Fire Dispatch",
+    "source_feed_id": "7697-41",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"sedgwick-KS_US\"}]"
+  },
+  {
+    "name": "KS / Topeka and Shawnee County Fire Departments",
+    "source_feed_id": "36412",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"shawnee-KS_US\"}]"
+  },
+  {
+    "name": "KS / Jackson County Public Safety",
+    "source_feed_id": "36072",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"jackson-KS_US\"}]"
+  },
+  {
+    "name": "KS / Edwardsville Fire Dispatch",
+    "source_feed_id": "6916-37095",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"wyandotte-KS_US\"}]"
+  },
+  {
+    "name": "KS / Wyandotte County Fire Dispatch",
+    "source_feed_id": "6916-37015",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"wyandotte-KS_US\"}]"
+  },
+  {
+    "name": "UT / Iron County Public Safety",
+    "source_feed_id": "44071",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"iron-UT_US\"}]"
+  },
+  {
+    "name": "UT / Millard County Dispatch",
+    "source_feed_id": "44878",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"millard-UT_US\"}]"
+  },
+  {
+    "name": "UT / Rich County Sheriff, Fire, EMS and SAR",
+    "source_feed_id": "24454",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"rich-UT_US\"}]"
+  },
+  {
+    "name": "UT / Wasatch County Public Safety",
+    "source_feed_id": "46981",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasatch-UT_US\"}]"
+  },
+  {
+    "name": "UT / Tooele County Fire 1",
+    "source_feed_id": "12042-6426",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"tooele-UT_US\"}]"
+  },
+  {
+    "name": "CO / Montezuma County Fire and EMS",
+    "source_feed_id": "42224",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"montezuma-CO_US\"}]"
+  },
+  {
+    "name": "KS / Harvey County Fire Dispatch",
+    "source_feed_id": "Harvey_Co_Fire_Disp-ks_wichita",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"harvey-KS_US\"}]"
+  },
+  {
+    "name": "KS / Butler County Fire Dispatch",
+    "source_feed_id": "Butler_Co_Fire_Disp-ks_wichita",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"butler-KS_US\"}]"
+  },
+  {
+    "name": "KS / Salina Fire Dispatch",
+    "source_feed_id": "4390-5100",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"saline-KS_US\"}]"
+  },
+  {
+    "name": "regression-test-echo-feed",
+    "source_feed_id": "regression-test-channel-echo",
+    "source_type": "echo",
+    "tags": "[]"
+  },
+  {
+    "name": "WA / Okanogan County Public Safety",
+    "source_feed_id": "47023",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"Okanogan-WA_US\"}]"
+  },
+  {
+    "name": "OR / Wasco South Fire Paging",
+    "source_feed_id": "Wasco_Co_South_Fire_Paging-or_mosier",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasco-OR_US\"}]"
+  },
+  {
+    "name": "WA / BENTON-FRANKLIN-CO",
+    "source_feed_id": "RECORDINGS/Z-RR-WA-BENTON-FRANKLIN-CO",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"benton-WA_US\"}, {\"key\": \"system/timezone\", \"value\": \"America/Los_Angeles\"}]"
+  },
+  {
+    "name": "Mineral County Fire and EMS - West",
+    "source_feed_id": "26449",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"mineral-MT_US\"}]"
+  },
+  {
+    "name": "Natrona County Fire and EMS Dispatch",
+    "source_feed_id": "32016",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"natrona-WY_US\"}]"
+  },
+  {
+    "name": "CA / Stanislaus Dispatch",
+    "source_feed_id": "RECORDINGS/STANISLAUS-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"stanislaus-CA_US\"}, {\"key\": \"system/timezone\", \"value\": \"America/Los_Angeles\"}]"
+  },
+  {
+    "name": "Spokane Dispatch (fixed source id)",
+    "source_feed_id": "RECORDINGS/WA-SPOKANE-DISP",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"system/timezone\", \"value\": \"America/Los_Angeles\"}]"
+  },
+  {
+    "name": "CO / Four Corners Area Fire and EMS",
+    "source_feed_id": "37",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"archuleta-CO_US\"}, {\"key\": \"region\", \"value\": \"san_juan-NM_US\"}]"
+  },
+  {
+    "name": "ID / IDL Mica Peak",
+    "source_feed_id": "IDL_Mica_Peak-rapid_deploy-15",
+    "source_type": "echo",
+    "tags": "[{\"key\": \"region\", \"value\": \"kootenai-ID_US\"}]"
+  },
+  {
+    "name": "TX / Richwood Fire / Brazoria County",
+    "source_feed_id": "4563-1544",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"brazoria-TX_US\"}]"
+  },
+  {
+    "name": "TX / Fire Dispatch / Ellis County",
+    "source_feed_id": "7349-7779",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Ellis County - Ennis",
+    "source_feed_id": "7349-7846",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Ellis County - Glenn Heights",
+    "source_feed_id": "7349-7890",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Ellis County - Midlothian",
+    "source_feed_id": "7349-7379",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Ellis County - Waxahachie",
+    "source_feed_id": "7349-7748",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"ellis-TX_US\"}]"
+  },
+  {
+    "name": "TX / Gillespie County - Fire/EMS",
+    "source_feed_id": "6587-8526",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"gillespie-TX_US\"}]"
+  },
+  {
+    "name": "TX / County Fire/EMS 1 Primary/Response / Gillespie County - Fire/EMS",
+    "source_feed_id": "6587-8521",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"gillespie-TX_US\"}]"
+  },
+  {
+    "name": "TX / Kaufman Co Fire",
+    "source_feed_id": "8358-215",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"kaufman-TX_US\"}]"
+  },
+  {
+    "name": "TX / Fire Dispatch / Terrell",
+    "source_feed_id": "8559-611",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"kaufman-TX_US\"}]"
+  },
+  {
+    "name": "TX / Lamar County Public Safety Dispatch",
+    "source_feed_id": "30603",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lamar-TX_US\"}]"
+  },
+  {
+    "name": "WA/ID / Nez Perce and Asotin Counties",
+    "source_feed_id": "10637",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"asotin-WA_US\"}, {\"key\": \"region\", \"value\": \"nez_perce-ID_US\"}]"
+  },
+  {
+    "name": "OK / Adair/Stilwell Fire Dispatch",
+    "source_feed_id": "28064",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"adair-OK_US\"}]"
+  },
+  {
+    "name": "OK / Beckham/Elk City Fire and EMS",
+    "source_feed_id": "40805",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"beckham-OK_US\"}]"
+  },
+  {
+    "name": "OK / Cleveland Fire Dispatch / Lexington",
+    "source_feed_id": "7985-1109",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"cleveland-OK_US\"}]"
+  },
+  {
+    "name": "OK / Custer/Weatherford Fire",
+    "source_feed_id": "40821",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"custer-OK_US\"}]"
+  },
+  {
+    "name": "OK / Haskell County Sheriff and Fire",
+    "source_feed_id": "31855",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"haskell-OK_US\"}]"
+  },
+  {
+    "name": "OK / East Central Oklahoma Public Safety",
+    "source_feed_id": "45820",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lincoln-OK_US\"}, {\"key\": \"region\", \"value\": \"pottawatomie-OK_US\"}, {\"key\": \"region\", \"value\": \"cleveland-OK_US\"}, {\"key\": \"region\", \"value\": \"seminole-OK_US\"}]"
+  },
+  {
+    "name": "OK / Edmond Police and Fire",
+    "source_feed_id": "7632",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"oklahoma-OK_US\"}]"
+  },
+  {
+    "name": "OK / Tiawah Fire Department",
+    "source_feed_id": "34359",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"rogers-OK_US\"}]"
+  },
+  {
+    "name": "OK / Muskogee County Public Safety",
+    "source_feed_id": "46254",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"muskogee-OK_US\"}]"
+  },
+  {
+    "name": "OK / Fire Dispatch / Guthrie",
+    "source_feed_id": "6949-3931",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"logan-OK_US\"}]"
+  },
+  {
+    "name": "OK / Fireground 1 / Logan County",
+    "source_feed_id": "6949-1387",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"logan-OK_US\"}]"
+  },
+  {
+    "name": "OR / Hood River, Wasco, Sherman Counties",
+    "source_feed_id": "47449",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"wasco-OR_US\"}]"
+  },
+  {
+    "name": "NV / Elko City and County Public Safety",
+    "source_feed_id": "8543",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"elko-NV_US\"}]"
+  },
+  {
+    "name": "NV / Churchill County Fire Tactical/Ambulance",
+    "source_feed_id": "33204",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"churchill-NV_US\"}]"
+  },
+  {
+    "name": "NV / Lyon County Dispatch (Sheriff and Fire)",
+    "source_feed_id": "32969",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"lyon-NV_US\"}]"
+  },
+  {
+    "name": "NV / Nye County Public Safety",
+    "source_feed_id": "44370",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"nye-NV_US\"}]"
+  },
+  {
+    "name": "NV / Pershing County Dispatch",
+    "source_feed_id": "47279",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"pershing-NV_US\"}]"
+  },
+  {
+    "name": "CA / MMU Dispatch",
+    "source_feed_id": "RECORDINGS/MMU-1",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"mariposa-CA_US\"}]"
+  },
+  {
+    "name": "NV / Boulder City Fire - Dispatch",
+    "source_feed_id": "7166-1913",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"clark-NV_US\"}]"
+  },
+  {
+    "name": "CA / Fresno County Fire Dispatch (#1)",
+    "source_feed_id": "RECORDINGS/FRESNO-COUNTY-1",
+    "source_type": "fire_notifications",
+    "tags": "[{\"key\": \"region\", \"value\": \"fresno-CA_US\"}]"
+  },
+  {
+    "name": "WY / Fire Dispatch / Campbell County",
+    "source_feed_id": "3939-14909",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"campbell-WY_US\"}]"
+  },
+  {
+    "name": "WY / Fire/EMS Page / Gillette",
+    "source_feed_id": "3939-20115",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"campbell-WY_US\"}]"
+  },
+  {
+    "name": "WY / Station Alerting / Natrona County",
+    "source_feed_id": "3939-13215",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"natrona-WY_US\"}]"
+  },
+  {
+    "name": "WY / Fire Paging / Sheridan County",
+    "source_feed_id": "3939-20118",
+    "source_type": "bcfy_calls",
+    "tags": "[{\"key\": \"region\", \"value\": \"sheridan-WY_US\"}]"
+  },
+  {
+    "name": "WY / Albany County Public Safety",
+    "source_feed_id": "46691",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"allbany-WY_US\"}]"
+  },
+  {
+    "name": "WY / Big Horn County Public Safety",
+    "source_feed_id": "44724",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"big_horn-WY_US\"}]"
+  },
+  {
+    "name": "WY / Carbon County Public Safety",
+    "source_feed_id": "24587",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"carbon-WY_US\"}]"
+  },
+  {
+    "name": "WY / Converse County (Douglas/Glenrock) Public Safety",
+    "source_feed_id": "45835",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"converse-WY_US\"}]"
+  },
+  {
+    "name": "WY / Fremont County Public Safety",
+    "source_feed_id": "37816",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"fremont-WY_US\"}]"
+  },
+  {
+    "name": "WY / Goshen County Public Safety",
+    "source_feed_id": "46815",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"goshen-WY_US\"}]"
+  },
+  {
+    "name": "WY / Laramie County Fire and EMS",
+    "source_feed_id": "46189",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"laramie-WY_US\"}]"
+  },
+  {
+    "name": "WY / Niobrara County and Lusk Fire and EMS Analog",
+    "source_feed_id": "45263",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"niobrara-WY_US\"}]"
+  },
+  {
+    "name": "WY / Park County Public Safety",
+    "source_feed_id": "42118",
+    "source_type": "bcfy_feeds",
+    "tags": "[{\"key\": \"region\", \"value\": \"park-WY_US\"}]"
+  }
+]
