@@ -7,12 +7,12 @@ Two invariants protected here:
    (Icecast, OpenMHZ, bcfy_calls). A PR that adds a 4th or removes one
    fails this test, forcing a conscious update to the SLO spec.
 
-2. Exactly 1 call-download-failed SLO marker and exactly 2
-   ``# SLO: chunk_ingested emit`` markers exist under
+2. Exactly 1 call-download-failed SLO marker and exactly 1
+   ``# SLO: chunk_ingested emit`` marker exist under
    ``backend/pipeline/ingestion/`` (excluding tests). The
    ``call_download_failed`` marker lives in the shared telemetry helper;
-   chunk-ingested markers live in the legacy Feed pipeline and the SID Calls
-   pipeline.
+   the chunk-ingested marker lives in the helper shared by the Feed and SID
+   Calls pipelines.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _CALL_DL_FAILED_EMIT_RE = re.compile(re.escape(_CALL_DL_FAILED_MARKER))
 _CHUNK_INGESTED_EMIT_RE = re.compile(r"# SLO: chunk_ingested emit")
 _EXPECTED_STAMP_COUNT = 3
 _EXPECTED_CALL_DL_FAILED_EMIT_COUNT = 1
-_EXPECTED_CHUNK_INGESTED_EMIT_COUNT = 2
+_EXPECTED_CHUNK_INGESTED_EMIT_COUNT = 1
 
 
 class TestReceiptTimeStampMarkerCount(unittest.TestCase):
@@ -68,10 +68,10 @@ class TestEmitMarkerCount(unittest.TestCase):
     """Phase 2: emit-site invariant (D-18 + chunk_ingested sites).
 
     Enforces exactly 1 call-download-failed SLO marker (in the
-    shared telemetry helper) and exactly 2 `# SLO: chunk_ingested emit`
-    markers: one for legacy Feed grants and one for SID Calls batches. A
-    collector that needs call_download_failed telemetry must call the helper
-    instead of adding a new emit marker.
+    shared telemetry helper) and exactly 1 `# SLO: chunk_ingested emit`
+    marker shared by legacy Feed grants and SID Calls batches. A collector
+    that needs either event must call its shared helper instead of adding a
+    new emit marker.
 
     Also asserts ZERO call_download_failed markers in bcfy_feeds/icecast
     (SLO spec: no discrete download step) and echo (pre-existing Cloud Run

@@ -570,6 +570,81 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             )
         self.data_store.report_feed_failure.assert_awaited_once()
 
+    async def test_failure_finalization_emits_legacy_policy_event(self) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        plan = _budgeted_plan()
+        self.data_store.report_feed_failure.return_value = "failing"
+
+        with self.assertLogs(feed_grant_control.logger, level="INFO") as logs:
+            result = await self.control.finalize(grant, payload, plan)
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        records = [
+            typing.cast("dict[str, object]", record.__dict__["json_fields"])
+            for record in logs.records
+        ]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(
+            records[0],
+            {
+                "event_type": "feed_failure_policy_decision",
+                "feed_id": str(grant.feed_id),
+                "source_type": feed_store.SourceType.BCFY_CALLS.value,
+                "reason": plan.reason,
+                "status_reason": plan.status_reason.value,
+                "replay_missing": False,
+                "data_gap_known": False,
+                "executed_action": "increment_feed_failure_budget",
+            },
+        )
+
+    async def test_publish_gap_emits_policy_and_gap_events(self) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        retry_after = _NOW + datetime.timedelta(minutes=8)
+        plan = failure_policy.FailurePersistencePlan(
+            status_reason=(
+                feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            ),
+            reason="publish failed",
+            treatment=failure_policy.RetryWithoutBudget(retry_after),
+        )
+        self.data_store.release_non_budgeted_failure.return_value = "failing"
+
+        with self.assertLogs(feed_grant_control.logger, level="INFO") as logs:
+            result = await self.control.finalize(grant, payload, plan)
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        records = [
+            typing.cast("dict[str, object]", record.__dict__["json_fields"])
+            for record in logs.records
+        ]
+        self.assertEqual(
+            [record["event_type"] for record in records],
+            [
+                "feed_failure_policy_decision",
+                "post_bookmark_publish_failure",
+            ],
+        )
+        for record in records:
+            self.assertEqual(record["feed_id"], str(grant.feed_id))
+            self.assertEqual(record["status_reason"], plan.status_reason.value)
+            self.assertTrue(record["replay_missing"])
+            self.assertTrue(record["data_gap_known"])
+            self.assertEqual(
+                record["executed_action"],
+                "record_post_bookmark_publish_gap",
+            )
+        self.assertEqual(records[0]["retry_after"], retry_after.isoformat())
+        self.assertNotIn("retry_after", records[1])
+
     async def test_quarantine_observer_runs_after_exact_commit(self) -> None:
         async def observe(*_args: object) -> None:
             self.data_store.report_feed_failure.assert_awaited_once()

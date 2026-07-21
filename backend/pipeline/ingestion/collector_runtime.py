@@ -32,6 +32,7 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
+    audio_pipeline,
     failure_policy,
     feed_grant_control,
     grant_control,
@@ -40,7 +41,6 @@ from backend.pipeline.ingestion import (
     memory_watchdog,
     quarantine_telemetry,
     sid_grant_control,
-    slo_contract,
     source_runtime_specs,
     status_reason_detail,
 )
@@ -59,7 +59,6 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
-    AudioMimeType,
     CapturedChunk,
     CaptureEvent,
     CaptureResources,
@@ -71,13 +70,16 @@ from backend.pipeline.ingestion.retry import (
     retry_with_lease_check,
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
-from backend.pipeline.storage import feed_lifecycle, ingestion_lease_store
+from backend.pipeline.storage import (
+    feed_lifecycle,
+    feed_store,
+    ingestion_lease_store,
+)
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
 from backend.pipeline.storage.feed_store import (
-    FeedGrant,
     FeedStatusReason,
     FeedStore,
     LeasedFeed,
@@ -178,11 +180,20 @@ class _FeedRunner:
 
     async def run(
         self,
-        grant: FeedGrant,
+        grant: feed_store.FeedGrant,
         payload: LeasedFeed,
         context: grant_control.RunContext,
     ) -> grant_control.RunOutcome:
-        """Run one exact Feed ownership generation."""
+        """Run one exact Feed ownership generation.
+
+        Args:
+            grant: Exact Feed authority held by the supervisor.
+            payload: Claimed Feed configuration for the runner.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            The runner's closed completion, loss, or failure outcome.
+        """
         return await self._runtime._process_feed(  # noqa: SLF001
             grant,
             payload,
@@ -190,34 +201,115 @@ class _FeedRunner:
         )
 
 
-async def _settle_accepted_operation[ResultT](
-    operation: collections.abc.Coroutine[object, object, ResultT],
-) -> ResultT:
-    """Settle an accepted side effect before cancellation exits."""
-    task = asyncio.create_task(operation)
-    cancellation: asyncio.CancelledError | None = None
+def _non_budgeted_retry_after() -> datetime.datetime:
+    """Return the next retry time for a non-budgeted failure.
 
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if cancellation is None:
-                cancellation = error
-            if task.done():
-                break
-        except Exception:
-            break
+    Returns:
+        A jittered UTC retry time within the configured runtime window.
+    """
+    jitter_sec = random.uniform(  # noqa: S311
+        _NON_BUDGETED_RETRY_MIN_SEC,
+        _NON_BUDGETED_RETRY_MAX_SEC,
+    )
+    return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        seconds=jitter_sec,
+    )
 
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancellation is not None:
-            logger.exception("Accepted side effect failed during cancellation")
-            raise cancellation from error
-        raise
-    if cancellation is not None:
-        raise cancellation
-    return result
+
+def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
+    """Return whether a leased Feed carries durable failure evidence.
+
+    Args:
+        feed: Claimed Feed payload to inspect.
+
+    Returns:
+        Whether a source observation must clear existing failure state.
+    """
+    return feed["failure_count"] > 0 or feed["status_reason"] is not None
+
+
+def _advance_local_bookmark(
+    feed: LeasedFeed,
+    resume_position: datetime.datetime | None,
+) -> None:
+    """Advance the in-memory Feed bookmark monotonically.
+
+    Args:
+        feed: Mutable claimed Feed payload mirrored by the runner.
+        resume_position: Newly committed source position, if present.
+
+    Returns:
+        None.
+    """
+    if resume_position is None:
+        return
+    current = feed["last_bookmark_time"]
+    if current is None or resume_position > current:
+        feed["last_bookmark_time"] = resume_position
+
+
+def _log_feed_failure(
+    feed: LeasedFeed,
+    status_reason: FeedStatusReason,
+    reason: str,
+) -> None:
+    """Emit runner-level Feed failure evidence.
+
+    Args:
+        feed: Feed whose runner stopped.
+        status_reason: Canonical failure classification.
+        reason: Operator-facing diagnostic detail.
+
+    Returns:
+        None.
+    """
+    fields = {
+        "event_type": "feed_runner_failed",
+        "feed_id": str(feed["id"]),
+        "source_type": feed["source_type"].value,
+        "status_reason": status_reason.value,
+        "reason": reason,
+    }
+    if status_reason.owner == "source":
+        logger.warning(
+            "Feed source processing failed: %s",
+            reason,
+            extra={"json_fields": fields},
+        )
+    else:
+        logger.error(
+            "Feed processing failed: %s",
+            reason,
+            extra={"json_fields": fields},
+        )
+
+
+def _feed_media_type(source_type: SourceType) -> tuple[str, str]:
+    """Return the default staged-media representation for a source.
+
+    Args:
+        source_type: Feed source whose default media type is required.
+
+    Returns:
+        The staged file extension and HTTP content type.
+
+    Raises:
+        ValueError: The source type has no configured media representation.
+    """
+    if source_type is SourceType.OPENMHZ:
+        return ("m4a", "audio/mp4")
+    if source_type in (
+        SourceType.ECHO,
+        SourceType.FIRE_NOTIFICATIONS,
+    ):
+        return ("mp3", "audio/mpeg")
+    if source_type in (
+        SourceType.BCFY_FEEDS,
+        SourceType.BCFY_CALLS,
+    ):
+        return ("flac", "audio/flac")
+    msg = f"Unhandled source type: {source_type}"
+    raise ValueError(msg)
 
 
 class CollectorRuntime:
@@ -290,14 +382,22 @@ class CollectorRuntime:
         self._health_runner: web.AppRunner | None = None
 
     def _active_feed_count(self) -> int:
-        """Return the local active Feed count without storage I/O."""
+        """Return the local active Feed count without storage I/O.
+
+        Returns:
+            Number of Feed grants currently supervised by this process.
+        """
         supervisor = self._supervisor
         if supervisor is None:
             return 0
         return supervisor.active_count(grant_control.DomainId.FEED)
 
     def run(self) -> None:
-        """Start the runtime and block until ordered shutdown completes."""
+        """Start the runtime and block until ordered shutdown completes.
+
+        Returns:
+            None after the asynchronous runtime shuts down.
+        """
         logger.info(
             "Starting CollectorRuntime worker_id=%s",
             self._collector_settings.worker_id,
@@ -307,11 +407,20 @@ class CollectorRuntime:
 
     async def _emit_feed_quarantine(
         self,
-        grant: FeedGrant,
+        grant: feed_store.FeedGrant,
         payload: LeasedFeed,
         decision: failure_policy.FailurePersistencePlan,
     ) -> None:
-        """Emit observational telemetry after durable quarantine."""
+        """Emit observational telemetry after durable quarantine.
+
+        Args:
+            grant: Exact Feed generation that was finalized.
+            payload: Claimed Feed configuration used for telemetry identity.
+            decision: Failure plan that produced quarantine.
+
+        Returns:
+            None after the quarantine event settles.
+        """
         await quarantine_telemetry.emit_quarantine_event(
             feed_id=str(grant.feed_id),
             feed_name=payload["name"],
@@ -321,7 +430,15 @@ class CollectorRuntime:
         )
 
     async def _compose_supervisor(self) -> None:
-        """Create selected controls, runners, and the sole supervisor."""
+        """Create selected controls, runners, and the sole supervisor.
+
+        Returns:
+            None after every configured domain has been registered.
+
+        Raises:
+            RuntimeError: Required runtime resources are not initialized.
+            ValueError: The worker profile selects an unsupported domain.
+        """
         data_pool = self._data_pool
         heartbeat_pool = self._heartbeat_pool
         http_session = self._http_session
@@ -429,7 +546,14 @@ class CollectorRuntime:
         )
 
     async def _main(self) -> None:
-        """Initialize resources, run admission, and shut down in order."""
+        """Initialize resources, run admission, and shut down in order.
+
+        Returns:
+            None after ordered runtime shutdown.
+
+        Raises:
+            BaseException: Startup, supervision, or shutdown fails.
+        """
         self._loop = asyncio.get_running_loop()
         self._loop.set_default_executor(
             concurrent.futures.ThreadPoolExecutor(
@@ -530,7 +654,18 @@ class CollectorRuntime:
         self._raise_integrity_failure()
 
     async def _sleep_or_shutdown(self, seconds: float) -> bool:
-        """Wait for timeout, shutdown, or fatal supervisor evidence."""
+        """Wait for timeout, shutdown, or fatal supervisor evidence.
+
+        Args:
+            seconds: Maximum number of seconds to wait.
+
+        Returns:
+            Whether process shutdown was requested.
+
+        Raises:
+            RuntimeError: Runtime shutdown state is not initialized.
+            BaseException: The supervisor has surfaced an integrity failure.
+        """
         shutdown = self._shutdown
         if shutdown is None:
             msg = "runtime shutdown event is not initialized"
@@ -556,7 +691,14 @@ class CollectorRuntime:
         return shutdown.is_set()
 
     def _raise_integrity_failure(self) -> None:
-        """Raise the supervisor's first fail-closed integrity outcome."""
+        """Raise the supervisor's first fail-closed integrity outcome.
+
+        Returns:
+            None when the supervisor has no integrity failure.
+
+        Raises:
+            BaseException: The supervisor recorded a fatal integrity outcome.
+        """
         supervisor = self._supervisor
         if (
             supervisor is None
@@ -569,29 +711,26 @@ class CollectorRuntime:
             raise grant_control.GrantControlIntegrityError(msg)
         raise failure
 
-    @staticmethod
-    def _non_budgeted_retry_after() -> datetime.datetime:
-        """Return a jittered retry time for failures that cannot quarantine."""
-        jitter_sec = random.uniform(  # noqa: S311
-            _NON_BUDGETED_RETRY_MIN_SEC,
-            _NON_BUDGETED_RETRY_MAX_SEC,
-        )
-        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-            seconds=jitter_sec,
-        )
-
     def _plan_failure(
         self,
         status_reason: FeedStatusReason,
         reason: str | None,
     ) -> failure_policy.FailurePersistencePlan:
-        """Apply the one shared Feed and SID failure policy."""
+        """Apply the one shared Feed and SID failure policy.
+
+        Args:
+            status_reason: Canonical failure classification.
+            reason: Optional operator-facing diagnostic detail.
+
+        Returns:
+            Materialized budgeted or non-budgeted persistence plan.
+        """
         return failure_policy.plan_failure(
             status_reason,
             reason,
             budgeted=self._failure_budget,
             non_budgeted=lambda: failure_policy.RetryWithoutBudget(
-                self._non_budgeted_retry_after()
+                _non_budgeted_retry_after()
             ),
         )
 
@@ -599,11 +738,26 @@ class CollectorRuntime:
         self,
         outcome: grant_control.RunFailed,
     ) -> failure_policy.FailurePersistencePlan:
-        """Plan one supervisor terminal failure."""
+        """Plan one supervisor terminal failure.
+
+        Args:
+            outcome: Closed runner failure evidence.
+
+        Returns:
+            Materialized failure persistence plan.
+        """
         return self._plan_failure(outcome.status_reason, outcome.reason)
 
     async def _leasing_loop(self) -> None:
-        """Run the sole supervisor admission cadence until shutdown."""
+        """Run the sole supervisor admission cadence until shutdown.
+
+        Returns:
+            None when process shutdown is requested.
+
+        Raises:
+            RuntimeError: Runtime supervision is not initialized.
+            BaseException: The supervisor surfaces an integrity failure.
+        """
         shutdown = self._shutdown
         supervisor = self._supervisor
         if shutdown is None or supervisor is None:
@@ -633,7 +787,14 @@ class CollectorRuntime:
                 return
 
     def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
-        """Return the configured Pub/Sub topic for a Feed."""
+        """Return the configured Pub/Sub topic for a Feed.
+
+        Args:
+            feed: Claimed Feed whose source selects the topic.
+
+        Returns:
+            Fully qualified Pub/Sub topic path.
+        """
         return resolve_topic_path(
             feed["source_type"],
             self._collector_settings,
@@ -644,13 +805,32 @@ class CollectorRuntime:
         feed: LeasedFeed,
         captured_chunk: CapturedChunk,
         sequence: int,
-        grant: FeedGrant,
+        grant: feed_store.FeedGrant,
         topic_path: str,
         extension: str,
         content_type: str,
         context: grant_control.RunContext,
     ) -> None:
-        """Upload, fence progress, then fulfill the publish obligation."""
+        """Upload, fence progress, then fulfill the publish obligation.
+
+        Args:
+            feed: Claimed Feed receiving the audio chunk.
+            captured_chunk: Captured audio and source timing metadata.
+            sequence: Feed-local create-only object sequence.
+            grant: Exact Feed authority fencing progress.
+            topic_path: Downstream Pub/Sub topic.
+            extension: Staged object file extension.
+            content_type: Staged object HTTP content type.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            None after upload, bookmark, and publication complete.
+
+        Raises:
+            LeaseExpiredError: Fenced progress rejects this grant.
+            _PipelineFailure: A physical side effect exhausts retries.
+            asyncio.CancelledError: The owning runner is cancelled.
+        """
         settings = self._collector_settings
         no_stop = asyncio.Event()
         try:
@@ -765,7 +945,13 @@ class CollectorRuntime:
             operation_name="Pub/Sub publish",
         )
         try:
-            message_id = await _settle_accepted_operation(publish)
+            message_id = await audio_pipeline.settle_accepted_operation(
+                publish,
+                event_logger=logger,
+                failure_message=(
+                    "Accepted side effect failed during cancellation"
+                ),
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -781,63 +967,37 @@ class CollectorRuntime:
             message_id,
             feed["name"],
         )
-        self._log_chunk_ingested(feed, captured_chunk)
-
-    @staticmethod
-    def _log_chunk_ingested(
-        feed: LeasedFeed,
-        captured_chunk: CapturedChunk,
-    ) -> None:
-        """Emit processing-latency evidence after successful publication."""
-        payload: dict[str, object] = {
-            "event_type": slo_contract.EVENT_TYPE_CHUNK_INGESTED,
-            "feed_id": str(feed["id"]),
-            "source_type": feed["source_type"],
-        }
-        if captured_chunk.receipt_time is not None:
-            raw_latency_sec = (
-                datetime.datetime.now(datetime.UTC)
-                - captured_chunk.receipt_time
-            ).total_seconds()
-            payload["processing_latency_sec"] = max(
-                0.0,
-                round(raw_latency_sec, 2),
-            )
-            if raw_latency_sec < 0:
-                payload["latency_clamped"] = True
-        if captured_chunk.stream_interval_lag_sec is not None:
-            payload["stream_interval_lag_sec"] = round(
-                captured_chunk.stream_interval_lag_sec,
-                2,
-            )
-        # SLO: chunk_ingested emit -- after legacy Feed publish succeeds.
-        logger.info("Chunk ingested", extra={"json_fields": payload})
-
-    @staticmethod
-    def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
-        return feed["failure_count"] > 0 or feed["status_reason"] is not None
-
-    @staticmethod
-    def _advance_local_bookmark(
-        feed: LeasedFeed,
-        resume_position: datetime.datetime | None,
-    ) -> None:
-        if resume_position is None:
-            return
-        current = feed["last_bookmark_time"]
-        if current is None or resume_position > current:
-            feed["last_bookmark_time"] = resume_position
+        audio_pipeline.log_chunk_ingested(
+            logger,
+            feed_id=feed["id"],
+            source_type=feed["source_type"],
+            chunk=captured_chunk,
+        )
 
     async def _process_source_observation(
         self,
         feed: LeasedFeed,
         observation: SourceObservation,
-        grant: FeedGrant,
+        grant: feed_store.FeedGrant,
         context: grant_control.RunContext,
     ) -> None:
-        """Persist a source observation or surface confirmed grant loss."""
+        """Persist a source observation or surface confirmed grant loss.
+
+        Args:
+            feed: Claimed Feed whose state may advance or recover.
+            observation: Collector-provided source position.
+            grant: Exact Feed authority fencing the mutation.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            None after persistence or a bounded transient failure.
+
+        Raises:
+            LeaseExpiredError: Storage confirms that the grant was lost.
+            asyncio.CancelledError: The owning runner is cancelled.
+        """
         if (
-            not self._leased_feed_has_failure_state(feed)
+            not _leased_feed_has_failure_state(feed)
             and observation.resume_position is None
         ):
             return
@@ -886,7 +1046,7 @@ class CollectorRuntime:
         if result["recorded"]:
             feed["failure_count"] = 0
             feed["status_reason"] = None
-            self._advance_local_bookmark(
+            _advance_local_bookmark(
                 feed,
                 observation.resume_position,
             )
@@ -912,39 +1072,27 @@ class CollectorRuntime:
         msg = f"Source observation lost ownership for feed {feed['name']}"
         raise LeaseExpiredError(msg)
 
-    @staticmethod
-    def _log_feed_failure(
-        feed: LeasedFeed,
-        status_reason: FeedStatusReason,
-        reason: str,
-    ) -> None:
-        fields = {
-            "event_type": "feed_runner_failed",
-            "feed_id": str(feed["id"]),
-            "source_type": feed["source_type"].value,
-            "status_reason": status_reason.value,
-            "reason": reason,
-        }
-        if status_reason.owner == "source":
-            logger.warning(
-                "Feed source processing failed: %s",
-                reason,
-                extra={"json_fields": fields},
-            )
-        else:
-            logger.error(
-                "Feed processing failed: %s",
-                reason,
-                extra={"json_fields": fields},
-            )
-
     async def _process_feed(  # noqa: PLR0911, PLR0912, PLR0915
         self,
-        grant: FeedGrant,
+        grant: feed_store.FeedGrant,
         feed: LeasedFeed,
         context: grant_control.RunContext,
     ) -> grant_control.RunOutcome:
-        """Run one Feed capture pipeline under exact grant authority."""
+        """Run one Feed capture pipeline under exact grant authority.
+
+        Args:
+            grant: Exact Feed authority held by the supervisor.
+            feed: Claimed Feed configuration and mutable local cursor state.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            Closed completion, loss, or classified failure evidence.
+
+        Raises:
+            grant_control.GrantControlIntegrityError: Grant and payload do not
+                describe the same ownership generation.
+            asyncio.CancelledError: The owning supervisor task is cancelled.
+        """
         if (
             grant.feed_id != feed["id"]
             or grant.owner_worker_id != self._collector_settings.worker_id
@@ -959,13 +1107,13 @@ class CollectorRuntime:
 
         try:
             topic_path = self._get_pubsub_topic_path(feed)
-            extension, content_type = self._feed_media_type(feed["source_type"])
+            extension, content_type = _feed_media_type(feed["source_type"])
         except ValueError as error:
             reason = status_reason_detail.exception_text(error)
             status_reason = (
                 FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
             )
-            self._log_feed_failure(feed, status_reason, reason)
+            _log_feed_failure(feed, status_reason, reason)
             return grant_control.RunFailed(status_reason, reason)
 
         resources = self._capture_resources
@@ -1020,11 +1168,11 @@ class CollectorRuntime:
                     content_type_for_chunk = content_type
                     if event.mime_type is not None:
                         extension_for_chunk, content_type_for_chunk = (
-                            self._mime_type(event.mime_type)
+                            audio_pipeline.staging_parameters(event.mime_type)
                         )
                     current_sequence = sequence
                     sequence += 1
-                    await _settle_accepted_operation(
+                    await audio_pipeline.settle_accepted_operation(
                         self._process_captured_chunk(
                             feed,
                             event,
@@ -1034,7 +1182,11 @@ class CollectorRuntime:
                             extension_for_chunk,
                             content_type_for_chunk,
                             context,
-                        )
+                        ),
+                        event_logger=logger,
+                        failure_message=(
+                            "Accepted side effect failed during cancellation"
+                        ),
                     )
                 if context.grant_lost.is_set():
                     return grant_control.RunLost()
@@ -1044,7 +1196,7 @@ class CollectorRuntime:
             logger.warning("Grant lost for feed %s", feed["name"])
             return grant_control.RunLost()
         except FeedFailure as error:
-            self._log_feed_failure(
+            _log_feed_failure(
                 feed,
                 error.status_reason,
                 error.reason,
@@ -1054,7 +1206,7 @@ class CollectorRuntime:
                 error.reason,
             )
         except _PipelineFailure as error:
-            self._log_feed_failure(
+            _log_feed_failure(
                 feed,
                 error.status_reason,
                 error.reason,
@@ -1068,7 +1220,7 @@ class CollectorRuntime:
         except Exception as error:
             reason = status_reason_detail.exception_text(error)
             status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
-            self._log_feed_failure(feed, status_reason, reason)
+            _log_feed_failure(feed, status_reason, reason)
             return grant_control.RunFailed(status_reason, reason)
         finally:
             close = getattr(capture_iterator, "aclose", None)
@@ -1079,39 +1231,12 @@ class CollectorRuntime:
             return grant_control.RunLost()
         return grant_control.RunCompleted()
 
-    @staticmethod
-    def _feed_media_type(
-        source_type: SourceType,
-    ) -> tuple[str, str]:
-        if source_type is SourceType.OPENMHZ:
-            return ("m4a", "audio/mp4")
-        if source_type in (
-            SourceType.ECHO,
-            SourceType.FIRE_NOTIFICATIONS,
-        ):
-            return ("mp3", "audio/mpeg")
-        if source_type in (
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-        ):
-            return ("flac", "audio/flac")
-        msg = f"Unhandled source type: {source_type}"
-        raise ValueError(msg)
-
-    @staticmethod
-    def _mime_type(mime_type: AudioMimeType) -> tuple[str, str]:
-        mime_map = {
-            AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
-            AudioMimeType.AAC: ("aac", "audio/aac"),
-            AudioMimeType.WAV: ("wav", "audio/x-wav"),
-            AudioMimeType.FLAC: ("flac", "audio/flac"),
-            AudioMimeType.MP4: ("m4a", "audio/mp4"),
-            AudioMimeType.OGG: ("ogg", "audio/ogg"),
-        }
-        return mime_map.get(mime_type, ("flac", "audio/flac"))
-
     def _heartbeat_loop(self) -> None:
-        """OS thread that dispatches supervisor heartbeat cycles."""
+        """Dispatch supervisor heartbeat cycles from the watchdog thread.
+
+        Returns:
+            None after thread stop or an unavailable event loop.
+        """
         interval = self._collector_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
         while not self._thread_stop.is_set():
@@ -1148,7 +1273,15 @@ class CollectorRuntime:
             )
 
     async def _heartbeat_cycle(self) -> None:
-        """Dispatch one common exact-grant heartbeat cycle."""
+        """Dispatch one common exact-grant heartbeat cycle.
+
+        Returns:
+            None after every registered domain settles its heartbeat batch.
+
+        Raises:
+            RuntimeError: The supervisor is not initialized.
+            BaseException: A domain heartbeat cannot be safely correlated.
+        """
         supervisor = self._supervisor
         if supervisor is None:
             msg = "supervisor is not initialized"
@@ -1162,7 +1295,14 @@ class CollectorRuntime:
         )
 
     async def _stop_heartbeat_supervision(self) -> None:
-        """Stop and join the heartbeat OS thread."""
+        """Stop and join the heartbeat OS thread.
+
+        Returns:
+            None once the thread has stopped or was never started.
+
+        Raises:
+            RuntimeError: The heartbeat thread does not stop within timeout.
+        """
         self._thread_stop.set()
         thread = self._heartbeat_thread
         if thread is None or not thread.is_alive():
@@ -1173,7 +1313,16 @@ class CollectorRuntime:
             raise RuntimeError(msg)
 
     async def _shutdown_sequence(self) -> None:
-        """Drain grants before closing the queue and shared resources."""
+        """Drain grants before closing the queue and shared resources.
+
+        Returns:
+            None after all owned resources close in dependency order.
+
+        Raises:
+            grant_supervisor.SupervisorNotDrainedError: Owned work may still
+                use shared runtime resources.
+            BaseException: Resource cleanup fails after grants have drained.
+        """
         if self._health_runner is not None:
             try:
                 await self._health_runner.cleanup()

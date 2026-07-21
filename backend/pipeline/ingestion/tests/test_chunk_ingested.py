@@ -20,32 +20,29 @@ import datetime
 import json
 import logging
 import pathlib
+import typing
 import unittest
 import uuid
-from typing import Any, cast
 from unittest import mock
 
 import aiohttp
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import grant_control
-from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
-from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
-from backend.pipeline.storage.feed_store import (
-    FeedGrant,
-    FeedStatusReason,
-    LeasedFeed,
-    SourceType,
+from backend.pipeline.ingestion import (
+    collector_runtime,
+    grant_control,
+    models,
 )
+from backend.pipeline.storage import feed_store
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
-_FEED = LeasedFeed(
+_FEED = feed_store.LeasedFeed(
     id=_FEED_ID,
     name="Test Feed",
-    source_type=SourceType.BCFY_FEEDS,
+    source_type=feed_store.SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
@@ -123,10 +120,10 @@ def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
 def _make_chunk(
     receipt_time: datetime.datetime | None,
     session_id: str | None = None,
-) -> CapturedChunk:
+) -> models.CapturedChunk:
     """Build a CapturedChunk with a given receipt_time (or None)."""
     now = datetime.datetime.now(datetime.UTC)
-    return CapturedChunk(
+    return models.CapturedChunk(
         audio_bytes=b"audio",
         chunk_start_time=now,
         chunk_end_time=now + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
@@ -136,10 +133,10 @@ def _make_chunk(
 
 
 def _build_runtime_for_one_chunk(
-    chunk: CapturedChunk,
+    chunk: models.CapturedChunk,
     *,
     bookmark_ok: bool,
-) -> CollectorRuntime:
+) -> collector_runtime.CollectorRuntime:
     """Construct a runtime wired to yield a single chunk then stop.
 
     The one-item capture iterator closes after yielding the chunk. A rejected
@@ -148,15 +145,18 @@ def _build_runtime_for_one_chunk(
     """
 
     async def _one_chunk(
-        feed: LeasedFeed,
+        feed: feed_store.LeasedFeed,
         shutdown: asyncio.Event,
-        _resources: CaptureResources,
+        _resources: models.CaptureResources,
     ):
         yield chunk
 
-    rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+    rt = collector_runtime.CollectorRuntime(
+        capture_fn=_one_chunk,
+        settings=_make_settings(),
+    )
     rt._shutdown = asyncio.Event()
-    rt._capture_resources = CaptureResources(
+    rt._capture_resources = models.CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
     )
     rt._store = mock.AsyncMock()
@@ -164,8 +164,8 @@ def _build_runtime_for_one_chunk(
     return rt
 
 
-def _grant() -> FeedGrant:
-    return FeedGrant(
+def _grant() -> feed_store.FeedGrant:
+    return feed_store.FeedGrant(
         feed_id=_FEED_ID,
         owner_worker_id=_WORKER_ID,
         fencing_token=1,
@@ -184,7 +184,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
 
     async def _emit_records(
         self,
-        chunk: CapturedChunk,
+        chunk: models.CapturedChunk,
         *,
         bookmark_ok: bool = True,
     ) -> list[logging.LogRecord]:
@@ -221,12 +221,15 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = cast("Any", records[0])
+        rec = typing.cast("typing.Any", records[0])
         self.assertEqual(rec.levelname, "INFO")
         self.assertTrue(rec.name.startswith("backend.pipeline.ingestion."))
         self.assertEqual(rec.json_fields["event_type"], "chunk_ingested")
         self.assertEqual(rec.json_fields["feed_id"], str(_FEED_ID))
-        self.assertEqual(rec.json_fields["source_type"], SourceType.BCFY_FEEDS)
+        self.assertEqual(
+            rec.json_fields["source_type"],
+            feed_store.SourceType.BCFY_FEEDS,
+        )
         latency = rec.json_fields["processing_latency_sec"]
         self.assertIsInstance(latency, float)
         self.assertGreaterEqual(latency, 1.2)
@@ -253,7 +256,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = cast("Any", records[0])
+        rec = typing.cast("typing.Any", records[0])
         self.assertEqual(rec.json_fields["processing_latency_sec"], 0.0)
         self.assertTrue(rec.json_fields["latency_clamped"])
 
@@ -272,7 +275,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = cast("Any", records[0])
+        rec = typing.cast("typing.Any", records[0])
         self.assertNotIn("processing_latency_sec", rec.json_fields)
         self.assertNotIn("latency_clamped", rec.json_fields)
         self.assertEqual(rec.json_fields["event_type"], "chunk_ingested")
@@ -299,7 +302,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         """Post-bookmark publish failure records gap and skips emit."""
         chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
-        store = cast("Any", rt._store)
+        store = typing.cast("typing.Any", rt._store)
 
         with (
             _mock_upload_audio(),
@@ -321,10 +324,10 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
 
         store.update_feed_progress.assert_awaited_once()
         self.assertIsInstance(outcome, grant_control.RunFailed)
-        failed = cast("grant_control.RunFailed", outcome)
+        failed = typing.cast("grant_control.RunFailed", outcome)
         self.assertIs(
             failed.status_reason,
-            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+            feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
         records = [
             record

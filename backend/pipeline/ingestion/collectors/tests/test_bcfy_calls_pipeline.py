@@ -10,7 +10,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.ingestion import grant_control, models
+from backend.pipeline.ingestion import audio_pipeline, grant_control, models
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
@@ -519,7 +519,13 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 )
                 return "message-id"
 
-            return await pipeline._settle_postcommit_publish(publish())
+            return await audio_pipeline.settle_accepted_operation(
+                publish(),
+                event_logger=pipeline.logger,
+                failure_message=(
+                    "Post-commit publication failed while caller was cancelled"
+                ),
+            )
 
         task = asyncio.create_task(exercise_race())
         with self.assertRaises(asyncio.CancelledError):

@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
-from collections.abc import Callable  # noqa: TC003 - runtime type hints
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+import typing
 
 from aiohttp import web
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
+    import collections.abc
+
     from backend.pipeline.ingestion.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclasses.dataclass
 class HealthState:
     """
     Shared state between the worker runtime and the /healthz handler.
@@ -32,8 +33,8 @@ class HealthState:
     on recovery).
     """
 
-    active_feed_count: Callable[[], int]
-    startup_time: float = field(default_factory=time.monotonic)
+    active_feed_count: collections.abc.Callable[[], int]
+    startup_time: float = dataclasses.field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
 
 
@@ -43,7 +44,16 @@ def _response_payload(
     status: str,
     heartbeat_age_sec: float | None,
 ) -> dict[str, object]:
-    """Build the stable health response from process-local state."""
+    """Build a stable health response from process-local state.
+
+    Args:
+        state: Runtime-owned health observations.
+        status: Public health status for the response.
+        heartbeat_age_sec: Age of the latest heartbeat dispatch, if known.
+
+    Returns:
+        JSON-compatible health response fields.
+    """
     return {
         "status": status,
         "active_feeds": state.active_feed_count(),
@@ -57,6 +67,14 @@ _SETTINGS_KEY: web.AppKey[CollectorSettings] = web.AppKey("settings")
 
 
 async def _healthz(request: web.Request) -> web.Response:
+    """Evaluate process-local liveness for one health request.
+
+    Args:
+        request: aiohttp request containing runtime health state and settings.
+
+    Returns:
+        Healthy or unhealthy JSON response.
+    """
     state = request.app[_STATE_KEY]
     settings = request.app[_SETTINGS_KEY]
     now = time.monotonic()
@@ -121,7 +139,15 @@ async def _healthz(request: web.Request) -> web.Response:
 def build_app(
     settings: CollectorSettings, state: HealthState
 ) -> web.Application:
-    """Build an aiohttp Application that serves GET /healthz."""
+    """Build the health-server application.
+
+    Args:
+        settings: Runtime settings used by health gates.
+        state: Process-local health observations.
+
+    Returns:
+        An aiohttp application serving ``GET /healthz``.
+    """
     app = web.Application()
     app[_STATE_KEY] = state
     app[_SETTINGS_KEY] = settings
@@ -133,11 +159,14 @@ async def start(
     settings: CollectorSettings,
     state: HealthState,
 ) -> web.AppRunner:
-    """
-    Start the /healthz HTTP server on the current event loop.
+    """Start the health server on the current event loop.
 
-    Returns the AppRunner so the caller can ``await runner.cleanup()`` during
-    shutdown to release the port.
+    Args:
+        settings: Runtime settings including the health-listener port.
+        state: Process-local health observations.
+
+    Returns:
+        The runner whose ``cleanup`` method releases the listener.
     """
     app = build_app(settings, state)
     runner = web.AppRunner(app, access_log=None)

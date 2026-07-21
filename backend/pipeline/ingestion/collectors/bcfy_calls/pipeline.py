@@ -15,11 +15,11 @@ from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.ingestion import (
+    audio_pipeline,
     grant_control,
     models,
     retry,
     settings,
-    slo_contract,
 )
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -131,92 +131,6 @@ def _leased_feed(
         source_feed_id=member.identity.source_feed_id,
         tags=None,
     )
-
-
-def _mime_staging_parameters(
-    mime_type: models.AudioMimeType | None,
-) -> tuple[str, str]:
-    """Return the existing staged-audio extension and content type."""
-    mime_map = {
-        models.AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
-        models.AudioMimeType.AAC: ("aac", "audio/aac"),
-        models.AudioMimeType.WAV: ("wav", "audio/x-wav"),
-        models.AudioMimeType.FLAC: ("flac", "audio/flac"),
-        models.AudioMimeType.MP4: ("m4a", "audio/mp4"),
-        models.AudioMimeType.OGG: ("ogg", "audio/ogg"),
-    }
-    if mime_type is None:
-        return ("flac", "audio/flac")
-    return mime_map.get(mime_type, ("flac", "audio/flac"))
-
-
-async def _settle_postcommit_publish(
-    operation: collections.abc.Coroutine[object, object, str],
-) -> str:
-    """Settle a committed publication before propagating cancellation.
-
-    Args:
-        operation: Publication coroutine that must settle after progress
-            commits.
-
-    Returns:
-        The downstream publication identifier.
-
-    Raises:
-        asyncio.CancelledError: The caller was cancelled while publishing.
-        Exception: The publication operation failed.
-    """
-    task = asyncio.create_task(operation)
-    cancellation: asyncio.CancelledError | None = None
-
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if cancellation is None:
-                cancellation = error
-            if task.done():
-                break
-        except Exception:
-            break
-
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancellation is not None:
-            logger.exception(
-                "Post-commit publication failed while caller was cancelled",
-            )
-            raise cancellation from error
-        raise
-
-    if cancellation is not None:
-        raise cancellation
-    return result
-
-
-def _log_chunk_ingested(
-    member: ingestion_lease_contracts.LeaseMember,
-    chunk: models.CapturedChunk,
-) -> None:
-    """Emit the existing SLO event after a successful publication."""
-    payload: dict[str, object] = {
-        "event_type": slo_contract.EVENT_TYPE_CHUNK_INGESTED,
-        "feed_id": str(member.identity.feed_id),
-        "source_type": member.identity.source_type,
-    }
-    if chunk.receipt_time is not None:
-        raw_latency_sec = (
-            datetime.datetime.now(datetime.UTC) - chunk.receipt_time
-        ).total_seconds()
-        payload["processing_latency_sec"] = max(
-            0.0,
-            round(raw_latency_sec, 2),
-        )
-        if raw_latency_sec < 0:
-            payload["latency_clamped"] = True
-    # SLO: chunk_ingested emit -- after SID child progress and publish settle.
-    logger.info("Chunk ingested", extra={"json_fields": payload})
 
 
 class BcfyCallsFeedBatchExecutor:
@@ -374,7 +288,12 @@ class BcfyCallsFeedBatchExecutor:
             )
             published_count += 1
             outcome.record_chunk_produced()
-            _log_chunk_ingested(batch.member, chunk)
+            audio_pipeline.log_chunk_ingested(
+                logger,
+                feed_id=batch.member.identity.feed_id,
+                source_type=batch.member.identity.source_type,
+                chunk=chunk,
+            )
 
         return self._result(
             outcome,
@@ -392,7 +311,9 @@ class BcfyCallsFeedBatchExecutor:
         fencing_token: int,
         no_stop: asyncio.Event,
     ) -> str:
-        extension, content_type = _mime_staging_parameters(chunk.mime_type)
+        extension, content_type = audio_pipeline.staging_parameters(
+            chunk.mime_type
+        )
         return await retry.retry_with_lease_check(
             gcp_helper.upload_staged_audio,
             self._gcs_client,
@@ -489,7 +410,13 @@ class BcfyCallsFeedBatchExecutor:
             retryable=_PUBSUB_RETRYABLE,
             operation_name="Pub/Sub publish",
         )
-        return await _settle_postcommit_publish(operation)
+        return await audio_pipeline.settle_accepted_operation(
+            operation,
+            event_logger=logger,
+            failure_message=(
+                "Post-commit publication failed while caller was cancelled"
+            ),
+        )
 
     def _result(
         self,
