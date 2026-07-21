@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import pathlib
+import typing
 import unittest
 import uuid
 
@@ -47,7 +48,7 @@ class TestLeaseGrantContract(unittest.TestCase):
             {field.name for field in fields},
         )
 
-    def test_grant_and_snapshot_values_are_frozen_and_slotted(self) -> None:
+    def test_grant_and_operation_values_are_frozen_and_slotted(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "00123",
@@ -60,26 +61,12 @@ class TestLeaseGrantContract(unittest.TestCase):
 
         for value_type in (
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
             ingestion_lease_store.LeaseClaim,
+            ingestion_lease_store.LeaseOperationResult,
+            ingestion_lease_store.GrantRejected,
         ):
             self.assertTrue(dataclasses.is_dataclass(value_type))
             self.assertTrue(hasattr(value_type, "__slots__"))
-
-    def test_snapshot_contains_only_failure_policy_state(self) -> None:
-        fields = dataclasses.fields(ingestion_lease_store.LeaseSnapshot)
-        heartbeat_fields = dataclasses.fields(
-            ingestion_lease_store.LeaseHeartbeatResult
-        )
-
-        self.assertEqual(
-            [field.name for field in fields],
-            ["status", "failure_count", "status_reason"],
-        )
-        self.assertEqual(
-            [field.name for field in heartbeat_fields],
-            ["grant", "disposition"],
-        )
 
     def test_grant_rejects_incomplete_or_malformed_identity(self) -> None:
         cases = (
@@ -99,31 +86,28 @@ class TestLeaseGrantContract(unittest.TestCase):
                     *case,  # ty: ignore[invalid-argument-type]
                 )
 
-    def test_grant_equality_excludes_mutable_snapshot_state(self) -> None:
+    def test_claim_exposes_only_the_complete_grant(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "123",
             self.owner_id,
             4,
         )
-        first = ingestion_lease_store.LeaseClaim(
-            grant,
-            ingestion_lease_store.LeaseSnapshot(
-                status=feed_store.FeedStatus.ACTIVE,
-                failure_count=0,
-                status_reason=None,
-            ),
-        )
-        second = dataclasses.replace(
-            first,
-            snapshot=dataclasses.replace(
-                first.snapshot,
-                failure_count=3,
-            ),
-        )
+        claim = ingestion_lease_store.LeaseClaim(grant=grant)
 
-        self.assertEqual(first.grant, second.grant)
-        self.assertNotEqual(first.snapshot, second.snapshot)
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(claim)),
+            ("grant",),
+        )
+        operation = ingestion_lease_store.LeaseOperationResult(
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED
+        )
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(operation)),
+            ("disposition",),
+        )
+        self.assertFalse(hasattr(claim, "__dict__"))
+        self.assertFalse(hasattr(operation, "__dict__"))
 
 
 class TestLeaseClaimQueryContract(unittest.TestCase):
@@ -215,16 +199,18 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
                 self.assertIn(fragment, sql)
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
-            for projected in ("failure_count", "status_reason"):
-                self.assertIn(projected, sql)
-            for omitted in (
-                "last_heartbeat",
-                "retry_after",
-                "status_reason_detail",
-                "membership_revision",
-                "updated_at",
+            result_projection = sql.split("RETURNING", 1)[1]
+            for removed in (
+                "leases.status,",
+                "leases.last_heartbeat,",
+                "leases.failure_count,",
+                "leases.retry_after,",
+                "leases.status_reason,",
+                "leases.status_reason_detail,",
+                "leases.membership_revision,",
+                "leases.updated_at,",
             ):
-                self.assertNotIn(f"leases.{omitted}", sql)
+                self.assertNotIn(removed, result_projection)
 
     def test_claims_project_no_child_owner_or_durable_cursor(self) -> None:
         for query in (
@@ -268,16 +254,9 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("updated_at = NOW()", sql)
         set_clause = sql.split("SET", 1)[1].split("FROM current_state", 1)[0]
         self.assertNotIn("fencing_token =", set_clause)
-        for omitted in (
-            "failure_count",
-            "last_heartbeat,",
-            "membership_revision",
-            "retry_after",
-            "status_reason",
-            "status_reason_detail",
-            "updated_at,",
-        ):
-            self.assertNotIn(omitted, sql)
+        self.assertNotIn("failure_count =", sql)
+        self.assertNotIn("status_reason =", sql)
+        self.assertNotIn("retry_after =", sql)
 
     def test_release_is_one_neutral_exact_grant_transition(self) -> None:
         sql = _normalized_sql(ingestion_lease_queries.RELEASE_LEASE_SQL)
@@ -294,15 +273,22 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("last_heartbeat = NULL", sql)
         self.assertIn("updated_at = NOW()", sql)
         self.assertNotIn("failure_count =", sql)
+        self.assertNotIn("retry_after =", sql)
         self.assertNotIn("status_reason =", sql)
-        for omitted in (
-            "last_heartbeat,",
-            "membership_revision",
+        self.assertNotIn("unclaimed_since", sql)
+        self.assertNotIn("status_reason_updated_at", sql)
+        self.assertNotIn("audit_revision", sql)
+        result_projection = sql.rsplit("SELECT", 1)[1]
+        for removed in (
+            "last_heartbeat",
+            "failure_count",
             "retry_after",
+            "status_reason",
             "status_reason_detail",
-            "updated_at,",
+            "membership_revision",
+            "updated_at",
         ):
-            self.assertNotIn(omitted, sql)
+            self.assertNotIn(removed, result_projection)
 
     def test_no_worker_only_bulk_release_or_internal_retry_surface(
         self,
@@ -423,6 +409,9 @@ class TestLeaseFailureContract(unittest.TestCase):
             self.assertIn("status_reason =", sql)
             self.assertIn("status_reason_detail =", sql)
             self.assertIn("updated_at = NOW()", sql)
+            self.assertNotIn("unclaimed_since", sql)
+            self.assertNotIn("status_reason_updated_at", sql)
+            self.assertNotIn("audit_revision", sql)
             self.assertNotIn("public.feeds", sql)
             self.assertNotIn("feed_properties", sql)
 
@@ -521,24 +510,407 @@ class TestGrantRejectionContract(unittest.TestCase):
     def test_rejection_is_frozen_and_slotted(self) -> None:
         rejection = ingestion_lease_store.GrantRejected(
             ingestion_lease_store.GrantRejectionReason.MISSING,
-            None,
         )
 
         self.assertTrue(hasattr(type(rejection), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            rejection.snapshot = None  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            rejection.reason = (  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+                ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
+            )
+
+
+class TestChildMutationQueryContract(unittest.TestCase):
+    """Contracts for the Lease-fenced child transaction primitives."""
+
+    def test_child_commands_and_results_are_closed_immutable_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.AdmittedAudioProgress
+                )
+            ],
+            ["member", "last_processed_filename", "cursor"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.SourceObservation
+                )
+            ],
+            ["member", "cursor"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.ClosedCohortProgress
+                )
+            ],
+            ["member", "last_processed_filename", "cursor"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.FeedFailureTransition
+                )
+            ],
+            [
+                "member",
+                "action",
+                "status_reason",
+                "reason",
+                "completion_cursor",
+            ],
+        )
+        child_mutation_value = ingestion_lease_store.ChildMutation.__value__
+        self.assertEqual(
+            set(typing.get_args(child_mutation_value)),
+            {
+                ingestion_lease_store.AdmittedAudioProgress,
+                ingestion_lease_store.SourceObservation,
+                ingestion_lease_store.ClosedCohortProgress,
+                ingestion_lease_store.FeedFailureTransition,
+            },
+        )
+        for value_type in (
+            ingestion_lease_store.AdmittedAudioProgress,
+            ingestion_lease_store.SourceObservation,
+            ingestion_lease_store.ClosedCohortProgress,
+            ingestion_lease_store.FeedFailureTransition,
+            ingestion_lease_store.NoLeaseEffect,
+            ingestion_lease_store.FinalizeLeaseRecovery,
+            ingestion_lease_store.ChildMutationBatch,
+            ingestion_lease_store.ChildMutationResult,
+            ingestion_lease_store.BatchCommitted,
+        ):
+            self.assertTrue(dataclasses.is_dataclass(value_type))
+            self.assertTrue(hasattr(value_type, "__slots__"))
+
+        command_fields = {
+            field.name
+            for command_type in typing.get_args(child_mutation_value)
+            for field in dataclasses.fields(command_type)
+        }
+        self.assertNotIn("membership_revision", command_fields)
+        self.assertNotIn("eligible", command_fields)
+        self.assertEqual(
+            set(typing.get_args(ingestion_lease_store.LeaseEffect.__value__)),
+            {
+                ingestion_lease_store.NoLeaseEffect,
+                ingestion_lease_store.FinalizeLeaseRecovery,
+            },
+        )
+
+    def test_child_result_vocabularies_are_exhaustive(self) -> None:
+        self.assertEqual(
+            {value.value for value in ingestion_lease_store.ChildDisposition},
+            {"committed", "committed_and_quarantined", "rejected"},
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.ChildMutationResult
+                )
+            ],
+            ["feed_id", "disposition"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.BatchCommitted
+                )
+            ],
+            ["children"],
+        )
+
+    def test_child_feed_lock_is_sorted_and_uses_one_lock_strength(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL)
+
+        self.assertIn("WHERE id = ANY($1::uuid[])", sql)
+        self.assertIn("ORDER BY id", sql)
+        self.assertIn("FOR NO KEY UPDATE", sql)
+        for legacy_authority in (
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+        ):
+            self.assertNotIn(legacy_authority, sql)
+
+    def test_child_queries_match_existing_feed_timestamp_shape(self) -> None:
+        for query in (
+            ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL,
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
+        ):
+            self.assertNotRegex(_normalized_sql(query), r"\bupdated_at\b")
+
+    def test_child_dml_projects_only_correlation_and_audit_state(self) -> None:
+        audited_after_fields = (
+            "feeds.name",
+            "feeds.source_type",
+            "feeds.status::text AS status",
+            "feeds.failure_count",
+            "feeds.retry_after",
+            "feeds.status_reason",
+            "feeds.status_reason_detail",
+            "feeds.status_reason_updated_at",
+            "feeds.audit_revision",
+            "feeds.created_at",
+        )
+        for query in (
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
+        ):
+            projection = _normalized_sql(query).split("RETURNING", 1)[1]
+            self.assertIn("feeds.id", projection)
+            self.assertNotIn("caller_ordinal", projection)
+            for field in audited_after_fields:
+                self.assertIn(field, projection)
+            self.assertNotIn("feeds.last_processed_filename", projection)
+            self.assertNotIn("feeds.last_bookmark_time", projection)
+
+        neutral_projection = _normalized_sql(
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL
+        ).split("RETURNING", 1)[1]
+        self.assertIn("feeds.id", neutral_projection)
+        self.assertNotIn("caller_ordinal", neutral_projection)
+        self.assertNotIn("feeds.last_processed_filename", neutral_projection)
+        self.assertNotIn("feeds.last_bookmark_time", neutral_projection)
+
+    def test_progress_and_observation_are_static_monotonic_rowsets(
+        self,
+    ) -> None:
+        for query in (
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+        ):
+            sql = _normalized_sql(query)
+            self.assertIn("UNNEST(", sql)
+            self.assertNotIn("WITH ORDINALITY", sql)
+            self.assertNotIn("caller_ordinal", sql)
+            self.assertIn("GREATEST(", sql)
+            self.assertRegex(
+                sql,
+                r"last_bookmark_time IS NULL\s+OR\s+"
+                r"input\.cursor > feeds\.last_bookmark_time",
+            )
+            self.assertNotIn("feed_properties", sql)
+            self.assertNotIn("membership_revision", sql)
+            self.assertNotIn("worker_id", sql)
+            self.assertNotIn("fencing_token", sql)
+            self.assertNotIn("last_heartbeat", sql)
+
+    def test_closed_cohort_progress_is_static_and_lifecycle_neutral(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL
+        )
+
+        self.assertIn("AS MATERIALIZED", sql)
+        self.assertIn("UNNEST(", sql)
+        self.assertNotIn("WITH ORDINALITY", sql)
+        self.assertNotIn("caller_ordinal", sql)
+        for typed_array in (
+            "$1::uuid[]",
+            "$2::text[]",
+            "$3::timestamptz[]",
+            "$4::boolean[]",
+            "$5::boolean[]",
+        ):
+            self.assertIn(typed_array, sql)
+        self.assertIn("last_processed_filename", sql)
+        self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)
+        self.assertIn("OR input.write_path", sql)
+        for forbidden in (
+            "status",
+            "failure_count",
+            "retry_after",
+            "reason",
+            "audit",
+            "feed_properties",
+            "notification",
+        ):
+            self.assertNotIn(forbidden, sql.lower())
+
+    def test_audit_enrichment_is_conditional_sorted_and_rowset_safe(
+        self,
+    ) -> None:
+        properties_sql = _normalized_sql(
+            ingestion_lease_queries.LOAD_CHILD_AUDIT_PROPERTIES_SQL
+        )
+        audit_sql = _normalized_sql(
+            ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL
+        )
+        query_source = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_queries.py"
+        ).read_text()
+
+        self.assertIn("WHERE fp.feed_id = ANY($1::uuid[])", properties_sql)
+        self.assertIn("ORDER BY fp.feed_id", properties_sql)
+        self.assertIn("UNNEST(", audit_sql)
+        self.assertNotIn("WITH ORDINALITY", audit_sql)
+        self.assertNotIn("caller_ordinal", audit_sql)
+        self.assertIn("SELECT input.feed_id", audit_sql)
+        self.assertIn("INSERT INTO public.feed_audit_events", audit_sql)
+        self.assertIn("feed_audit_event_payload_sql", query_source)
+        self.assertNotIn("feed_audit_event_scalar_sql", query_source)
+
+    def test_failure_rowset_has_explicit_cursor_and_policy_fields(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.APPLY_FEED_FAILURES_SQL)
+
+        for typed_array in (
+            "$1::uuid[]",
+            "$2::timestamptz[]",
+            "$3::boolean[]",
+            "$4::boolean[]",
+            "$5::integer[]",
+            "$6::integer[]",
+            "$7::integer[]",
+            "$8::timestamptz[]",
+            "$9::text[]",
+            "$10::text[]",
+        ):
+            self.assertIn(typed_array, sql)
+        self.assertIn("UNNEST(", sql)
+        self.assertNotIn("WITH ORDINALITY", sql)
+        self.assertNotIn("caller_ordinal", sql)
+        self.assertNotIn("charge_failure", sql)
+        self.assertIn("input.write_cursor", sql)
+        self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)
+        self.assertIn(
+            "feeds.status IN ( 'active'::public.feed_status, "
+            "'failing'::public.feed_status )",
+            sql,
+        )
+        self.assertIn("input.is_budgeted", sql)
+        self.assertIn("failure_count = CASE", sql)
+        self.assertIn("THEN feeds.failure_count + 1", sql)
+        self.assertIn("ELSE 0", sql)
+        self.assertIn("input.retry_after", sql)
+        self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
+        self.assertIn("audit_revision = feeds.audit_revision + 1", sql)
+        where_clause = sql.split("WHERE feeds.id", 1)[1].split(
+            "RETURNING",
+            1,
+        )[0]
+        self.assertNotIn("input.cursor IS NULL", where_clause)
+        self.assertNotIn(
+            "input.cursor > feeds.last_bookmark_time", where_clause
+        )
+        for legacy_authority in (
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+        ):
+            self.assertNotIn(legacy_authority, sql)
+
+    def test_failure_rowset_caps_backoff_before_multiplication(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.APPLY_FEED_FAILURES_SQL)
+
+        self.assertIn("WHEN feeds.failure_count >= 1024", sql)
+        self.assertIn("INTERVAL '1 second' * CASE", sql)
+        self.assertIn(
+            "input.backoff_max_sec::double precision / "
+            "input.backoff_base_sec::double precision",
+            sql,
+        )
+        self.assertIn(
+            "POWER( 2::double precision, "
+            "feeds.failure_count::double precision )",
+            sql,
+        )
+        self.assertNotIn("POWER(2, feeds.failure_count)", sql)
+
+    def test_lease_recovery_clears_evidence_under_exact_grant(self) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL
+        )
+        set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
+
+        self.assertIn("source_type = $1", sql)
+        self.assertIn("lease_key = $2", sql)
+        self.assertIn("worker_id = $3", sql)
+        self.assertIn("fencing_token = $4", sql)
+        self.assertIn("status = 'active'::public.feed_status", sql)
+        self.assertIn("failure_count = 0", set_clause)
+        self.assertIn("retry_after = NULL", set_clause)
+        self.assertIn("status_reason = NULL", set_clause)
+        self.assertIn("status_reason_detail = NULL", set_clause)
+        self.assertNotIn("status_reason_updated_at", sql)
+        self.assertNotIn("audit_revision", sql)
+        self.assertNotIn("unclaimed_since", sql)
+        self.assertNotIn("worker_id =", set_clause)
+        self.assertNotIn("fencing_token =", set_clause)
+        self.assertNotIn("last_heartbeat =", set_clause)
+        result_projection = sql.split("RETURNING", 1)[1]
+        self.assertIn("membership_revision", result_projection)
+        for retained in (
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            self.assertIn(retained, result_projection)
+        self.assertNotIn("lifecycle_dirty", result_projection)
+        for removed in (
+            "last_heartbeat,",
+            "updated_at,",
+        ):
+            self.assertNotIn(removed, result_projection)
+
+    def test_locked_lease_projects_authority_revision_and_lifecycle_state(
+        self,
+    ) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.LOCK_LEASE_SQL)
+
+        self.assertIn("membership_revision", sql)
+        for retained in (
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            self.assertIn(retained, sql)
+        self.assertNotIn("lifecycle_dirty", sql)
+        for removed in (
+            "last_heartbeat,",
+            "updated_at,",
+        ):
+            self.assertNotIn(removed, sql)
+
+    def test_child_store_has_no_retry_or_runtime_policy_dependency(
+        self,
+    ) -> None:
+        store_source = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_store.py"
+        ).read_text()
+
+        self.assertNotIn(
+            "backend.pipeline.ingestion.failure_policy", store_source
+        )
+        self.assertNotIn("40P01", store_source)
+        self.assertNotIn("40001", store_source)
+        self.assertNotIn("while True", store_source)
+        self.assertNotIn("@retry", store_source)
 
 
 class TestMembershipSnapshotContract(unittest.TestCase):
     """Tests for authoritative immutable membership snapshot SQL."""
 
     def test_member_identity_has_no_revision_or_lease_projection(self) -> None:
-        fields = {
-            field.name
-            for field in dataclasses.fields(
-                ingestion_lease_store.LeaseMemberIdentity
-            )
-        }
+        identity_type = ingestion_lease_store.LeaseMemberIdentity
+        fields = {field.name for field in dataclasses.fields(identity_type)}
 
         self.assertEqual(
             fields,
@@ -546,22 +918,48 @@ class TestMembershipSnapshotContract(unittest.TestCase):
                 "feed_id",
                 "source_type",
                 "source_feed_id",
-                "sid",
-                "group_id",
             },
         )
         self.assertNotIn("membership_revision", fields)
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
+        self.assertTrue(hasattr(identity_type, "__slots__"))
 
-    def test_member_state_omits_unused_output_and_audit_fields(self) -> None:
-        fields = {
-            field.name
-            for field in dataclasses.fields(ingestion_lease_store.LeaseMember)
-        }
+        identity = identity_type(
+            feed_id=uuid.uuid4(),
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_feed_id="123-45",
+        )
+        self.assertFalse(hasattr(identity, "__dict__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            identity.source_feed_id = "123-46"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
-        self.assertNotIn("last_processed_filename", fields)
-        self.assertNotIn("audit_revision", fields)
+    def test_lease_member_exposes_only_runtime_consumed_state(self) -> None:
+        fields = dataclasses.fields(ingestion_lease_store.LeaseMember)
+        fields_by_name = {field.name: field for field in fields}
+
+        self.assertEqual(
+            tuple(field.name for field in fields),
+            ("identity", "name", "last_bookmark_time"),
+        )
+        self.assertIs(fields_by_name["name"].default, dataclasses.MISSING)
+        self.assertIs(
+            fields_by_name["name"].default_factory,
+            dataclasses.MISSING,
+        )
+
+    def test_membership_snapshot_exposes_only_runtime_consumed_state(
+        self,
+    ) -> None:
+        self.assertEqual(
+            tuple(
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.MembershipSnapshot
+                )
+            ),
+            ("grant", "membership_revision", "members"),
+        )
 
     def test_membership_uses_maintained_index_identity_and_order(self) -> None:
         sql = _normalized_sql(
@@ -571,11 +969,21 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("fp.bcfy_calls_sid", sql)
         self.assertIn("fp.bcfy_calls_group_id", sql)
         self.assertIn("fp.source_feed_id", sql)
+        self.assertIn("feeds.name AS feed_name", sql)
+        self.assertIn("feeds.status::text AS status", sql)
+        self.assertIn("feeds.last_bookmark_time", sql)
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
-        self.assertNotIn("last_processed_filename", sql)
-        self.assertNotIn("audit_revision", sql)
+        for unused_field in (
+            "last_processed_filename",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "audit_revision",
+        ):
+            self.assertNotIn(unused_field, sql)
         self.assertNotIn("split_part", sql.lower())
         self.assertNotRegex(
             sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"
@@ -597,7 +1005,7 @@ class TestMembershipSnapshotContract(unittest.TestCase):
             self.assertNotIn("membership_revision = input", sql)
             self.assertNotIn("membership_revision = current", sql)
 
-    def test_membership_queries_are_storage_only_and_inert(self) -> None:
+    def test_plan_remains_storage_only_and_operationally_inert(self) -> None:
         query_text = pathlib.Path(
             "backend/pipeline/storage/ingestion_lease_queries.py"
         ).read_text()

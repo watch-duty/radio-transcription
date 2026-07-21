@@ -34,7 +34,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
@@ -141,6 +146,11 @@ class FeedGrant:
     feed_id: uuid.UUID
     owner_worker_id: uuid.UUID
     fencing_token: int
+
+    @property
+    def unit_key(self) -> uuid.UUID:
+        """Return the permanent identity within the Feed domain."""
+        return self.feed_id
 
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
@@ -276,13 +286,6 @@ def _require_actor_id(actor_id: str | None) -> str:
         msg = "actor_id is required for audited feed lifecycle writes"
         raise ValueError(msg)
     return actor_id
-
-
-def _require_feed_grant(value: object) -> FeedGrant:
-    if not isinstance(value, FeedGrant):
-        msg = "grant must be a FeedGrant"
-        raise TypeError(msg)
-    return value
 
 
 class FeedStore:
@@ -576,14 +579,12 @@ class FeedStore:
             One exact, caller-correlated result for every input grant.
 
         Raises:
-            TypeError: If an input is not a ``FeedGrant``.
             ValueError: If inputs repeat or results are malformed or
                 miscorrelated.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
-        for candidate in grants:
-            grant = _require_feed_grant(candidate)
+        for grant in grants:
             if grant.feed_id in feed_ids:
                 msg = f"duplicate Feed identity {grant.feed_id}"
                 raise ValueError(msg)

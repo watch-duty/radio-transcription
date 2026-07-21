@@ -352,14 +352,8 @@ def _record_failure_by_policy(
         raise RuntimeError(msg)
 
     feed_id = feed["id"]
-    action = failure_policy.classify_failure_policy(
-        classification.status_reason,
-    )
     try:
-        if (
-            action
-            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-        ):
+        if failure_policy.consumes_failure_budget(classification.status_reason):
             feed_store.record_failure(
                 feed_id,
                 actor_id=actor_id,

@@ -9,6 +9,8 @@ import TableCell from '@mui/material/TableCell';
 import Typography from '@mui/material/Typography';
 import type { Feed, Rule } from '@transcription/common';
 
+import { groupTagsByKey } from '../feeds/tagDisplay';
+
 export interface RuleRowProps {
   rule: Rule;
   feedMap: Map<string, Feed>;
@@ -194,6 +196,41 @@ export function RuleRow({
         }}
       >
         {renderConditions()}
+      </TableCell>
+
+      <TableCell
+        component="div"
+        role="cell"
+        sx={{
+          gridArea: { xs: 'tags', sm: 'unset' },
+          py: { xs: 0.5, sm: 1 },
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 0.5,
+          borderBottom: 'none',
+          minWidth: 0,
+        }}
+      >
+        {isMobile && rule.tags && rule.tags.length > 0 && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 600 }}
+          >
+            Tags:
+          </Typography>
+        )}
+        {rule.tags && rule.tags.length > 0
+          ? groupTagsByKey(rule.tags).map((group) => (
+              <Chip
+                key={group.key}
+                label={`${group.key}: ${group.values.join(', ')}`}
+                size="small"
+                variant="outlined"
+              />
+            ))
+          : null}
       </TableCell>
 
       <TableCell
