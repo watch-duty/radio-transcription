@@ -12,27 +12,10 @@ import {
   type TimeInterval,
   consolidateAudioSegments,
   deriveOfflineWindows,
-  isContinuousSource,
   isOverlapWithOfflineWindows,
 } from './useConsolidatedAudioSegments';
 
 describe('useConsolidatedAudioSegments', () => {
-  describe('isContinuousSource', () => {
-    it('returns false for undefined or empty source', () => {
-      expect(isContinuousSource(undefined)).toBe(false);
-    });
-
-    it('returns true for SourceType.BCFY_FEEDS', () => {
-      expect(isContinuousSource(SourceType.BCFY_FEEDS)).toBe(true);
-    });
-
-    it('returns false for call-based source types', () => {
-      expect(isContinuousSource(SourceType.BCFY_CALLS)).toBe(false);
-      expect(isContinuousSource(SourceType.OPENMHZ)).toBe(false);
-      expect(isContinuousSource(SourceType.ECHO)).toBe(false);
-    });
-  });
-
   const createSegment = (
     id: string,
     start: string,

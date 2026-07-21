@@ -10,8 +10,6 @@ import {
 
 import { segmentHasSpeech } from '../utils/annotationUtils';
 
-export { isContinuousSource };
-
 /**
  * Tolerance threshold to distinguish between minor timestamp rounding errors
  * and actual missing audio (outages) in continuous feeds.
