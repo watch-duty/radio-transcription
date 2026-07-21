@@ -8,8 +8,10 @@ import {
 } from '@transcription/common';
 
 import {
+  type TimeInterval,
   consolidateAudioSegments,
   deriveOfflineWindows,
+  isOverlapWithOfflineWindows,
 } from './useConsolidatedAudioSegments';
 
 describe('useConsolidatedAudioSegments', () => {
@@ -40,7 +42,7 @@ describe('useConsolidatedAudioSegments', () => {
   const createHistoryEvent = (
     id: string,
     occurredAt: number,
-    status: 'active' | 'failing' | 'unclaimed' | 'deactivated',
+    status?: 'active' | 'failing' | 'unclaimed' | 'deactivated',
     statusReason: BackendFeedStatusReason | null = null
   ): FeedHistoryEvent => ({
     id,
@@ -73,16 +75,49 @@ describe('useConsolidatedAudioSegments', () => {
       expect(windows).toEqual([{ startMs: 2000, endMs: 5000 }]);
     });
 
-    it('derives ongoing offline window when feed remains failing', () => {
+    it('derives ongoing offline window using parameterized nowMs timestamp', () => {
       const events: FeedHistoryEvent[] = [
         createHistoryEvent('e1', 1000, 'active'),
         createHistoryEvent('e2', 2000, 'failing', 'source_unreachable'),
       ];
 
+      const windows = deriveOfflineWindows(events, 10000);
+      expect(windows).toEqual([{ startMs: 2000, endMs: 10000 }]);
+    });
+
+    it('ignores non-status audit events while offline state is active', () => {
+      const events: FeedHistoryEvent[] = [
+        createHistoryEvent('e1', 1000, 'active'),
+        createHistoryEvent('e2', 2000, 'failing', 'source_offline'),
+        createHistoryEvent('e3', 3000, undefined, null), // e.g. tag edit
+        createHistoryEvent('e4', 5000, 'active'),
+      ];
+
       const windows = deriveOfflineWindows(events);
-      expect(windows).toHaveLength(1);
-      expect(windows[0].startMs).toBe(2000);
-      expect(windows[0].endMs).toBeGreaterThanOrEqual(2000);
+      expect(windows).toEqual([{ startMs: 2000, endMs: 5000 }]);
+    });
+  });
+
+  describe('isOverlapWithOfflineWindows', () => {
+    const windows: TimeInterval[] = [
+      { startMs: 1000, endMs: 2000 },
+      { startMs: 5000, endMs: 8000 },
+    ];
+
+    it('returns false for empty windows array', () => {
+      expect(isOverlapWithOfflineWindows(100, 200, [])).toBe(false);
+    });
+
+    it('returns true when gap overlaps with a window', () => {
+      expect(isOverlapWithOfflineWindows(1500, 1800, windows)).toBe(true);
+      expect(isOverlapWithOfflineWindows(500, 1500, windows)).toBe(true);
+      expect(isOverlapWithOfflineWindows(1800, 6000, windows)).toBe(true);
+    });
+
+    it('returns false when gap falls between or outside windows', () => {
+      expect(isOverlapWithOfflineWindows(100, 900, windows)).toBe(false);
+      expect(isOverlapWithOfflineWindows(2500, 4500, windows)).toBe(false);
+      expect(isOverlapWithOfflineWindows(8500, 9500, windows)).toBe(false);
     });
   });
 
@@ -105,8 +140,8 @@ describe('useConsolidatedAudioSegments', () => {
     it('injects outage bundle when a timestamp gap falls inside a feed offline window', () => {
       const start1 = '2026-07-08T12:00:00.000Z';
       const end1 = '2026-07-08T12:00:10.000Z';
-      const start2 = '2026-07-08T12:30:00.000Z';
-      const end2 = '2026-07-08T12:30:10.000Z';
+      const start2 = '2026-07-08T12:00:20.000Z';
+      const end2 = '2026-07-08T12:00:30.000Z';
 
       const segments = [
         createSegment('s1', start1, end1),
@@ -122,7 +157,7 @@ describe('useConsolidatedAudioSegments', () => {
         ),
         createHistoryEvent(
           'e2',
-          new Date('2026-07-08T12:30:00.000Z').getTime(),
+          new Date('2026-07-08T12:00:20.000Z').getTime(),
           'active'
         ),
       ];
@@ -137,11 +172,11 @@ describe('useConsolidatedAudioSegments', () => {
       expect(result[2].id).toBe('s1');
     });
 
-    it('flushes silence bundle without injecting outage when gap occurs during active feed status', () => {
+    it('flushes silence bundle without injecting outage when minor gap (15s) occurs during active feed status', () => {
       const start1 = '2026-07-08T12:00:00.000Z';
       const end1 = '2026-07-08T12:00:10.000Z';
-      const start2 = '2026-07-08T12:05:00.000Z';
-      const end2 = '2026-07-08T12:05:10.000Z';
+      const start2 = '2026-07-08T12:00:25.000Z';
+      const end2 = '2026-07-08T12:00:35.000Z';
 
       const segments = [
         createSegment('s1', start1, end1),
