@@ -940,7 +940,7 @@ class TestMembershipSnapshotContract(unittest.TestCase):
 
         self.assertEqual(
             tuple(field.name for field in fields),
-            ("identity", "name", "last_bookmark_time"),
+            ("identity", "name", "last_bookmark_time", "retry_after"),
         )
         self.assertIs(fields_by_name["name"].default, dataclasses.MISSING)
         self.assertIs(
@@ -972,13 +972,13 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("feeds.name AS feed_name", sql)
         self.assertIn("feeds.status::text AS status", sql)
         self.assertIn("feeds.last_bookmark_time", sql)
+        self.assertIn("feeds.retry_after", sql)
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
         for unused_field in (
             "last_processed_filename",
             "failure_count",
-            "retry_after",
             "status_reason",
             "status_reason_detail",
             "audit_revision",

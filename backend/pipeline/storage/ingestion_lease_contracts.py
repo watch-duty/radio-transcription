@@ -431,11 +431,13 @@ class LeaseMember:
         identity: Immutable routing identity loaded with this state.
         name: Canonical Feed display name frozen for publication.
         last_bookmark_time: Durable Feed progress cursor.
+        retry_after: UTC time before which this Feed must not participate.
     """
 
     identity: LeaseMemberIdentity
     name: str
     last_bookmark_time: datetime.datetime | None
+    retry_after: datetime.datetime | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
