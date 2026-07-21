@@ -8,11 +8,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useQuery } from '@tanstack/react-query';
-import {
-  AudioClassification,
-  type AudioSegment,
-  SourceType,
-} from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
@@ -260,7 +256,7 @@ export function TranscriptView({
 
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
-    searchedFeed?.sourceType === SourceType.BCFY_FEEDS,
+    searchedFeed?.sourceType,
     feedHistoryData?.historyEvents
   );
 

@@ -5,16 +5,39 @@ import {
   type AudioSegment,
   type BackendFeedStatusReason,
   type FeedHistoryEvent,
+  SourceType,
 } from '@transcription/common';
 
 import {
   type TimeInterval,
   consolidateAudioSegments,
   deriveOfflineWindows,
+  isContinuousSource,
   isOverlapWithOfflineWindows,
 } from './useConsolidatedAudioSegments';
 
 describe('useConsolidatedAudioSegments', () => {
+  describe('isContinuousSource', () => {
+    it('returns true for boolean true or undefined/empty source', () => {
+      expect(isContinuousSource(true)).toBe(true);
+      expect(isContinuousSource(undefined)).toBe(true);
+    });
+
+    it('returns false for boolean false', () => {
+      expect(isContinuousSource(false)).toBe(false);
+    });
+
+    it('returns true for SourceType.BCFY_FEEDS', () => {
+      expect(isContinuousSource(SourceType.BCFY_FEEDS)).toBe(true);
+      expect(isContinuousSource('bcfy_feeds')).toBe(true);
+    });
+
+    it('returns false for call-based source types', () => {
+      expect(isContinuousSource(SourceType.BCFY_CALLS)).toBe(false);
+      expect(isContinuousSource(SourceType.OPENMHZ)).toBe(false);
+      expect(isContinuousSource(SourceType.ECHO)).toBe(false);
+    });
+  });
   const createSegment = (
     id: string,
     start: string,

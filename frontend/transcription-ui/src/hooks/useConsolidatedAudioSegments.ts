@@ -4,6 +4,7 @@ import {
   AudioClassification,
   type AudioSegment,
   type FeedHistoryEvent,
+  SourceType,
 } from '@transcription/common';
 
 import { segmentHasSpeech } from '../utils/annotationUtils';
@@ -13,6 +14,18 @@ import { segmentHasSpeech } from '../utils/annotationUtils';
  * and actual missing audio (outages) in continuous feeds.
  */
 const MIN_GAP_FOR_OUTAGE_MS = 10;
+
+/**
+ * Determines whether an audio source type represents a continuous stream.
+ * Defaults to true if audioSource is omitted or true.
+ */
+export function isContinuousSource(
+  audioSource?: SourceType | string | boolean
+): boolean {
+  if (typeof audioSource === 'boolean') return audioSource;
+  if (!audioSource) return true;
+  return audioSource === SourceType.BCFY_FEEDS;
+}
 
 export interface RenderableAudioSegment extends AudioSegment {
   /**
@@ -119,12 +132,13 @@ export function isOverlapWithOfflineWindows(
 
 export function consolidateAudioSegments(
   segments: AudioSegment[],
-  isContinuousAudioSource: boolean = true,
+  audioSource?: SourceType | string | boolean,
   historyEvents?: FeedHistoryEvent[],
   nowMs: number = Date.now()
 ): RenderableAudioSegment[] {
   if (segments.length === 0) return [];
 
+  const isContinuousAudioSource = isContinuousSource(audioSource);
   const offlineWindows = deriveOfflineWindows(historyEvents, nowMs);
 
   // Sort chronologically (ascending) to group consecutive segments in time order
@@ -239,20 +253,16 @@ function extendOrCreateSilenceBundle(
  * and sort them descending (newest at the top).
  *
  * @param segments List of raw audio segments.
- * @param isContinuousAudioSource Whether the source feed is continuous.
+ * @param audioSource Source type or feed source of the audio (e.g. SourceType.BCFY_FEEDS).
  * @param historyEvents Optional list of feed state history audit events.
  * @returns List of renderable audio segments with consolidated silence bundles.
  */
 export function useConsolidatedAudioSegments(
   segments: AudioSegment[],
-  isContinuousAudioSource: boolean = true,
+  audioSource?: SourceType | string | boolean,
   historyEvents?: FeedHistoryEvent[]
 ): RenderableAudioSegment[] {
   return useMemo(() => {
-    return consolidateAudioSegments(
-      segments,
-      isContinuousAudioSource,
-      historyEvents
-    );
-  }, [segments, isContinuousAudioSource, historyEvents]);
+    return consolidateAudioSegments(segments, audioSource, historyEvents);
+  }, [segments, audioSource, historyEvents]);
 }
