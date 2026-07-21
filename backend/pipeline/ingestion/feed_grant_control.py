@@ -8,7 +8,11 @@ import logging
 import types
 import typing
 
-from backend.pipeline.ingestion import failure_policy, grant_control
+from backend.pipeline.ingestion import (
+    failure_policy,
+    failure_telemetry,
+    grant_control,
+)
 from backend.pipeline.storage import feed_store
 
 if typing.TYPE_CHECKING:
@@ -26,73 +30,6 @@ type QuarantineObserver = typing.Callable[
     ],
     typing.Awaitable[None],
 ]
-
-
-def _emit_failure_policy_decision(
-    payload: feed_store.LeasedFeed,
-    terminal: failure_policy.FailurePersistencePlan,
-) -> None:
-    """Emit the legacy Feed policy and known-gap events after persistence.
-
-    Args:
-        payload: Original leased Feed payload associated with the decision.
-        terminal: Exact failure treatment applied by the Feed store.
-
-    Returns:
-        None.
-    """
-    status_reason = terminal.status_reason
-    known_gap = (
-        status_reason
-        is feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-    )
-    if known_gap:
-        executed_action = "record_post_bookmark_publish_gap"
-    elif isinstance(
-        terminal.treatment,
-        failure_policy.ConsumeFailureBudget,
-    ):
-        executed_action = "increment_feed_failure_budget"
-    else:
-        executed_action = "retry_without_feed_budget"
-
-    reason = terminal.reason or status_reason.value
-    fields: dict[str, object] = {
-        "event_type": "feed_failure_policy_decision",
-        "feed_id": str(payload["id"]),
-        "source_type": payload["source_type"].value,
-        "reason": reason,
-        "status_reason": status_reason.value,
-        "replay_missing": known_gap,
-        "data_gap_known": known_gap,
-        "executed_action": executed_action,
-    }
-    if isinstance(
-        terminal.treatment,
-        failure_policy.RetryWithoutBudget,
-    ):
-        fields["retry_after"] = terminal.treatment.retry_after.isoformat()
-    logger.info(
-        "Feed failure policy decision",
-        extra={"json_fields": fields},
-    )
-
-    if not known_gap:
-        return
-    gap_fields: dict[str, object] = {
-        "event_type": "post_bookmark_publish_failure",
-        "feed_id": str(payload["id"]),
-        "source_type": payload["source_type"].value,
-        "reason": reason,
-        "status_reason": status_reason.value,
-        "replay_missing": True,
-        "data_gap_known": True,
-        "executed_action": "record_post_bookmark_publish_gap",
-    }
-    logger.error(
-        "Post-bookmark publish failure",
-        extra={"json_fields": gap_fields},
-    )
 
 
 def _calculate_branch_limits(
@@ -426,7 +363,12 @@ class FeedGrantControl:
         ):
             msg = "Non-budgeted Feed finalization returned quarantined"
             raise grant_control.GrantControlIntegrityError(msg)
-        _emit_failure_policy_decision(payload, terminal)
+        failure_telemetry.emit_failure_policy_decision(
+            logger,
+            feed_id=payload["id"],
+            source_type=payload["source_type"],
+            plan=terminal,
+        )
         if status == feed_store.FeedStatus.QUARANTINED.value and isinstance(
             treatment, failure_policy.ConsumeFailureBudget
         ):

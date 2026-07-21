@@ -11,6 +11,7 @@ from unittest import mock
 import aiohttp
 
 from backend.pipeline.ingestion import (
+    audio_pipeline,
     collector_runtime,
     failure_policy,
     grant_control,
@@ -388,6 +389,45 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
             )
 
 
+class TestStartupCleanup(unittest.IsolatedAsyncioTestCase):
+    """Partially acquired runtime resources remain inside cleanup scope."""
+
+    async def test_heartbeat_pool_failure_closes_data_pool(self) -> None:
+        runtime = _runtime()
+        runtime._memory_watchdog = mock.MagicMock()
+        runtime._memory_watchdog.join = mock.AsyncMock()
+        runtime._pubsub_client = mock.AsyncMock()
+        runtime._gcs_client = mock.AsyncMock()
+        data_pool = mock.MagicMock()
+
+        with (
+            mock.patch.object(
+                collector_runtime,
+                "create_pool_with_retry",
+                new=mock.AsyncMock(
+                    side_effect=(
+                        data_pool,
+                        RuntimeError("heartbeat pool unavailable"),
+                    )
+                ),
+            ),
+            mock.patch.object(
+                collector_runtime,
+                "close_pool",
+                new_callable=mock.AsyncMock,
+            ) as close_pool,
+            self.assertRaisesRegex(
+                RuntimeError,
+                "heartbeat pool unavailable",
+            ),
+        ):
+            await runtime._main()
+
+        close_pool.assert_awaited_once_with(data_pool)
+        runtime._pubsub_client.close.assert_awaited_once_with()
+        runtime._gcs_client.close.assert_awaited_once_with()
+
+
 class TestAdmissionAndHeartbeat(unittest.IsolatedAsyncioTestCase):
     """Admission and heartbeat both delegate to the sole supervisor."""
 
@@ -589,7 +629,7 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
 
         publish.assert_awaited_once()
 
-    async def test_admitted_chunk_settles_after_runner_cancellation(
+    async def test_precommit_upload_stops_on_runner_cancellation(
         self,
     ) -> None:
         now = datetime.datetime.now(datetime.UTC)
@@ -612,11 +652,10 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
         runtime._store = mock.AsyncMock()
         runtime._store.update_feed_progress.return_value = True
         upload_started = asyncio.Event()
-        finish_upload = asyncio.Event()
 
         async def upload(*_args, **_kwargs) -> str:
             upload_started.set()
-            await finish_upload.wait()
+            await asyncio.Event().wait()
             return "gs://bucket/item.flac"
 
         with (
@@ -641,15 +680,11 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
             )
             await upload_started.wait()
             processing.cancel()
-            await asyncio.sleep(0)
-            self.assertFalse(processing.done())
-
-            finish_upload.set()
             with self.assertRaises(asyncio.CancelledError):
                 await processing
 
-        runtime._store.update_feed_progress.assert_awaited_once()
-        publish.assert_awaited_once()
+        runtime._store.update_feed_progress.assert_not_awaited()
+        publish.assert_not_awaited()
 
     async def test_rejected_observation_sets_grant_lost(self) -> None:
         runtime = _runtime()
@@ -676,6 +711,61 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(context.grant_lost.is_set())
+
+
+class TestAcceptedOperationSettlement(unittest.IsolatedAsyncioTestCase):
+    """Accepted post-commit work settles without hiding its outcome."""
+
+    async def test_inner_cancellation_is_not_caller_cancellation(self) -> None:
+        event_logger = mock.MagicMock()
+
+        async def cancel_operation() -> None:
+            raise asyncio.CancelledError
+
+        with self.assertRaises(asyncio.CancelledError):
+            await audio_pipeline.settle_accepted_operation(
+                cancel_operation(),
+                event_logger=event_logger,
+                failure_message="failed during caller cancellation",
+            )
+
+        event_logger.exception.assert_not_called()
+
+    async def test_operation_failure_wins_over_caller_cancellation(
+        self,
+    ) -> None:
+        class AcceptedOperationError(RuntimeError):
+            pass
+
+        started = asyncio.Event()
+        finish = asyncio.Event()
+        event_logger = mock.MagicMock()
+
+        async def fail_operation() -> None:
+            started.set()
+            await finish.wait()
+            message = "publish failed"
+            raise AcceptedOperationError(message)
+
+        settlement = asyncio.create_task(
+            audio_pipeline.settle_accepted_operation(
+                fail_operation(),
+                event_logger=event_logger,
+                failure_message="failed during caller cancellation",
+            )
+        )
+        await started.wait()
+        settlement.cancel()
+        await asyncio.sleep(0)
+        self.assertFalse(settlement.done())
+
+        finish.set()
+        with self.assertRaisesRegex(AcceptedOperationError, "publish failed"):
+            await settlement
+
+        event_logger.exception.assert_called_once_with(
+            "failed during caller cancellation"
+        )
 
 
 class TestFailurePolicy(unittest.TestCase):

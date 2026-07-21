@@ -1006,3 +1006,61 @@ async def test_single_feed_failure_stays_child_local() -> None:
         mutation.action,
         ingestion_lease_store.NonBudgetedFailure,
     )
+
+
+@pytest.mark.asyncio
+async def test_committed_publish_gap_emits_runtime_telemetry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    store = _Store(_snapshot(grant, member))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        mock.MagicMock(),
+        mock.MagicMock(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+    failure = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+        "publish failed",
+    )
+    result = pipeline.FeedBatchResult(
+        attempted_count=1,
+        published_count=0,
+        next_sequence=1,
+        committed_urls=(),
+        terminal=failure,
+    )
+
+    with caplog.at_level(logging.INFO, logger=sid_runner.logger.name):
+        committed = await runner._commit_page(
+            grant,
+            (member,),
+            {member.identity.feed_id: result},
+            _NOW,
+            _NOW,
+        )
+
+    assert isinstance(committed, ingestion_lease_store.BatchCommitted)
+    records = [
+        record.__dict__["json_fields"]
+        for record in caplog.records
+        if record.__dict__.get("json_fields", {}).get("event_type")
+        in {
+            "feed_failure_policy_decision",
+            "post_bookmark_publish_failure",
+        }
+    ]
+    assert [record["event_type"] for record in records] == [
+        "feed_failure_policy_decision",
+        "post_bookmark_publish_failure",
+    ]
+    for record in records:
+        assert record["feed_id"] == str(member.identity.feed_id)
+        assert record["source_type"] == feed_store.SourceType.BCFY_CALLS.value
+        assert record["replay_missing"] is True
+        assert record["data_gap_known"] is True

@@ -11,7 +11,12 @@ import math
 import typing
 import uuid
 
-from backend.pipeline.ingestion import failure_policy, grant_control, models
+from backend.pipeline.ingestion import (
+    failure_policy,
+    failure_telemetry,
+    grant_control,
+    models,
+)
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline, provider
 from backend.pipeline.storage import feed_store, ingestion_lease_store
@@ -624,6 +629,10 @@ class BcfyCallsSidRunner:
         | ingestion_lease_store.GrantRejected
     ):
         mutations: list[ingestion_lease_store.ChildMutation] = []
+        failure_plans: dict[
+            uuid.UUID,
+            failure_policy.FailurePersistencePlan,
+        ] = {}
         for member in due_members:
             feed_id = member.identity.feed_id
             result = results.get(feed_id)
@@ -636,6 +645,7 @@ class BcfyCallsSidRunner:
                     terminal.status_reason,
                     terminal.reason,
                 )
+                failure_plans[feed_id] = plan
                 mutations.append(
                     ingestion_lease_store.FeedFailureTransition(
                         member=member.identity,
@@ -658,7 +668,7 @@ class BcfyCallsSidRunner:
                 )
             )
 
-        return await self._store.commit_child_mutations(
+        committed = await self._store.commit_child_mutations(
             grant,
             ingestion_lease_store.ChildMutationBatch(
                 tuple(mutations),
@@ -666,6 +676,21 @@ class BcfyCallsSidRunner:
             ),
             actor_id=self._actor_id,
         )
+        if isinstance(committed, ingestion_lease_store.BatchCommitted):
+            for child in committed.children:
+                plan = failure_plans.get(child.feed_id)
+                if (
+                    plan is not None
+                    and child.disposition
+                    is not ingestion_lease_store.ChildDisposition.REJECTED
+                ):
+                    failure_telemetry.emit_failure_policy_decision(
+                        logger,
+                        feed_id=child.feed_id,
+                        source_type=grant.source_type,
+                        plan=plan,
+                    )
+        return committed
 
     async def _finish_poll_wait(
         self,

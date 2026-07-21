@@ -69,6 +69,9 @@ async def settle_accepted_operation[ResultT](
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError as error:
+            owner = asyncio.current_task()
+            if owner is None or owner.cancelling() == 0:
+                raise
             if cancellation is None:
                 cancellation = error
             if task.done():
@@ -81,7 +84,7 @@ async def settle_accepted_operation[ResultT](
     except BaseException as error:
         if cancellation is not None:
             event_logger.exception(failure_message)
-            raise cancellation from error
+            raise error from cancellation
         raise
     if cancellation is not None:
         raise cancellation

@@ -608,16 +608,18 @@ class CollectorRuntime:
         if await self._sleep_or_shutdown(startup_delay):
             return
 
-        self._data_pool = await create_pool_with_retry(settings.db)
-        heartbeat_settings = settings.db.replace(
-            pool_min_size=1,
-            pool_max_size=1,
-        )
-        self._heartbeat_pool = await create_pool_with_retry(heartbeat_settings)
-        self._memory_watchdog.start(self._loop, self._shutdown)
-        quarantine_telemetry.configure(settings.google_cloud_project)
-
         try:
+            self._data_pool = await create_pool_with_retry(settings.db)
+            heartbeat_settings = settings.db.replace(
+                pool_min_size=1,
+                pool_max_size=1,
+            )
+            self._heartbeat_pool = await create_pool_with_retry(
+                heartbeat_settings
+            )
+            self._memory_watchdog.start(self._loop, self._shutdown)
+            quarantine_telemetry.configure(settings.google_cloud_project)
+
             self._http_session = aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(
                     limit=0,
@@ -1172,21 +1174,15 @@ class CollectorRuntime:
                         )
                     current_sequence = sequence
                     sequence += 1
-                    await audio_pipeline.settle_accepted_operation(
-                        self._process_captured_chunk(
-                            feed,
-                            event,
-                            current_sequence,
-                            grant,
-                            topic_path,
-                            extension_for_chunk,
-                            content_type_for_chunk,
-                            context,
-                        ),
-                        event_logger=logger,
-                        failure_message=(
-                            "Accepted side effect failed during cancellation"
-                        ),
+                    await self._process_captured_chunk(
+                        feed,
+                        event,
+                        current_sequence,
+                        grant,
+                        topic_path,
+                        extension_for_chunk,
+                        content_type_for_chunk,
+                        context,
                     )
                 if context.grant_lost.is_set():
                     return grant_control.RunLost()
