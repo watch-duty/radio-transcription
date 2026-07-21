@@ -1358,22 +1358,15 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, ())
         pool.fetch.assert_not_awaited()
 
-    async def test_invalid_and_duplicate_input_fail_before_checkout(
-        self,
-    ) -> None:
+    async def test_duplicate_input_fails_before_checkout(self) -> None:
         first = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 1)
         duplicate = feed_store.FeedGrant(_FEED_ID, uuid.uuid4(), 9)
 
-        for grants, expected_error in (
-            ((cast("feed_store.FeedGrant", object()),), TypeError),
-            ((first, duplicate), ValueError),
-        ):
-            with self.subTest(expected_error=expected_error.__name__):
-                pool = make_mock_pool()
-                store = FeedStore(pool)
-                with self.assertRaises(expected_error):
-                    await store.renew_grant_heartbeats(grants)
-                pool.fetch.assert_not_awaited()
+        pool = make_mock_pool()
+        store = FeedStore(pool)
+        with self.assertRaises(ValueError):
+            await store.renew_grant_heartbeats((first, duplicate))
+        pool.fetch.assert_not_awaited()
 
     async def test_sorted_lock_arrays_retain_original_caller_ordinals(
         self,
@@ -2513,6 +2506,22 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 "bcfy_feeds",
                 "123",
                 tags=tags,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+    async def test_create_feed_translates_source_unique_violation(self) -> None:
+        """The source lookup unique index remains a feed duplicate error."""
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = _unique_violation(
+            "idx_feed_properties_source_lookup"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedAlreadyExistsError):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
 

@@ -24,17 +24,9 @@ def status_reason_storage_value(
 
     Returns:
         The enum value to persist, or ``None``.
-
-    Raises:
-        TypeError: If called with a raw string or non-enum value.
     """
     if status_reason is None:
         return None
-    from backend.pipeline.storage import feed_store as feed_store_module  # noqa: I001, PLC0415
-
-    if not isinstance(status_reason, feed_store_module.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason or None"
-        raise TypeError(msg)
     return status_reason.value
 
 

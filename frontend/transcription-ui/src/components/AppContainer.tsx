@@ -174,7 +174,7 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton disabled>
+            <ListItemButton onClick={() => handleItemClick('/settings')}>
               <ListItemIcon>
                 <SettingsIcon />
               </ListItemIcon>
