@@ -17,13 +17,9 @@ const MIN_GAP_FOR_OUTAGE_MS = 10;
 
 /**
  * Determines whether an audio source type represents a continuous stream.
- * Defaults to true if audioSource is omitted or true.
+ * Defaults to false if audioSource is omitted or not SourceType.BCFY_FEEDS.
  */
-export function isContinuousSource(
-  audioSource?: SourceType | string | boolean
-): boolean {
-  if (typeof audioSource === 'boolean') return audioSource;
-  if (!audioSource) return true;
+export function isContinuousSource(audioSource?: SourceType): boolean {
   return audioSource === SourceType.BCFY_FEEDS;
 }
 
@@ -132,7 +128,7 @@ export function isOverlapWithOfflineWindows(
 
 export function consolidateAudioSegments(
   segments: AudioSegment[],
-  audioSource?: SourceType | string | boolean,
+  audioSource?: SourceType,
   historyEvents?: FeedHistoryEvent[],
   nowMs: number = Date.now()
 ): RenderableAudioSegment[] {
@@ -259,7 +255,7 @@ function extendOrCreateSilenceBundle(
  */
 export function useConsolidatedAudioSegments(
   segments: AudioSegment[],
-  audioSource?: SourceType | string | boolean,
+  audioSource?: SourceType,
   historyEvents?: FeedHistoryEvent[]
 ): RenderableAudioSegment[] {
   return useMemo(() => {

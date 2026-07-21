@@ -18,18 +18,12 @@ import {
 
 describe('useConsolidatedAudioSegments', () => {
   describe('isContinuousSource', () => {
-    it('returns true for boolean true or undefined/empty source', () => {
-      expect(isContinuousSource(true)).toBe(true);
-      expect(isContinuousSource(undefined)).toBe(true);
-    });
-
-    it('returns false for boolean false', () => {
-      expect(isContinuousSource(false)).toBe(false);
+    it('returns false for undefined or empty source', () => {
+      expect(isContinuousSource(undefined)).toBe(false);
     });
 
     it('returns true for SourceType.BCFY_FEEDS', () => {
       expect(isContinuousSource(SourceType.BCFY_FEEDS)).toBe(true);
-      expect(isContinuousSource('bcfy_feeds')).toBe(true);
     });
 
     it('returns false for call-based source types', () => {
@@ -38,6 +32,7 @@ describe('useConsolidatedAudioSegments', () => {
       expect(isContinuousSource(SourceType.ECHO)).toBe(false);
     });
   });
+
   const createSegment = (
     id: string,
     start: string,
@@ -185,7 +180,11 @@ describe('useConsolidatedAudioSegments', () => {
         ),
       ];
 
-      const result = consolidateAudioSegments(segments, true, historyEvents);
+      const result = consolidateAudioSegments(
+        segments,
+        SourceType.BCFY_FEEDS,
+        historyEvents
+      );
 
       expect(result).toHaveLength(3); // s2 (top), outage, s1 (bottom)
       expect(result[0].id).toBe('s2');
@@ -215,7 +214,11 @@ describe('useConsolidatedAudioSegments', () => {
         ),
       ];
 
-      const result = consolidateAudioSegments(segments, true, historyEvents);
+      const result = consolidateAudioSegments(
+        segments,
+        SourceType.BCFY_FEEDS,
+        historyEvents
+      );
 
       expect(result).toHaveLength(2); // s2 and s1 as separate silence bundles
       expect(result[0].id).toBe('s2');
@@ -249,7 +252,7 @@ describe('useConsolidatedAudioSegments', () => {
         ),
       ];
 
-      const result = consolidateAudioSegments(segments, true);
+      const result = consolidateAudioSegments(segments, SourceType.BCFY_FEEDS);
 
       expect(result).toHaveLength(3);
       expect(result[1].isOutageBundle).toBe(true);
