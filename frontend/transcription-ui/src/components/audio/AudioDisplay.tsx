@@ -440,14 +440,19 @@ export function AudioDisplay({
 
   return (
     <Box
-      sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
+      sx={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        width: '100%',
+        mb: { xs: 0.5, sm: 1 },
+      }}
     >
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <Paper
           variant="outlined"
           sx={{
             width: '100%',
-            height: '60px',
+            height: { xs: '44px', sm: '60px' },
             bgcolor: 'action.hover',
             position: 'relative',
           }}

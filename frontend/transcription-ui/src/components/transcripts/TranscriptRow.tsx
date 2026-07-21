@@ -44,7 +44,7 @@ interface TranscriptRowProps {
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
   isTopAudioSegmentRow?: boolean;
-  isMobile?: boolean;
+  isNarrow?: boolean;
 }
 
 export function TranscriptRow({
@@ -62,7 +62,7 @@ export function TranscriptRow({
   redactTranscripts = false,
   onRowClick,
   isTopAudioSegmentRow = false,
-  isMobile = false,
+  isNarrow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const { isAdmin } = useAuth();
@@ -209,12 +209,13 @@ export function TranscriptRow({
           gridTemplateAreas: {
             xs: `
               "meta    actions"
-              "text    actions"
+              "text    text"
             `,
             sm: 'unset',
           },
-          alignItems: { xs: 'stretch', sm: 'center' },
-          gap: { xs: 1.5, sm: 2 },
+          alignItems: 'center',
+          columnGap: { xs: 1, sm: 2 },
+          rowGap: { xs: 0.25, sm: 2 },
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
@@ -222,11 +223,11 @@ export function TranscriptRow({
           pt:
             isSilence || isOutage
               ? '0px !important'
-              : { xs: 1.5, sm: undefined },
+              : { xs: 0.75, sm: undefined },
           pb:
             isSilence || isOutage
               ? '0px !important'
-              : { xs: 1.5, sm: undefined },
+              : { xs: 0.75, sm: undefined },
           px: { xs: 1.5, sm: 2 },
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
@@ -269,7 +270,7 @@ export function TranscriptRow({
                     ? audioSegment.id
                     : currentlyPlayingSegmentId
                 }
-                hideButton={isMobile ? false : !isHovered}
+                hideButton={isNarrow ? false : !isHovered}
               />
             )}
           </Box>
@@ -353,7 +354,7 @@ export function TranscriptRow({
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
-            mt: { xs: 0.5, sm: 0 },
+            mt: 0,
           }}
         >
           <Typography
@@ -404,11 +405,11 @@ export function TranscriptRow({
           sx={{
             gridArea: { xs: 'actions', sm: 'unset' },
             display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: 1,
+            flexDirection: 'row',
+            gap: { xs: 0.5, sm: 1 },
             flexShrink: 0,
-            alignSelf: { xs: 'start', sm: 'center' },
-            mt: { xs: 0.5, sm: 0 },
+            alignSelf: 'center',
+            mt: 0,
           }}
         >
           {!isSilence && !isOutage && (
