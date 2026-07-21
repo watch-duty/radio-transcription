@@ -1,3 +1,5 @@
+import { type AudioSegment } from '@transcription/common';
+
 import { type HistogramMark } from '../../hooks/useTimelineHistogram';
 
 // 6h grid → ~4 marks at local 00:00/06:00/12:00/18:00 across the 24h range.
@@ -55,4 +57,65 @@ export function computeGridLineTimes(
     times.push(local + offsetMs);
   }
   return times;
+}
+
+/**
+ * Given a clicked consolidated segment clip, the clicked timestamp (in epoch ms),
+ * and the list of raw audio segments:
+ * Finds the specific raw segment that contains (or is closest to) clickedTimeMs,
+ * and calculates the offset in seconds relative to that raw segment's start timestamp.
+ */
+export function resolveClickSegmentAndOffset(
+  clip: {
+    id: string;
+    bundledSegmentIds?: string[];
+    startTimestamp: string;
+    endTimestamp: string;
+  },
+  clickedTimeMs: number,
+  rawAudioSegments: AudioSegment[]
+): { segmentId: string; offsetSeconds: number } {
+  if (clip.bundledSegmentIds && clip.bundledSegmentIds.length > 0) {
+    const bundledRaw = clip.bundledSegmentIds
+      .map((id) => rawAudioSegments.find((s) => s.id === id))
+      .filter((s): s is AudioSegment => Boolean(s && s.playbackAudioUri));
+
+    if (bundledRaw.length > 0) {
+      let targetRaw = bundledRaw.find((s) => {
+        const sStart = new Date(s.startTimestamp).getTime();
+        const sEnd = new Date(s.endTimestamp).getTime();
+        return clickedTimeMs >= sStart && clickedTimeMs <= sEnd;
+      });
+
+      if (!targetRaw) {
+        let minDistance = Infinity;
+        for (const s of bundledRaw) {
+          const sStart = new Date(s.startTimestamp).getTime();
+          const sEnd = new Date(s.endTimestamp).getTime();
+          const distance = Math.max(
+            0,
+            sStart - clickedTimeMs,
+            clickedTimeMs - sEnd
+          );
+          if (distance < minDistance) {
+            minDistance = distance;
+            targetRaw = s;
+          }
+        }
+      }
+
+      if (targetRaw) {
+        const targetStartMs = new Date(targetRaw.startTimestamp).getTime();
+        const offsetSeconds = Math.max(
+          0,
+          (clickedTimeMs - targetStartMs) / 1000
+        );
+        return { segmentId: targetRaw.id, offsetSeconds };
+      }
+    }
+  }
+
+  const tStart = new Date(clip.startTimestamp).getTime();
+  const offsetSeconds = Math.max(0, (clickedTimeMs - tStart) / 1000);
+  return { segmentId: clip.id, offsetSeconds };
 }
