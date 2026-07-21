@@ -1,8 +1,10 @@
 import { useState } from 'react';
 
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RuleIcon from '@mui/icons-material/Rule';
+import TagIcon from '@mui/icons-material/Tag';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -28,7 +30,10 @@ import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useMutation } from '@tanstack/react-query';
 import type {
+  DryRunRequest,
+  DryRunResponse,
   EvaluationType,
   Feed,
   LogicalOperator,
@@ -37,9 +42,19 @@ import type {
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
+  Tag,
 } from '@transcription/common';
 
-import { buildRulePayload, validateRule } from '../../utils/validationUtils';
+import { useAuth } from '../../context/AuthContext';
+import { dryRunRule } from '../../service/dryRunRule';
+import {
+  buildRulePayload,
+  tagAddError,
+  validateRule,
+  validateTags,
+} from '../../utils/validationUtils';
+import { type TagRow, nextTagRowId, toTagRows } from '../feeds/tagRows';
+import { HighlightedTranscript } from '../transcripts/HighlightedTranscript';
 
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
@@ -86,7 +101,13 @@ export function RuleConfigurationEdit({
   onCancel,
   isSubmitting,
 }: RuleConfigurationEditProps) {
+  const { token } = useAuth();
   const [newKeyword, setNewKeyword] = useState('');
+  const [tagRows, setTagRows] = useState<TagRow[]>(() =>
+    toTagRows(editingRule.tags ?? [])
+  );
+  const [newTagKey, setNewTagKey] = useState('');
+  const [newTagValue, setNewTagValue] = useState('');
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
   >({});
@@ -95,6 +116,68 @@ export function RuleConfigurationEdit({
     useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
+
+  // Folds the saved rows and any in-progress key/value into the Tag[] sent on
+  // save, dropping the client-only row ids. Mirrors the feed tag editor.
+  const collectTags = (): Tag[] => {
+    const rows = tagRows.map(({ key, value }) => ({
+      key: key.trim(),
+      value: value.trim(),
+    }));
+    const key = newTagKey.trim();
+    const value = newTagValue.trim();
+    if (key && value) {
+      rows.push({ key, value });
+    }
+    return rows;
+  };
+
+  const handleAddTag = () => {
+    const key = newTagKey.trim();
+    const value = newTagValue.trim();
+    if (!key && !value) return;
+    if (!key || !value) {
+      setValidationErrors((prev) => ({
+        ...prev,
+        tags: 'Both key and value must be populated to add a tag.',
+      }));
+      return;
+    }
+    const addError = tagAddError(tagRows, key, value);
+    if (addError) {
+      setValidationErrors((prev) => ({ ...prev, tags: addError }));
+      return;
+    }
+    setTagRows((prev) => [...prev, { id: nextTagRowId(), key, value }]);
+    setNewTagKey('');
+    setNewTagValue('');
+    setValidationErrors((prev) => {
+      const copy = { ...prev };
+      delete copy.tags;
+      return copy;
+    });
+  };
+
+  const handleRemoveTag = (idToRemove: string) => {
+    setTagRows((prev) => prev.filter((tag) => tag.id !== idToRemove));
+  };
+
+  const handleUpdateTag = (
+    id: string,
+    field: 'key' | 'value',
+    value: string
+  ) => {
+    setTagRows((prev) =>
+      prev.map((tag) => (tag.id === id ? { ...tag, [field]: value } : tag))
+    );
+  };
+  const [isDryRunModalOpen, setIsDryRunModalOpen] = useState(false);
+  const [daysLookback, setDaysLookback] = useState(1);
+
+  const testRuleMutation = useMutation({
+    mutationFn: (dryRunPayload: DryRunRequest) =>
+      dryRunRule(dryRunPayload, token!),
+  });
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -121,7 +204,8 @@ export function RuleConfigurationEdit({
         ...editingRule,
         isActive: !editingRule.isActive,
       },
-      newKeyword
+      newKeyword,
+      collectTags()
     );
     onUpdateRule(payload);
   };
@@ -197,6 +281,14 @@ export function RuleConfigurationEdit({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const errors = validateRule(editingRule, newKeyword);
+    const tagError = validateTags(
+      tagRows,
+      { key: newTagKey, value: newTagValue },
+      {}
+    );
+    if (tagError) {
+      errors.tags = tagError;
+    }
 
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
@@ -205,7 +297,7 @@ export function RuleConfigurationEdit({
 
     setValidationErrors({});
 
-    const payload = buildRulePayload(editingRule, newKeyword);
+    const payload = buildRulePayload(editingRule, newKeyword, collectTags());
 
     if (isEditing) {
       onUpdateRule(payload);
@@ -218,6 +310,28 @@ export function RuleConfigurationEdit({
   const handleDeleteConfirm = () => {
     setIsDeleteDialogOpen(false);
     onDeleteRule();
+  };
+
+  const handleTestRule = () => {
+    const errors = validateRule(editingRule, newKeyword);
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      return;
+    }
+    setValidationErrors({});
+    const payload = buildRulePayload(editingRule, newKeyword);
+
+    setIsDryRunModalOpen(true);
+
+    const dryRunPayload: DryRunRequest = { rule: payload, daysLookback };
+    if (
+      payload.scope.level === 'FEED_SPECIFIC' &&
+      payload.scope.targetFeeds.length > 0
+    ) {
+      dryRunPayload.feedIds = payload.scope.targetFeeds;
+    }
+
+    testRuleMutation.mutate(dryRunPayload);
   };
 
   // Filter out the rule itself if in edit mode to avoid self-reference in groups
@@ -298,6 +412,21 @@ export function RuleConfigurationEdit({
               isSubmitting={isSubmitting}
             />
 
+            <Divider sx={{ my: 1 }} />
+
+            <RuleTagsSection
+              tagRows={tagRows}
+              newTagKey={newTagKey}
+              setNewTagKey={setNewTagKey}
+              newTagValue={newTagValue}
+              setNewTagValue={setNewTagValue}
+              handleAddTag={handleAddTag}
+              handleRemoveTag={handleRemoveTag}
+              handleUpdateTag={handleUpdateTag}
+              validationErrors={validationErrors}
+              isSubmitting={isSubmitting}
+            />
+
             <Box
               sx={{
                 display: 'flex',
@@ -308,6 +437,37 @@ export function RuleConfigurationEdit({
                 gap: 2,
               }}
             >
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  mr: 'auto',
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  color="info"
+                  onClick={handleTestRule}
+                  disabled={isSubmitting || testRuleMutation.isPending}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Test Rule
+                </Button>
+                <Select
+                  size="small"
+                  value={daysLookback}
+                  onChange={(e) => setDaysLookback(Number(e.target.value))}
+                  disabled={isSubmitting || testRuleMutation.isPending}
+                  sx={{ minWidth: 140 }}
+                >
+                  <MenuItem value={1}>Past day</MenuItem>
+                  <MenuItem value={2}>Past 2 days</MenuItem>
+                  <MenuItem value={3}>Past 3 days</MenuItem>
+                  <MenuItem value={7}>Past 7 days</MenuItem>
+                </Select>
+              </Box>
+
               {isEditing && (
                 <Button
                   variant="outlined"
@@ -415,7 +575,329 @@ export function RuleConfigurationEdit({
         onConfirm={handleToggleActiveConfirm}
         isSubmitting={isSubmitting}
       />
+
+      <DryRunResultsModal
+        isOpen={isDryRunModalOpen}
+        onClose={() => {
+          setIsDryRunModalOpen(false);
+          testRuleMutation.reset();
+        }}
+        isLoading={testRuleMutation.isPending}
+        result={testRuleMutation.data ?? null}
+        error={
+          testRuleMutation.error
+            ? testRuleMutation.error instanceof Error
+              ? testRuleMutation.error.message
+              : 'Failed to dry run rule'
+            : null
+        }
+        feeds={feeds}
+        daysLookback={daysLookback}
+      />
     </Card>
+  );
+}
+
+interface RuleTagsSectionProps {
+  tagRows: TagRow[];
+  newTagKey: string;
+  setNewTagKey: React.Dispatch<React.SetStateAction<string>>;
+  newTagValue: string;
+  setNewTagValue: React.Dispatch<React.SetStateAction<string>>;
+  handleAddTag: () => void;
+  handleRemoveTag: (id: string) => void;
+  handleUpdateTag: (id: string, field: 'key' | 'value', value: string) => void;
+  validationErrors: Record<string, string>;
+  isSubmitting: boolean;
+}
+
+function RuleTagsSection({
+  tagRows,
+  newTagKey,
+  setNewTagKey,
+  newTagValue,
+  setNewTagValue,
+  handleAddTag,
+  handleRemoveTag,
+  handleUpdateTag,
+  validationErrors,
+  isSubmitting,
+}: RuleTagsSectionProps) {
+  // Enter in a tag field should add the tag, not submit the whole rule form.
+  const handleTagInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
+    }
+  };
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+        <TagIcon fontSize="small" color="action" />
+        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+          Tags
+        </Typography>
+      </Box>
+
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: 'block', mb: 2 }}
+      >
+        Tags (e.g. geo_event_type) label rules for grouping and downstream
+        notification routing.
+      </Typography>
+
+      <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: 'center' }}>
+        <TextField
+          size="small"
+          label="Key"
+          placeholder="geo_event_type"
+          value={newTagKey}
+          onChange={(e) => setNewTagKey(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
+          error={!!validationErrors.tags}
+          disabled={isSubmitting}
+          sx={{ flex: 1 }}
+        />
+        <TextField
+          size="small"
+          label="Value"
+          placeholder="flooding"
+          value={newTagValue}
+          onChange={(e) => setNewTagValue(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
+          error={!!validationErrors.tags}
+          disabled={isSubmitting}
+          sx={{ flex: 1 }}
+        />
+        <Button
+          variant="outlined"
+          onClick={handleAddTag}
+          disabled={isSubmitting}
+          startIcon={<AddIcon fontSize="small" />}
+          sx={{ textTransform: 'none' }}
+          aria-label="Add Tag"
+        >
+          Add
+        </Button>
+      </Stack>
+
+      {validationErrors.tags && (
+        <Typography
+          variant="caption"
+          color="error"
+          sx={{ display: 'block', mb: 2 }}
+        >
+          {validationErrors.tags}
+        </Typography>
+      )}
+
+      <Box
+        sx={{
+          p: 2,
+          borderRadius: 2.5,
+          border: '1px dashed',
+          borderColor: 'divider',
+          bgcolor: 'background.default',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1.5,
+        }}
+      >
+        {tagRows.length === 0 ? (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mx: 'auto', py: 2, fontStyle: 'italic' }}
+          >
+            No tags added.
+          </Typography>
+        ) : (
+          tagRows.map((tag, index) => (
+            <Stack
+              key={tag.id}
+              direction="row"
+              spacing={1.5}
+              sx={{ alignItems: 'center' }}
+            >
+              <TextField
+                size="small"
+                label="Key"
+                value={tag.key}
+                onChange={(e) => handleUpdateTag(tag.id, 'key', e.target.value)}
+                error={!!validationErrors.tags && !tag.key.trim()}
+                disabled={isSubmitting}
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                size="small"
+                label="Value"
+                value={tag.value}
+                onChange={(e) =>
+                  handleUpdateTag(tag.id, 'value', e.target.value)
+                }
+                error={!!validationErrors.tags && !tag.value.trim()}
+                disabled={isSubmitting}
+                sx={{ flex: 1 }}
+              />
+              <IconButton
+                size="small"
+                onClick={() => handleRemoveTag(tag.id)}
+                disabled={isSubmitting}
+                color="error"
+                aria-label={`Remove tag ${index + 1}: ${tag.key}=${tag.value}`}
+              >
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+          ))
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+interface DryRunResultsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  isLoading: boolean;
+  result: DryRunResponse | null;
+  error: string | null;
+  feeds: Feed[];
+  daysLookback: number;
+}
+
+function DryRunResultsModal({
+  isOpen,
+  onClose,
+  isLoading,
+  result,
+  error,
+  feeds,
+  daysLookback,
+}: DryRunResultsModalProps) {
+  return (
+    <Dialog open={isOpen} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Test Rule Results</DialogTitle>
+      <DialogContent dividers>
+        {isLoading && (
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              py: 4,
+              gap: 2,
+            }}
+          >
+            <CircularProgress />
+            <Typography variant="body2" color="text.secondary">
+              Running rule against historical transcripts. This may take a few
+              seconds...
+            </Typography>
+          </Box>
+        )}
+
+        {error && (
+          <Box
+            sx={{
+              p: 2,
+              bgcolor: 'error.main',
+              color: 'error.contrastText',
+              borderRadius: 1,
+            }}
+          >
+            <Typography variant="subtitle2">Error</Typography>
+            <Typography variant="body2">{error}</Typography>
+          </Box>
+        )}
+
+        {result && (
+          <Stack spacing={3}>
+            <Box
+              sx={{
+                p: 2,
+                bgcolor: 'primary.light',
+                color: 'primary.contrastText',
+                borderRadius: 1,
+              }}
+            >
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
+                {(result.totalEvaluated ?? 0).toLocaleString()} transcripts
+                evaluated from the past {daysLookback} day
+                {daysLookback > 1 ? 's' : ''}{' '}
+                {result.totalEvaluated > 0
+                  ? `(${((result.hitCount / result.totalEvaluated) * 100).toFixed(2)}%)`
+                  : ''}
+              </Typography>
+            </Box>
+
+            {result.examples.length > 0 && (
+              <Box>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ mb: 1.5, fontWeight: 600 }}
+                >
+                  Matched examples
+                </Typography>
+                <Stack spacing={2}>
+                  {result.examples.map((example, i) => (
+                    <Card key={i} variant="outlined">
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', mb: 1, fontWeight: 500 }}
+                        >
+                          Feed:{' '}
+                          {feeds.find((f) => f.id === example.feedId)?.name ||
+                            example.feedId}{' '}
+                          • Segment: {example.audioSegmentId}
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          <HighlightedTranscript
+                            text={example.text}
+                            ruleAnnotations={{
+                              'dry-run-rule': {
+                                textMatch: example.matchedSpans,
+                              },
+                            }}
+                          />
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {result.examples.length === 0 && result.hitCount === 0 && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}
+              >
+                No matches found in the recent history for these conditions.
+              </Typography>
+            )}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={isLoading}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
