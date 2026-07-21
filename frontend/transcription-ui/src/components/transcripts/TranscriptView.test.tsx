@@ -2042,7 +2042,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(3);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].isOutageBundle).toBe(true);
@@ -2078,7 +2081,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');
@@ -2111,7 +2117,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], false);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_CALLS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');
@@ -2144,7 +2153,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');

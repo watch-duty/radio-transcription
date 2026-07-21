@@ -205,6 +205,35 @@ def _membership_revision_from_row(
     return value
 
 
+def _optional_utc_datetime_from_row(
+    row: collections.abc.Mapping,
+    field_name: str,
+) -> datetime.datetime | None:
+    """Decode one optional UTC timestamp from a database result row.
+
+    Args:
+        row: Trusted query shape containing an untrusted runtime value.
+        field_name: Projected timestamp column to decode.
+
+    Returns:
+        The UTC-aware timestamp, or None when the column is null.
+
+    Raises:
+        TypeError: The value is neither a datetime nor None.
+        ValueError: The datetime is naive or has a non-UTC offset.
+    """
+    value = row[field_name]
+    if value is None:
+        return None
+    if not isinstance(value, datetime.datetime):
+        msg = f"membership {field_name} must be a datetime or None"
+        raise TypeError(msg)
+    if value.utcoffset() != datetime.timedelta(0):
+        msg = f"membership {field_name} must be UTC-aware"
+        raise ValueError(msg)
+    return value
+
+
 def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
     grant = LeaseGrant(
         source_type=_source_type_from_row(row),
@@ -297,8 +326,8 @@ def _member_from_row(
         The immutable Lease member exposed in a membership snapshot.
 
     Raises:
-        TypeError: The canonical Feed name is not a string.
-        ValueError: The canonical Feed name is missing or blank.
+        TypeError: A canonical Feed field has an invalid runtime type.
+        ValueError: A canonical Feed field is missing or structurally invalid.
     """
     try:
         name = row["feed_name"]
@@ -314,7 +343,14 @@ def _member_from_row(
     return LeaseMember(
         identity=identity,
         name=name,
-        last_bookmark_time=row["last_bookmark_time"],
+        last_bookmark_time=_optional_utc_datetime_from_row(
+            row,
+            "last_bookmark_time",
+        ),
+        retry_after=_optional_utc_datetime_from_row(
+            row,
+            "retry_after",
+        ),
     )
 
 

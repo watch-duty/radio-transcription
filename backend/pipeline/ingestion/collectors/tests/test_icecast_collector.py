@@ -2076,8 +2076,8 @@ class TestIcecastTimelineManager(unittest.TestCase):
             manager.process_chunk(chunk, 16000 * 15, process_done=False)
         self.assertIn("Negative chunk duration", str(ctx.exception))
 
-    def test_non_monotonic_start_time_raises_value_error(self) -> None:
-        """Verify that non-monotonic chunk start times raise ValueError."""
+    def test_non_monotonic_start_time_clamps_to_last_end(self) -> None:
+        """Verify that non-monotonic chunk start times are clamped to last end time."""
         manager = icecast_collector.IcecastTimelineManager(
             stream_anchor_time=datetime.datetime.now(datetime.UTC),
             feed_id=uuid.uuid4(),
@@ -2101,9 +2101,14 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=15),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk2, 16000 * 30, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res_clamped = manager.process_chunk(
+            chunk2, 16000 * 30, process_done=False
+        )
+        self.assertEqual(len(res_clamped), 1)
+        self.assertEqual(
+            res_clamped[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
 
     def test_microsecond_rounding_coalesced(self) -> None:
         """Verify that microsecond-level rounding errors in chunk start times are coalesced."""
@@ -2171,7 +2176,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res3[0].chunk_start_time, now + datetime.timedelta(seconds=45)
         )
 
-        # Test overlap of 3 microseconds (above boundary - should raise ValueError)
+        # Test overlap of 3 microseconds (clamped gracefully without error)
         chunk5 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now
@@ -2181,9 +2186,11 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=60),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk5, 16000 * 75, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res4 = manager.process_chunk(chunk5, 16000 * 75, process_done=False)
+        self.assertEqual(len(res4), 1)
+        self.assertEqual(
+            res4[0].chunk_start_time, now + datetime.timedelta(seconds=60)
+        )
 
 
 if __name__ == "__main__":
