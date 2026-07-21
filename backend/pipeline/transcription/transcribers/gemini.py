@@ -329,13 +329,6 @@ class GeminiTranscriber(base.Transcriber):
                     raise
 
             if attempt < attempts:
-                logger.warning(
-                    "Tuned model transcription failed (attempt %d/%d): %s. "
-                    "Retrying in 1s...",
-                    attempt,
-                    attempts,
-                    str(last_exception),
-                )
                 await asyncio.sleep(1)
 
         # Fallback to foundation model on SFT-specific empty transcript /
