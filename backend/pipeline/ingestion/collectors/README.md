@@ -21,7 +21,7 @@ misleading.
 
 > [!IMPORTANT]
 > **Common Architecture Misconceptions**:
-> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is a separate REST-based polling collector ([`bcfy_calls_collector.py`](bcfy_calls/bcfy_calls_collector.py)) capturing discrete pre-segmented calls that do **NOT** pass through Dataflow segmentation.
+> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is a separate REST-based polling collector [`bcfy_calls_collector.py`](bcfy_calls/bcfy_calls_collector.py) capturing discrete pre-segmented calls that do **NOT** pass through Dataflow segmentation.
 > 2. **Icecast Collector Scope**: `bcfy_feeds` is currently the primary continuous audio source captured via `icecast_collector.py`. Future/additional Icecast-protocol streams (`icecast`) use this same collector. Continuous streams (`bcfy_feeds` and `icecast`) are the **only** sources processed by the downstream Dataflow continuous audio segmentation pipeline.
 
 ### Ingestion Collector Module Mapping
