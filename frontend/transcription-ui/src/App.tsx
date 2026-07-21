@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
@@ -24,6 +24,7 @@ import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
+import SettingsView from './components/settings/SettingsView';
 import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
@@ -140,7 +141,47 @@ function App() {
     [addAlert, token]
   );
 
+  const [themeMode, setThemeMode] = useState<'system' | 'light' | 'dark'>(
+    () => {
+      const stored = localStorage.getItem('radio.themeMode');
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        return stored;
+      }
+      return 'system';
+    }
+  );
+
+  useEffect(() => {
+    const handleThemeChange = (e: CustomEvent<string>) => {
+      if (['system', 'light', 'dark'].includes(e.detail)) {
+        setThemeMode(e.detail as 'system' | 'light' | 'dark');
+      }
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'radio.themeMode' && e.newValue) {
+        if (['system', 'light', 'dark'].includes(e.newValue)) {
+          setThemeMode(e.newValue as 'system' | 'light' | 'dark');
+        }
+      }
+    };
+    window.addEventListener(
+      'radio-theme-changed' as keyof WindowEventMap,
+      handleThemeChange as EventListener
+    );
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(
+        'radio-theme-changed' as keyof WindowEventMap,
+        handleThemeChange as EventListener
+      );
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
+  const effectiveMode =
+    themeMode === 'system' ? (prefersDarkMode ? 'dark' : 'light') : themeMode;
+
   const theme = createTheme({
     breakpoints: {
       values: {
@@ -152,7 +193,7 @@ function App() {
       },
     },
     palette: {
-      mode: prefersDarkMode ? 'dark' : 'light',
+      mode: effectiveMode,
     },
     components: {
       MuiBadge: {
@@ -270,6 +311,18 @@ function App() {
                     <DocsView />
                   </Suspense>
                 </RequireAdmin>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <>
+                  <title>Settings - Radio Transcription</title>
+                  <SettingsView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
               }
             />
             <Route path="/demo-outage" element={<DemoOutageView />} />

@@ -11,6 +11,7 @@ from google import genai
 from google.genai import types
 
 from backend.pipeline.common import exceptions, log_helper, utils
+from backend.pipeline.transcription import enums
 from backend.pipeline.transcription.transcribers import base, prompts
 
 DEFAULT_GEMINI_LOCATION = "us"
@@ -387,11 +388,8 @@ class GeminiTranscriber(base.Transcriber):
             )
             return ""
 
-        logger.warning(
-            "Tuned model %s failed: %s. Falling back to foundation model %s...",
-            self.config.model,
-            reason,
-            fallback_model,
+        log_helper.record_pipeline_stage(
+            "transcription_status", enums.TranscriptionStatus.FALLBACK
         )
 
         fallback_location = self._resolve_location(
