@@ -6,13 +6,6 @@ export enum SourceType {
   FIRE_NOTIFICATIONS = 'fire_notifications',
 }
 
-/**
- * Determines whether an audio source type represents a continuous stream feed.
- */
-export function isContinuousSource(audioSource?: SourceType): boolean {
-  return audioSource === SourceType.BCFY_FEEDS;
-}
-
 export type BackendFeedStatus =
   | 'unclaimed'
   | 'active'
