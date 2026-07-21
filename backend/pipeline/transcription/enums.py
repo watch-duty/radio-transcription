@@ -23,3 +23,4 @@ class TranscriptionStatus(StrEnum):
     POLICY_BLOCKED = "policy_blocked"
     TRANSIENT_ERROR = "transient_error"
     PERMANENT_ERROR = "permanent_error"
+    FALLBACK = "fallback"
