@@ -19,11 +19,20 @@ misleading.
 
 ## Overview
 
-| Method | Mechanism | Audio segmented? |
-|--------|----------|--------|
-| Continuous streaming icecast | VM | No |
-| Polling (API, fetching) | VM | Yes |
-| Push (Echo) | Cloud Function (on demand) | Yes|
+> [!IMPORTANT]
+> **Common Architecture Misconceptions**:
+> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](./icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is a separate REST-based polling collector [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py) capturing discrete pre-segmented calls that do **NOT** pass through Dataflow segmentation.
+> 2. **Icecast Collector Scope**: `bcfy_feeds` is currently the primary continuous audio source captured via `icecast_collector.py`. Future/additional Icecast-protocol streams (`icecast`) use this same collector. Continuous streams (`bcfy_feeds` and `icecast`) are the **only** sources processed by the downstream Dataflow continuous audio segmentation pipeline.
+
+### Ingestion Collector Module Mapping
+
+| Collector Module | Handled `source_type` Values | Stream Architecture | Processed by Dataflow Segmentation? |
+| :--- | :--- | :--- | :--- |
+| [`icecast_collector.py`](./icecast/icecast_collector.py) | `bcfy_feeds` *(primary)*, `icecast` *(future)* | Continuous Icecast-protocol streams | **YES** |
+| [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py) | `bcfy_calls` | Discrete call REST polling API | **NO** |
+| [`openmhz/collector.py`](./openmhz/collector.py) | `openmhz` | Discrete call polling API | **NO** |
+| [`fire_notifications/collector.py`](./fire_notifications/collector.py) | `fire_notifications` | Event notification stream | **NO** |
+| [`echo/main.py`](./echo/main.py) | `echo` | Archival push (Cloud Function) | **NO** |
 
 
 ## Feed Failure Runtime Boundary

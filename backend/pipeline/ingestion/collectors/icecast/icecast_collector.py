@@ -1,3 +1,17 @@
+"""Icecast Protocol Ingestion Collector.
+
+Handles continuous audio stream capture for Icecast-protocol streams
+(source_type="bcfy_feeds" or "icecast"). Currently, Broadcastify Stream Feeds
+("bcfy_feeds") is the primary active source type using this collector, though
+other/future Icecast-protocol streams ("icecast") are also handled by this
+identical implementation. Emits continuous FLAC audio chunks that feed the
+downstream Dataflow segmentation pipeline.
+
+Note: Do not confuse with "bcfy_calls", which is a separate REST-based polling
+collector (bcfy_calls_collector.py) for discrete calls that does NOT pass
+through Dataflow segmentation.
+"""
+
 from __future__ import annotations
 
 import asyncio

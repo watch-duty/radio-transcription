@@ -79,12 +79,12 @@ If the API returns zero candidates:
 ## 4. Codebase Implementation Alignment
 
 ### Client-Side Auto-Retry Setup
-We configure the client-level automatic retry policy in [GeminiTranscriber.setup](file:///Users/jakeclose/watch_duty/radio-transcription/backend/pipeline/transcription/transcribers/gemini.py#L104-L119):
+We configure the client-level automatic retry policy in [`GeminiTranscriber.setup`](../backend/pipeline/transcription/transcribers/gemini.py#L104-L119):
 * Configured using `HttpRetryOptions` passed under `http_options`.
 * This handles transient network errors transparently within the SDK without raising them up to the caller unless they persist after all attempts.
 
 ### Egress Event Processor Exception Handling
-If an error persists and escalates out of the transcriber, [TranscriptionEventProcessor._transcribe_and_publish](file:///Users/jakeclose/watch_duty/radio-transcription/backend/pipeline/transcription/processor.py#L90-L166) catches it and classifies it via `_is_transient_exception`:
+If an error persists and escalates out of the transcriber, [`TranscriptionEventProcessor._transcribe_and_publish`](../backend/pipeline/transcription/processor.py#L90-L166) catches it and classifies it via `_is_transient_exception`:
 * **Transient Errors:** Re-raised to propagate to Google Cloud Pub/Sub, triggering a delayed message retry/redelivery.
 * **Permanent Errors:** Acknowledged immediately by logging a permanent failure and writing the failure status to the metadata store.
 
