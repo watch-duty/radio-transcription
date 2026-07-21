@@ -2966,7 +2966,7 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
                         "url": "http://c",
                         "start_ts": 3000,
                         "end_ts": 3009,
-                        "ts": 3011,
+                        "ts": "3011",
                     },
                     {
                         "url": "http://a",
