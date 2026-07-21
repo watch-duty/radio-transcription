@@ -448,41 +448,48 @@ class GrantSupervisor:
             GrantControlIntegrityError: The claim is uncertain or malformed.
             asyncio.CancelledError: The claim task is cancelled after failing
                 the supervisor closed.
+            Exception: The claim backend failed before returning a result.
         """
         remaining_reservation = reservation
         registered_count = 0
         try:
-            claims = await domain.claim(mode, owner_worker_id, reservation)
-            self._require_claim_count(claims, reservation)
-            self._validate_claim_batch(domain, owner_worker_id, claims)
-            for claim in claims:
-                self._consume_reservation(domain.domain_id)
-                remaining_reservation -= 1
-                self._register_claim(domain, claim)
-                registered_count += 1
-            return registered_count  # noqa: TRY300
-        except asyncio.CancelledError as exc:
-            failure = grant_control.GrantControlIntegrityError(
-                "claim outcome is unknown after cancellation"
-            )
-            failure.__cause__ = exc
-            self._surface_integrity_failure(failure)
-            raise
-        except Exception as exc:
-            failure = (
-                exc
-                if isinstance(
-                    exc,
-                    grant_control.GrantControlIntegrityError,
+            try:
+                claims = await domain.claim(mode, owner_worker_id, reservation)
+            except asyncio.CancelledError as exc:
+                failure = grant_control.GrantControlIntegrityError(
+                    "claim outcome is unknown after cancellation"
                 )
-                else grant_control.GrantControlIntegrityError(
-                    "claim outcome is unknown"
-                )
-            )
-            if failure is not exc:
                 failure.__cause__ = exc
-            self._surface_integrity_failure(failure)
-            raise failure
+                self._surface_integrity_failure(failure)
+                raise
+            except grant_control.GrantControlIntegrityError as failure:
+                self._surface_integrity_failure(failure)
+                raise
+
+            try:
+                self._require_claim_count(claims, reservation)
+                self._validate_claim_batch(domain, owner_worker_id, claims)
+                for claim in claims:
+                    self._consume_reservation(domain.domain_id)
+                    remaining_reservation -= 1
+                    self._register_claim(domain, claim)
+                    registered_count += 1
+                return registered_count  # noqa: TRY300
+            except Exception as exc:
+                failure = (
+                    exc
+                    if isinstance(
+                        exc,
+                        grant_control.GrantControlIntegrityError,
+                    )
+                    else grant_control.GrantControlIntegrityError(
+                        "claim outcome is unknown"
+                    )
+                )
+                if failure is not exc:
+                    failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
+                raise failure
         finally:
             if remaining_reservation:
                 self._release_reservation(

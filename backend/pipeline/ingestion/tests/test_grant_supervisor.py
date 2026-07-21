@@ -531,6 +531,49 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_control.claim_gate.set()
         await first
 
+    async def test_claim_backend_failure_releases_capacity_for_retry(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        control.claim_error = OSError("database unavailable")
+
+        with self.assertRaisesRegex(OSError, "database unavailable"):
+            await supervisor.admit_cycle(_OWNER)
+
+        self.assertTrue(supervisor.admission_enabled)
+        self.assertIsNone(supervisor.integrity_failure)
+        self.assertFalse(supervisor.integrity_failure_event.is_set())
+        self.assertTrue(
+            all(count == 0 for count in supervisor._reserved_by_domain.values())
+        )
+
+        grant = _feed_grant(uuid.uuid4(), 1)
+        control.claim_error = None
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(grant, _feed_payload(grant)),
+        )
+
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+
+        self.assertEqual(
+            supervisor.active_count(grant_control.DomainId.FEED), 1
+        )
+        runner.release.set()
+        await _wait(runner.finished_event(grant))
+
     async def test_heartbeat_ineligible_stops_only_one_runner_without_write(
         self,
     ) -> None:

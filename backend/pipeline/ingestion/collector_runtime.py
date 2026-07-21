@@ -392,16 +392,17 @@ class CollectorRuntime:
                 ),
                 actor_id=self._runtime_actor_id,
             )
-            self._work_pool = bcfy_calls_work_pool.BcfyCallsWorkPool(
+            work_pool = bcfy_calls_work_pool.BcfyCallsWorkPool(
                 executor,
                 concurrency=settings.bcfy_calls_work_concurrency,
                 queue_capacity=settings.bcfy_calls_work_queue_capacity,
             )
-            await self._work_pool.start()
+            await work_pool.start()
+            self._work_pool = work_pool
             runner = bcfy_calls_sid_runner.BcfyCallsSidRunner(
                 self._sid_data_store,
                 self._sid_calls_provider,
-                self._work_pool,
+                work_pool,
                 self._plan_failure,
                 actor_id=self._runtime_actor_id,
             )

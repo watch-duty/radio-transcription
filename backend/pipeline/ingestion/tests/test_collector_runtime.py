@@ -257,6 +257,38 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIs(runtime._supervisor, supervisor_constructor.return_value)
         self.assertIs(runtime._work_pool, pool)
 
+    async def test_failed_work_pool_start_is_not_published_for_shutdown(
+        self,
+    ) -> None:
+        runtime = _runtime()
+        runtime._data_pool = mock.MagicMock()
+        runtime._heartbeat_pool = mock.MagicMock()
+        runtime._http_session = mock.MagicMock()
+        pool = mock.AsyncMock()
+        pool.start.side_effect = RuntimeError("pool start failed")
+
+        with (
+            mock.patch.object(
+                collector_runtime.bcfy_calls_work_pool,
+                "BcfyCallsWorkPool",
+                return_value=pool,
+            ),
+            mock.patch.object(
+                collector_runtime.bcfy_calls_provider,
+                "CallsProviderClient",
+                return_value=mock.MagicMock(),
+            ),
+            mock.patch.object(
+                collector_runtime.bcfy_calls_pipeline,
+                "BcfyCallsFeedBatchExecutor",
+                return_value=mock.MagicMock(),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "pool start failed"):
+                await runtime._compose_supervisor()
+
+        self.assertIsNone(runtime._work_pool)
+
     async def test_sid_mode_excludes_calls_from_feed_claim_store(
         self,
     ) -> None:
