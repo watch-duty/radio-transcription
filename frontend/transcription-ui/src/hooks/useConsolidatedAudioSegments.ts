@@ -129,9 +129,7 @@ export function consolidateAudioSegments(
 
   // Sort chronologically (ascending) to group consecutive segments in time order
   const chronologicalSegments = [...segments].sort(
-    (a, b) =>
-      new Date(a.startTimestamp).getTime() -
-      new Date(b.startTimestamp).getTime()
+    (a, b) => Date.parse(a.startTimestamp) - Date.parse(b.startTimestamp)
   );
 
   const consolidated: RenderableAudioSegment[] = [];
@@ -150,8 +148,8 @@ export function consolidateAudioSegments(
 
     // Detect if there is a gap between the previous segment and this segment
     if (prevSegment) {
-      const prevEnd = new Date(prevSegment.endTimestamp).getTime();
-      const currStart = new Date(segment.startTimestamp).getTime();
+      const prevEnd = Date.parse(prevSegment.endTimestamp);
+      const currStart = Date.parse(segment.startTimestamp);
       const gapMs = currStart - prevEnd;
 
       // Tolerance for rounding errors and minor overlaps
@@ -214,9 +212,7 @@ export function consolidateAudioSegments(
 
   // Return sorted descending (newest at the top)
   return consolidated.sort(
-    (a, b) =>
-      new Date(b.startTimestamp).getTime() -
-      new Date(a.startTimestamp).getTime()
+    (a, b) => Date.parse(b.startTimestamp) - Date.parse(a.startTimestamp)
   );
 }
 
