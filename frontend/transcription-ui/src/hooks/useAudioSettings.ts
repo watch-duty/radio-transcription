@@ -6,19 +6,12 @@ import {
   DEFAULT_VOLUME_DB,
   PAN_OPTIONS,
   SPEED_OPTIONS,
+  STORAGE_KEYS,
   VOLUME_MAX_DB,
   VOLUME_MIN_DB,
+  feedKey,
 } from '../audio/audioSettings';
 import { isSafari } from '../utils/browser';
-
-// Base keys hold the global default; a future global-settings UI writes these.
-// Per-feed adjustments are stored under `<base>.<feedId>` and a read falls back
-// to the base key, so an unvisited feed inherits the global default.
-const STORAGE_KEYS = {
-  volumeDb: 'radio.audio.volumeDb',
-  pan: 'radio.audio.pan',
-  speed: 'radio.audio.speed',
-};
 
 export interface AudioSettings {
   volumeDb: number;
@@ -30,10 +23,6 @@ export interface AudioSettings {
   // Clears this feed's overrides so it re-inherits the (global) defaults,
   // rather than pinning it to the current default values.
   reset: () => void;
-}
-
-function feedKey(base: string, feedId: string): string {
-  return feedId ? `${base}.${feedId}` : base;
 }
 
 function readStored(key: string): number | null {
