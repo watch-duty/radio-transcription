@@ -30,6 +30,7 @@ import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
@@ -251,9 +252,16 @@ export function TranscriptView({
     preloadWindowMs: TIMELINE_RANGE_DURATION_MS,
   });
 
+  const { data: feedHistoryData } = useQuery({
+    queryKey: ['feedHistory', searchedFeedId, token],
+    queryFn: () => listFeedHistory(searchedFeedId!, token!, 100),
+    enabled: !!searchedFeedId && !!token,
+  });
+
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
-    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+    searchedFeed?.sourceType === SourceType.BCFY_FEEDS,
+    feedHistoryData?.historyEvents
   );
 
   // View-intent key: a deliberate context switch resets the window and scroll

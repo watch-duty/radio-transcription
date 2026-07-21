@@ -1,6 +1,10 @@
 import { useMemo } from 'react';
 
-import { AudioClassification, type AudioSegment } from '@transcription/common';
+import {
+  AudioClassification,
+  type AudioSegment,
+  type FeedHistoryEvent,
+} from '@transcription/common';
 
 import { segmentHasSpeech } from '../utils/annotationUtils';
 
@@ -29,11 +33,57 @@ export interface RenderableAudioSegment extends AudioSegment {
   bundledSegmentIds?: string[];
 }
 
+export interface TimeInterval {
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Derives time windows during which the feed was offline or failing, based on
+ * audit state history events.
+ */
+export function deriveOfflineWindows(
+  historyEvents?: FeedHistoryEvent[]
+): TimeInterval[] {
+  if (!historyEvents || historyEvents.length === 0) return [];
+
+  // Sort events chronologically ascending (oldest first)
+  const sorted = [...historyEvents].sort((a, b) => a.occurredAt - b.occurredAt);
+  const windows: TimeInterval[] = [];
+  let offlineStartMs: number | null = null;
+
+  for (const event of sorted) {
+    const status = event.afterValues?.status;
+    const reason = event.afterValues?.statusReason;
+
+    // Statuses or reasons that indicate the feed was non-operational
+    const isOfflineState =
+      (status !== undefined && status !== 'active') ||
+      (reason !== undefined && reason !== null && reason !== 'unknown');
+
+    if (isOfflineState && offlineStartMs === null) {
+      offlineStartMs = event.occurredAt;
+    } else if (!isOfflineState && offlineStartMs !== null) {
+      windows.push({ startMs: offlineStartMs, endMs: event.occurredAt });
+      offlineStartMs = null;
+    }
+  }
+
+  if (offlineStartMs !== null) {
+    windows.push({ startMs: offlineStartMs, endMs: Date.now() });
+  }
+
+  return windows;
+}
+
 export function consolidateAudioSegments(
   segments: AudioSegment[],
-  isContinuousAudioSource: boolean = true
+  isContinuousAudioSource: boolean = true,
+  historyEvents?: FeedHistoryEvent[]
 ): RenderableAudioSegment[] {
   if (segments.length === 0) return [];
+
+  const offlineWindows = deriveOfflineWindows(historyEvents);
 
   // Sort chronologically (ascending) to group consecutive segments in time order
   const chronologicalSegments = [...segments].sort(
@@ -57,15 +107,22 @@ export function consolidateAudioSegments(
     const prevSegment = i > 0 ? chronologicalSegments[i - 1] : null;
 
     // Detect if there is a gap between the previous segment and this segment
-    if (prevSegment && isContinuousAudioSource) {
+    if (prevSegment) {
       const prevEnd = new Date(prevSegment.endTimestamp).getTime();
       const currStart = new Date(segment.startTimestamp).getTime();
       const gapMs = currStart - prevEnd;
 
       // Tolerance for rounding errors and minor overlaps
       if (gapMs > MIN_GAP_FOR_OUTAGE_MS) {
+        // Check if the gap falls within an offline window from audit history
+        const isOfflineInHistory = offlineWindows.some(
+          (w) => prevEnd < w.endMs && currStart > w.startMs
+        );
+
         const isOutage =
-          segment.missingPriorContext || prevSegment.missingPostContext;
+          isOfflineInHistory ||
+          (isContinuousAudioSource &&
+            (segment.missingPriorContext || prevSegment.missingPostContext));
 
         if (isOutage) {
           flushSilenceBundle();
@@ -88,6 +145,10 @@ export function consolidateAudioSegments(
             annotations: [],
             isOutageBundle: true,
           } as RenderableAudioSegment);
+        } else {
+          // Continuous or non-continuous feed gap where feed was active:
+          // flush silence bundle so silence does not bridge across unrecorded time gaps
+          flushSilenceBundle();
         }
       }
     }
@@ -139,13 +200,19 @@ function extendOrCreateSilenceBundle(
  *
  * @param segments List of raw audio segments.
  * @param isContinuousAudioSource Whether the source feed is continuous.
+ * @param historyEvents Optional list of feed state history audit events.
  * @returns List of renderable audio segments with consolidated silence bundles.
  */
 export function useConsolidatedAudioSegments(
   segments: AudioSegment[],
-  isContinuousAudioSource: boolean = true
+  isContinuousAudioSource: boolean = true,
+  historyEvents?: FeedHistoryEvent[]
 ): RenderableAudioSegment[] {
   return useMemo(() => {
-    return consolidateAudioSegments(segments, isContinuousAudioSource);
-  }, [segments, isContinuousAudioSource]);
+    return consolidateAudioSegments(
+      segments,
+      isContinuousAudioSource,
+      historyEvents
+    );
+  }, [segments, isContinuousAudioSource, historyEvents]);
 }
