@@ -50,6 +50,9 @@ export interface AudioSettingsButtonProps {
   setSpeed: (speed: number) => void;
   onReset: () => void;
   disableControls: boolean;
+  // Silenced by another feed's solo (scanner). Distinct from the user's own
+  // volume being at mute.
+  muted?: boolean;
 }
 
 export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
@@ -61,6 +64,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   setSpeed,
   onReset,
   disableControls,
+  muted = false,
 }) => {
   const theme = useTheme();
   const [audioAnchorEl, setAudioAnchorEl] = useState<HTMLElement | null>(null);
@@ -72,7 +76,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   const panLabel = pan !== DEFAULT_PAN ? PAN_LABELS[pan] : null;
   const speedActive = speed !== DEFAULT_SPEED;
   // The icon stays put except for mute; the scale below conveys cut vs. boost.
-  const VolumeIcon = isMuted ? VolumeOffIcon : VolumeUpIcon;
+  const VolumeIcon = isMuted || muted ? VolumeOffIcon : VolumeUpIcon;
   const volumeIconScale = volumeIconScaleFor(volumeDb);
 
   // Pan and speed each surface a badge; the border only shows to anchor them.
@@ -83,9 +87,11 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
     panLabel ? `Pan ${panLabel}` : null,
     speedActive ? `${speed}×` : null,
   ].filter(Boolean);
-  const audioTooltip = activeSummary.length
-    ? activeSummary.join(', ')
-    : 'Audio controls';
+  const audioTooltip = muted
+    ? 'Muted — another feed is soloed'
+    : activeSummary.length
+      ? activeSummary.join(', ')
+      : 'Audio controls';
   const audioBadgeSx = {
     '& .MuiBadge-badge': {
       fontSize: '0.5rem',

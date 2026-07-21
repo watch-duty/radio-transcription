@@ -24,10 +24,12 @@ import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
+import ScannerView from './components/scanner/ScannerView';
 import SettingsView from './components/settings/SettingsView';
 import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
+import { ScannerProvider } from './context/ScannerProvider';
 
 import './App.css';
 
@@ -215,120 +217,136 @@ function App() {
       {!token && window.location.pathname !== '/demo-outage' ? (
         <Login />
       ) : (
-        <AppContainer>
-          <LoginModal open={loginModalOpen} setOpen={setLoginModalOpen} />
-          <Snackbar
-            open={!!snackbarMessage}
-            autoHideDuration={3000}
-            onClose={() => setSnackbarMessage(null)}
-            message={snackbarMessage}
-          />
-          <AnnouncementBanner
-            startDate={CSAT_SURVEY_START_DATE}
-            endDate={CSAT_SURVEY_END_DATE}
-            title="CSAT Survey:"
-            message="Your feedback will help us improve this transcription tool. Please share your experience by Wednesday, July 29th!"
-            linkUrl={CSAT_SURVEY_FORM_URL}
-            linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
-            icon={<RateReviewIcon />}
-          />
-          {alerts.length > 0 && (
-            <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
-              {alerts.map((alert, index) => (
-                <Alert
-                  key={index}
-                  onClose={() =>
-                    setAlerts((alerts) => alerts.filter((_, i) => i !== index))
-                  }
-                  severity={alert.severity}
-                  sx={{
-                    textAlign: 'left',
-                  }}
-                >
-                  {alert.title && <AlertTitle>{alert.title}</AlertTitle>}
-                  {alert.children}
-                </Alert>
-              ))}
-            </Stack>
-          )}
-          {/* Define the application routes below. */}
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <>
-                  <title>Radio Transcription</title>
-                  <FeedSearchView
-                    title="Feeds"
-                    triggerSnackbar={triggerSnackbar}
-                    onError={handleError}
-                  />
-                </>
-              }
+        <ScannerProvider>
+          <AppContainer>
+            <LoginModal open={loginModalOpen} setOpen={setLoginModalOpen} />
+            <Snackbar
+              open={!!snackbarMessage}
+              autoHideDuration={3000}
+              onClose={() => setSnackbarMessage(null)}
+              message={snackbarMessage}
             />
-            <Route
-              path="/transcripts"
-              element={
-                <>
-                  <title>Transcripts - Radio Transcription</title>
-                  <TranscriptView
-                    triggerSnackbar={triggerSnackbar}
-                    onError={handleError}
-                  />
-                </>
-              }
+            <AnnouncementBanner
+              startDate={CSAT_SURVEY_START_DATE}
+              endDate={CSAT_SURVEY_END_DATE}
+              title="CSAT Survey:"
+              message="Your feedback will help us improve this transcription tool. Please share your experience by Wednesday, July 29th!"
+              linkUrl={CSAT_SURVEY_FORM_URL}
+              linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
+              icon={<RateReviewIcon />}
             />
-            <Route
-              path="/rules"
-              element={
-                <>
-                  <title>Rules - Radio Transcription</title>
-                  <RuleConfigurationView
-                    triggerSnackbar={triggerSnackbar}
-                    onError={handleError}
-                  />
-                </>
-              }
-            />
-            <Route
-              path="/feeds"
-              element={
-                <RequireAdmin>
-                  <title>Feeds - Radio Transcription</title>
-                  <FeedConfigurationView
-                    triggerSnackbar={triggerSnackbar}
-                    onError={handleError}
-                  />
-                </RequireAdmin>
-              }
-            />
-            <Route
-              path="/docs"
-              element={
-                <RequireAdmin>
-                  <title>API Docs - Radio Transcription</title>
-                  <Suspense fallback={<div>Loading documentation...</div>}>
-                    <DocsView />
-                  </Suspense>
-                </RequireAdmin>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <>
-                  <title>Settings - Radio Transcription</title>
-                  <SettingsView
-                    triggerSnackbar={triggerSnackbar}
-                    onError={handleError}
-                  />
-                </>
-              }
-            />
-            <Route path="/demo-outage" element={<DemoOutageView />} />
-            <Route path="/login" element={<Login />} />
-          </Routes>
-        </AppContainer>
+            {alerts.length > 0 && (
+              <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
+                {alerts.map((alert, index) => (
+                  <Alert
+                    key={index}
+                    onClose={() =>
+                      setAlerts((alerts) =>
+                        alerts.filter((_, i) => i !== index)
+                      )
+                    }
+                    severity={alert.severity}
+                    sx={{
+                      textAlign: 'left',
+                    }}
+                  >
+                    {alert.title && <AlertTitle>{alert.title}</AlertTitle>}
+                    {alert.children}
+                  </Alert>
+                ))}
+              </Stack>
+            )}
+            {/* Define the application routes below. */}
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <>
+                    <title>Radio Transcription</title>
+                    <FeedSearchView
+                      title="Feeds"
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </>
+                }
+              />
+              <Route
+                path="/transcripts"
+                element={
+                  <>
+                    <title>Transcripts - Radio Transcription</title>
+                    <TranscriptView
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </>
+                }
+              />
+              <Route
+                path="/rules"
+                element={
+                  <>
+                    <title>Rules - Radio Transcription</title>
+                    <RuleConfigurationView
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </>
+                }
+              />
+              <Route
+                path="/feeds"
+                element={
+                  <RequireAdmin>
+                    <title>Feeds - Radio Transcription</title>
+                    <FeedConfigurationView
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/docs"
+                element={
+                  <RequireAdmin>
+                    <title>API Docs - Radio Transcription</title>
+                    <Suspense fallback={<div>Loading documentation...</div>}>
+                      <DocsView />
+                    </Suspense>
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <>
+                    <title>Settings - Radio Transcription</title>
+                    <SettingsView
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </>
+                }
+              />
+              <Route path="/demo-outage" element={<DemoOutageView />} />
+              <Route path="/login" element={<Login />} />
+              <Route
+                path="/scanner"
+                element={
+                  <>
+                    <title>Scanner - Radio Transcription</title>
+                    <ScannerView
+                      triggerSnackbar={triggerSnackbar}
+                      onError={handleError}
+                    />
+                  </>
+                }
+              />
+            </Routes>
+          </AppContainer>
+        </ScannerProvider>
       )}
     </ThemeProvider>
   );

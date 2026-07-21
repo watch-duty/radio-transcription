@@ -35,6 +35,7 @@ import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
+import AddToScannerButton from '../scanner/AddToScannerButton';
 import { FeedHistoryModal } from './FeedHistoryModal';
 import { FeedTagChip } from './FeedTagChip';
 import { groupTagsByKey } from './tagDisplay';
@@ -125,7 +126,7 @@ function VirtuosoTableRow(
     ? '1fr auto'
     : allowEdit
       ? '1.5fr 1fr 1fr 100px'
-      : '1.5fr 1fr 1fr 2fr';
+      : '1.5fr 1fr 1fr 2fr 60px';
 
   return (
     <TableRow
@@ -218,7 +219,7 @@ export function FeedTable({
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 1fr 100px'
-    : '1.5fr 1fr 1fr 2fr';
+    : '1.5fr 1fr 1fr 2fr 60px';
 
   const sortConfigColumn = sortConfig.column;
   const columns = [
@@ -267,6 +268,13 @@ export function FeedTable({
       >
         {allowEdit ? '' : 'Links'}
       </TableCell>
+      {!allowEdit && (
+        <TableCell
+          component="div"
+          role="columnheader"
+          sx={{ bgcolor: 'background.paper' }}
+        />
+      )}
     </TableRow>
   );
 
@@ -493,6 +501,26 @@ export function FeedTable({
             <VisibilityIcon fontSize="small" />
           </IconButton>
         </TableCell>
+
+        {!allowEdit && (
+          <TableCell
+            component="div"
+            role="cell"
+            align="right"
+            sx={{
+              borderBottom: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              minWidth: 0,
+            }}
+          >
+            <AddToScannerButton
+              variant="icon"
+              feed={{ id: feed.id, name: feed.name }}
+            />
+          </TableCell>
+        )}
 
         {feed.tags && feed.tags.length > 0 ? (
           <TableCell

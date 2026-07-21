@@ -12,10 +12,11 @@ import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import FeedSearchView from '../feeds/FeedSearchView';
+import AddToScannerButton from '../scanner/AddToScannerButton';
 
 interface FeedHeaderProps {
   searchedFeed: Feed | null;
-  onSelectFeed: (feedId: string) => void;
+  onSelectFeed: (feed: Feed) => void;
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
@@ -149,6 +150,10 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                 columnGap: 0.5,
               }}
             >
+              <AddToScannerButton
+                variant="button"
+                feed={{ id: searchedFeed.id, name: searchedFeed.name }}
+              />
               {renderAction(<LinkIcon fontSize="small" />, 'Share feed', {
                 component: 'button',
                 type: 'button',
