@@ -52,7 +52,7 @@ Extract authentic feed templates from `sample_feed_properties.csv` and `sample_f
 python3 backend/scripts/extract_templates.py \
   --properties-csv backend/scripts/test_data/sample_feed_properties.csv \
   --feeds-csv backend/scripts/test_data/sample_feeds.csv \
-  --output backend/scripts/test_data/production_feed_templates.json
+  --output backend/scripts/test_data/feed_templates.json
 ```
 
 Generate a 15,000-feed dataset adhering to the required 50/25/25 mix output to `backend/scripts/test_data/`:

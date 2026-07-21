@@ -3,7 +3,7 @@
 """Extract authentic feed metadata from sample CSV files into JSON resource.
 
 Reads directly from sample_feed_properties.csv and sample_feeds.csv, outputting
-to production_feed_templates.json. Filters tags to only include allowed keys
+to feed_templates.json. Filters tags to only include allowed keys
 ('region', 'system/timezone', 'stereo').
 """
 
@@ -18,9 +18,7 @@ DEFAULT_PROPERTIES_CSV_PATH = (
     SCRIPT_DIR / "test_data" / "sample_feed_properties.csv"
 )
 DEFAULT_FEEDS_CSV_PATH = SCRIPT_DIR / "test_data" / "sample_feeds.csv"
-DEFAULT_OUTPUT_JSON_PATH = (
-    SCRIPT_DIR / "test_data" / "production_feed_templates.json"
-)
+DEFAULT_OUTPUT_JSON_PATH = SCRIPT_DIR / "test_data" / "feed_templates.json"
 
 ALLOWED_TAG_KEYS = {"region", "system/timezone", "stereo"}
 
@@ -113,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_JSON_PATH,
-        help="Path to output production_feed_templates.json",
+        help="Path to output feed_templates.json",
     )
     args = parser.parse_args(argv)
     extract_templates(args.properties_csv, args.feeds_csv, args.output)

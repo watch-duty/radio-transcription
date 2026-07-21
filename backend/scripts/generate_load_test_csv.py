@@ -20,9 +20,7 @@ from backend.scripts.feed_catalog import (
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-TEMPLATES_JSON_PATH = (
-    SCRIPT_DIR / "test_data" / "production_feed_templates.json"
-)
+TEMPLATES_JSON_PATH = SCRIPT_DIR / "test_data" / "feed_templates.json"
 DEFAULT_OUTPUT_PATH = SCRIPT_DIR / "test_data" / "load_test_feeds_15k.csv"
 
 
