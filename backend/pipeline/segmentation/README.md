@@ -10,7 +10,10 @@ The `segmentation` component is a stateful streaming Apache Beam application run
 
 ## Continuous Audio Retention Policy (CRITICAL MANDATE)
 
-For continuous audio sources (specifically `bcfy_feeds`), our foundational operational requirement is to **retain 100% of all incoming audio**. 
+For continuous audio sources (specifically `bcfy_feeds` and native `icecast` streams captured via `icecast_collector.py`), our foundational operational requirement is to **retain 100% of all incoming audio**.
+
+> [!NOTE]
+> **Dataflow Pipeline Input Scope**: Only continuous streaming feeds (`bcfy_feeds` and `icecast`) pass through this Dataflow segmentation pipeline. Discrete call feeds (`bcfy_calls`, `openmhz`) and notifications do NOT pass through Dataflow segmentation. 
 
 Every single sample captured by an Ingestion continuous scraper must be preserved in canonical GCS storage and committed to the database under one of two canonical classifications:
 - **`SPEECH`**: Audio intervals containing active voice activity.
