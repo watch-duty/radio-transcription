@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
+import { SourceType } from '@transcription/common';
 
 import { getFeedSearchOptions } from '../service/getFeedSearchOptions';
 import { useFeedSearchOptions } from './useFeedSearchOptions';
@@ -29,7 +30,7 @@ describe('useFeedSearchOptions', () => {
 
   it('fetches search options when token is present', async () => {
     const mockData = {
-      sourceTypes: ['bcfy_feeds'],
+      sourceTypes: [SourceType.BCFY_FEEDS],
       statuses: ['active'],
       tags: [{ key: 'county', value: 'Marin' }],
     };

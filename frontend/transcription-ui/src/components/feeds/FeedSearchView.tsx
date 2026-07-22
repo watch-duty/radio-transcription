@@ -9,7 +9,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { type Feed } from '@transcription/common';
+import { type Feed, SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
@@ -162,6 +162,8 @@ interface TableFeedSearchResultsProps {
   title: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   feedsLoading: boolean;
   feedTotal: number;
   filters: FeedFilters;
@@ -172,6 +174,8 @@ function TableFeedSearchResults({
   title,
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   feedsLoading,
   feedTotal,
   filters,
@@ -191,6 +195,8 @@ function TableFeedSearchResults({
         title={title}
         feeds={feeds}
         tags={tags}
+        sourceTypes={sourceTypes}
+        statuses={statuses}
         feedTotal={feedTotal}
         isLoading={feedsLoading}
         filters={filters}
@@ -266,25 +272,7 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
-  const tags = useMemo<{ key: string; value: string }[]>(() => {
-    if (searchOptionsData?.tags && searchOptionsData.tags.length > 0) {
-      return searchOptionsData.tags;
-    }
-    const seen = new Set<string>();
-    const uniqueTags: { key: string; value: string }[] = [];
-    (feeds || []).forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          uniqueTags.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return uniqueTags.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [searchOptionsData, feeds]);
+  const tags = searchOptionsData?.tags ?? [];
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -308,6 +296,8 @@ export function FeedSearchView({
       title={title}
       feeds={feeds ?? []}
       tags={tags}
+      sourceTypes={searchOptionsData?.sourceTypes}
+      statuses={searchOptionsData?.statuses}
       feedsLoading={feedsLoading}
       feedTotal={feedTotal}
       filters={filters}

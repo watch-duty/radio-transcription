@@ -72,7 +72,7 @@ export interface ListFeedsResponse {
 }
 
 export interface FeedSearchOptionsResponse {
-  sourceTypes: string[];
+  sourceTypes: SourceType[];
   statuses: string[];
   tags: Tag[];
 }
