@@ -388,7 +388,7 @@ components:
       properties:
         sourceTypes:
           items:
-            type: string
+            $ref: "#/components/schemas/SourceType"
           type: array
         statuses:
           items:

@@ -287,7 +287,7 @@ export class FeedsController extends Controller {
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<{
-        source_types: string[];
+        source_types: SourceType[];
         statuses: string[];
         tags: Tag[];
       }>({
