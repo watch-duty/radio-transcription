@@ -6,6 +6,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
@@ -21,7 +22,6 @@ import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
 } from '../../hooks/useConsolidatedAudioSegments';
-import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
@@ -55,7 +55,7 @@ export function TranscriptView({
   onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
-  const isNarrow = useIsNarrow();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { token } = useAuth();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -816,7 +816,7 @@ export function TranscriptView({
             highlightedSegmentId={highlightedSegmentId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
-            isNarrow={isNarrow}
+            isMobile={isMobile}
           />
         ) : feedsFetching || isAudioSegmentsInitialLoading ? (
           <Box

@@ -35,7 +35,7 @@ interface TranscriptRowProps {
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
   isTopAudioSegmentRow?: boolean;
-  isNarrow?: boolean;
+  isMobile?: boolean;
 }
 
 export function TranscriptRow({
@@ -53,7 +53,7 @@ export function TranscriptRow({
   redactTranscripts = false,
   onRowClick,
   isTopAudioSegmentRow = false,
-  isNarrow = false,
+  isMobile = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
 
@@ -260,7 +260,7 @@ export function TranscriptRow({
                     ? audioSegment.id
                     : currentlyPlayingSegmentId
                 }
-                hideButton={isNarrow ? false : !isHovered}
+                hideButton={isMobile ? false : !isHovered}
               />
             )}
           </Box>
