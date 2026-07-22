@@ -20,6 +20,7 @@ with (
         {
             "APP_URL": "https://app.example.com",
             "FEEDS_API_URL": "http://feeds-api",
+            "RULES_API_URL": "http://rules-api",
         },
     ),
 ):
@@ -52,6 +53,11 @@ class TestSendNotification(TestCase):
             ):
                 _ = container.app_url
 
+    def test_get_rules_client_returns_none_without_url(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            container = NotificationServiceContainer()
+            self.assertIsNone(container.get_rules_client())
+
     @mock.patch("backend.pipeline.notification.send_notification.container")
     def test_send_notification(
         self,
@@ -60,6 +66,7 @@ class TestSendNotification(TestCase):
         mock_dedupe = mock_container.get_deduplication.return_value
         mock_request_handler = mock_container.get_request_handler.return_value
         mock_feeds_client = mock_container.get_feeds_client.return_value
+        mock_rules_client = mock_container.get_rules_client.return_value
         type(mock_container).app_url = mock.PropertyMock(
             return_value="https://app.example.com"
         )
@@ -71,12 +78,16 @@ class TestSendNotification(TestCase):
         mock_feeds_client.get_feed_tags.return_value = [
             Tag(key="env", value="prod")
         ]
+        mock_rules_client.get_rule_tags.return_value = [
+            Tag(key="geo_event_type", value="flooding")
+        ]
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
             segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
+            evaluation_decisions=["rule-a", "rule-b"],
         )
         evaluated_payload.start_audio_offset.seconds = 10
         evaluated_payload.end_audio_offset.seconds = 20
@@ -96,12 +107,17 @@ class TestSendNotification(TestCase):
 
         mock_dedupe.process_notification.assert_called_with("1234")
 
+        mock_rules_client.get_rule_tags.assert_called_once_with(
+            ["rule-a", "rule-b"]
+        )
+
         expected_notification = AlertNotification(
             transcript="This is a test!",
             segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             app_url="https://app.example.com/transcripts?feedId=&segmentId=1234&timestamp=1000000",
+            evaluation_decisions=["rule-a", "rule-b"],
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
@@ -111,6 +127,10 @@ class TestSendNotification(TestCase):
         t = expected_notification.tags.add()
         t.key = "env"
         t.value = "prod"
+
+        rt = expected_notification.rule_tags.add()
+        rt.key = "geo_event_type"
+        rt.value = "flooding"
 
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
@@ -137,6 +157,7 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.return_value = True
 
         mock_feeds_client.get_feed_tags.return_value = []
+        mock_container.get_rules_client.return_value.get_rule_tags.return_value = []
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This has errors!",
@@ -229,6 +250,7 @@ class TestSendNotification(TestCase):
         )
 
         mock_feeds_client.get_feed_tags.return_value = []
+        mock_container.get_rules_client.return_value.get_rule_tags.return_value = []
         mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
@@ -273,6 +295,7 @@ class TestSendNotification(TestCase):
         )
 
         mock_feeds_client.get_feed_tags.return_value = []
+        mock_container.get_rules_client.return_value.get_rule_tags.return_value = []
         mock_dedupe.process_notification.return_value = True
 
         mock_request_handler.send_notification.side_effect = Exception(
@@ -313,6 +336,7 @@ class TestSendNotification(TestCase):
         )
 
         mock_feeds_client.get_feed_tags.return_value = []
+        mock_container.get_rules_client.return_value.get_rule_tags.return_value = []
         mock_dedupe.process_notification.return_value = True
 
         mock_request_handler.send_notification.side_effect = NonRetryableError(
@@ -362,6 +386,40 @@ class TestSendNotification(TestCase):
         self.assertEqual(notification.end_timestamp.seconds, 1776281000)
         self.assertEqual(notification.start_audio_offset.seconds, 5)
         self.assertEqual(notification.end_audio_offset.seconds, 15)
+
+    def test_convert_to_notification_populates_feed_and_rule_tags(self) -> None:
+        evaluated_payload = EvaluatedTranscribedAudio(
+            feed_id="feed-1", segment_id="tx-1"
+        )
+
+        notification = convert_to_notification(
+            evaluated_payload,
+            [Tag(key="region", value="Texas")],
+            "https://app.example.com",
+            [Tag(key="geo_event_type", value="flooding")],
+        )
+
+        self.assertEqual(
+            [(t.key, t.value) for t in notification.tags],
+            [("region", "Texas")],
+        )
+        self.assertEqual(
+            [(t.key, t.value) for t in notification.rule_tags],
+            [("geo_event_type", "flooding")],
+        )
+
+    def test_convert_to_notification_without_rule_tags_leaves_them_empty(
+        self,
+    ) -> None:
+        evaluated_payload = EvaluatedTranscribedAudio(
+            feed_id="feed-1", segment_id="tx-1"
+        )
+
+        notification = convert_to_notification(
+            evaluated_payload, None, "https://app.example.com"
+        )
+
+        self.assertEqual(len(notification.rule_tags), 0)
 
 
 if __name__ == "__main__":
