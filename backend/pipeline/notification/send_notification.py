@@ -9,6 +9,7 @@ from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
+from backend.pipeline.common.clients.rules_client import RulesClient
 from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
 from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.exceptions import NonRetryableError
@@ -47,6 +48,7 @@ class NotificationServiceContainer:
         self._deduplication: NotificationDeduplication | None = None
         self._request_handler: RequestHandler | None = None
         self._feeds_client: FeedsClient | None = None
+        self._rules_client: RulesClient | None = None
 
     def reset_clients(self) -> None:
         if self._deduplication is not None:
@@ -61,6 +63,7 @@ class NotificationServiceContainer:
         self._deduplication = None
         self._request_handler = None
         self._feeds_client = None
+        self._rules_client = None
 
     @fork_checked
     def get_deduplication(self) -> NotificationDeduplication:
@@ -104,6 +107,26 @@ class NotificationServiceContainer:
             self._feeds_client = FeedsClient(self.feeds_api_url)
         return self._feeds_client
 
+    @fork_checked
+    def get_rules_client(self) -> RulesClient | None:
+        """Warms up and caches the RulesClient, or None when RULES_API_URL is unset.
+
+        Rule tags are best-effort enrichment, so a missing URL must not break the
+        critical notification path — mirrors how the evaluator treats
+        RULES_API_URL as optional.
+        """
+        if self._rules_client is None:
+            rules_api_url = os.environ.get("RULES_API_URL", "").strip()
+            if not rules_api_url:
+                logger.warning(
+                    "RULES_API_URL is not set; rule tags will not be attached "
+                    "to notifications"
+                )
+                return None
+            logger.info("Initializing RulesClient")
+            self._rules_client = RulesClient(rules_api_url)
+        return self._rules_client
+
     def eager_warmup(self) -> None:
         """Eagerly warms up and caches all clients during container initialization."""
         logger.info("Performing eager warm-start for container services...")
@@ -111,6 +134,7 @@ class NotificationServiceContainer:
             self.get_deduplication()
             self.get_request_handler()
             self.get_feeds_client()
+            self.get_rules_client()
             _ = self.app_url
             _ = self.feeds_api_url
             logger.info("Container services eagerly warmed up successfully.")
@@ -163,6 +187,7 @@ def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
     tags: list[Tag] | None,
     app_url: str,
+    rule_tags: list[Tag] | None = None,
 ) -> AlertNotification:
     url = _build_app_url(evaluated_transcribed_audio, app_url)
     notification = AlertNotification(
@@ -187,6 +212,12 @@ def convert_to_notification(
     if tags:
         for tag in tags:
             t = notification.tags.add()
+            t.key = tag.key
+            t.value = tag.value
+
+    if rule_tags:
+        for tag in rule_tags:
+            t = notification.rule_tags.add()
             t.key = tag.key
             t.value = tag.value
 
@@ -227,11 +258,23 @@ def send_notification(cloud_event: CloudEvent) -> None:
                 evaluated_transcribed_audio.feed_id
             )
 
+            # Fetch the tags of the rules this transmission triggered
+            # (best-effort: skipped when the rules client is unconfigured)
+            rules_client = container.get_rules_client()
+            rule_tags = (
+                rules_client.get_rule_tags(
+                    list(evaluated_transcribed_audio.evaluation_decisions)
+                )
+                if rules_client is not None
+                else None
+            )
+
             # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
             alert_notification = convert_to_notification(
                 evaluated_transcribed_audio,
                 tags,
                 container.app_url,
+                rule_tags,
             )
 
             # Send a POST request to the endpoint
