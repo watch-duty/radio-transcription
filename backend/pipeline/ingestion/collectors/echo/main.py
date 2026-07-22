@@ -266,6 +266,12 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
             # Publish AudioChunk with deterministic session_id for dedup.
             feed_id_str = str(feed["id"])
             session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
+            time_created_str = data.get("timeCreated")
+            receipt_time = (
+                datetime.fromisoformat(time_created_str)
+                if time_created_str
+                else None
+            )
 
             try:
                 publisher = pubsub_client.get_publisher()
@@ -280,6 +286,7 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
                     duration_ms=duration_ms,
                     source_type="echo",
                     external_audio_segment_id=f"{bucket}/{name}",
+                    receipt_time=receipt_time,
                 )
             except Exception:
                 failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
