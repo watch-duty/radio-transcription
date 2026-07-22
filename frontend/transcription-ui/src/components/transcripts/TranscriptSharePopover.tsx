@@ -11,12 +11,14 @@ import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
 import Tooltip from '@mui/material/Tooltip';
-import type { TranscriptAnnotationData } from '@transcription/common';
+import Typography from '@mui/material/Typography';
+import type {
+  AudioSegment,
+  TranscriptAnnotationData,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getAudioUrl } from '../../utils/audioUtils';
-import { SegmentDetails } from './SegmentDetails';
 
 // Left-aligned icon+label row for the actions. The icon is a plain child (not
 // `startIcon`) so its `fontSize="small"` isn't shrunk by MUI's small-button
@@ -30,7 +32,7 @@ const SHARE_ACTION_SX = {
 } as const;
 
 interface TranscriptSharePopoverProps {
-  audioSegment: RenderableAudioSegment;
+  audioSegment: AudioSegment;
   transcriptAnnotation: TranscriptAnnotationData | null;
   isSilence: boolean;
   isOutage: boolean;
@@ -52,6 +54,7 @@ export function TranscriptSharePopover({
   triggerSnackbar,
 }: TranscriptSharePopoverProps) {
   const { isAdmin } = useAuth();
+  const { id, externalAudioSegmentId } = audioSegment;
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const close = () => setAnchor(null);
 
@@ -157,12 +160,118 @@ export function TranscriptSharePopover({
           {isAdmin && (
             <>
               <Divider sx={{ my: 0.5 }} />
-              <Box sx={{ py: 0.5 }}>
-                <SegmentDetails
-                  audioSegment={audioSegment}
-                  degradationReasons={degradationReasons}
-                  triggerSnackbar={triggerSnackbar}
-                />
+              <Box
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 1,
+                  py: 0.5,
+                }}
+              >
+                <Box
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}
+                >
+                  <Tooltip title="Copy Segment ID">
+                    <IconButton
+                      size="small"
+                      aria-label="copy segment id"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(id);
+                        triggerSnackbar('Segment ID copied');
+                      }}
+                      sx={{ p: 0 }}
+                    >
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block' }}
+                    >
+                      Segment ID
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.65rem',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      {id}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                {externalAudioSegmentId && (
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      pl: 1,
+                    }}
+                  >
+                    <Tooltip title="Copy External ID">
+                      <IconButton
+                        size="small"
+                        aria-label="copy external segment id"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(externalAudioSegmentId);
+                          triggerSnackbar('External segment ID copied');
+                        }}
+                        sx={{ p: 0 }}
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: 'block' }}
+                      >
+                        External ID
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontFamily: 'monospace',
+                          fontSize: '0.65rem',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {externalAudioSegmentId}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
+
+                {degradationReasons.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      Segment error(s)
+                    </Typography>
+                    {degradationReasons.map((error, index) => (
+                      <Typography
+                        key={index}
+                        variant="body2"
+                        color="error.main"
+                        sx={{ wordBreak: 'break-word' }}
+                      >
+                        {error}
+                      </Typography>
+                    ))}
+                  </Box>
+                )}
               </Box>
             </>
           )}

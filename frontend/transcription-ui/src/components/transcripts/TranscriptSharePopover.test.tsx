@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import { SegmentDetails } from './SegmentDetails';
+import { TranscriptSharePopover } from './TranscriptSharePopover';
+
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: vi.fn(() => ({ isAdmin: true })),
+}));
 
 const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
@@ -23,9 +27,27 @@ const mockAudioSegment: AudioSegment = {
   annotations: [],
 };
 
-describe('SegmentDetails', () => {
-  const mockTriggerSnackbar = vi.fn();
+function renderPopover(
+  overrides: Partial<AudioSegment> = {},
+  reasons?: string[]
+) {
+  return render(
+    <TranscriptSharePopover
+      audioSegment={{ ...mockAudioSegment, ...overrides }}
+      transcriptAnnotation={null}
+      isSilence={false}
+      isOutage={false}
+      hasErrors={false}
+      degradationReasons={reasons ?? []}
+      triggerSnackbar={mockTriggerSnackbar}
+    />
+  );
+}
 
+const mockTriggerSnackbar = vi.fn();
+const openPopover = () => fireEvent.click(screen.getByLabelText('Share'));
+
+describe('TranscriptSharePopover', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.assign(navigator, {
@@ -39,20 +61,22 @@ describe('SegmentDetails', () => {
     cleanup();
   });
 
-  it('renders segment and external IDs and copies them', () => {
-    const segmentWithExtId = {
-      ...mockAudioSegment,
-      externalAudioSegmentId: 'ext-segment-abc-123',
-    };
+  it('copies the transcript link from the popover', async () => {
+    renderPopover();
+    openPopover();
 
-    render(
-      <SegmentDetails
-        audioSegment={segmentWithExtId}
-        triggerSnackbar={mockTriggerSnackbar}
-      />
+    fireEvent.click(await screen.findByRole('button', { name: /copy link/i }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('segmentId=tx-123')
     );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript link copied');
+  });
 
-    expect(screen.getByText('Segment ID')).toBeInTheDocument();
+  it('shows segment and external IDs and copies them for admins', async () => {
+    renderPopover({ externalAudioSegmentId: 'ext-segment-abc-123' });
+    openPopover();
+
+    expect(await screen.findByText('Segment ID')).toBeInTheDocument();
     expect(screen.getByText('tx-123')).toBeInTheDocument();
     expect(screen.getByText('ext-segment-abc-123')).toBeInTheDocument();
 
@@ -69,33 +93,24 @@ describe('SegmentDetails', () => {
     );
   });
 
-  it('does not render external segment ID when not present', () => {
-    render(
-      <SegmentDetails
-        audioSegment={mockAudioSegment}
-        triggerSnackbar={mockTriggerSnackbar}
-      />
-    );
+  it('omits the external ID when not present', async () => {
+    renderPopover();
+    openPopover();
 
-    expect(screen.getByText('tx-123')).toBeInTheDocument();
+    expect(await screen.findByText('Segment ID')).toBeInTheDocument();
     expect(
       screen.queryByLabelText('copy external segment id')
     ).not.toBeInTheDocument();
   });
 
-  it('renders degradation reasons as segment errors', () => {
-    render(
-      <SegmentDetails
-        audioSegment={mockAudioSegment}
-        triggerSnackbar={mockTriggerSnackbar}
-        degradationReasons={[
-          'Audio cut off at the end',
-          'System max tokens reached',
-        ]}
-      />
-    );
+  it('renders degradation reasons as segment errors', async () => {
+    renderPopover({}, [
+      'Audio cut off at the end',
+      'System max tokens reached',
+    ]);
+    openPopover();
 
-    expect(screen.getByText('Segment error(s)')).toBeInTheDocument();
+    expect(await screen.findByText('Segment error(s)')).toBeInTheDocument();
     expect(screen.getByText('Audio cut off at the end')).toBeInTheDocument();
     expect(screen.getByText('System max tokens reached')).toBeInTheDocument();
   });
