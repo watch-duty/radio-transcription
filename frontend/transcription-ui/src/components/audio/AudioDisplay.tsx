@@ -452,7 +452,7 @@ export function AudioDisplay({
           variant="outlined"
           sx={{
             width: '100%',
-            height: { xs: '44px', sm: '60px' },
+            height: { xs: '40px', sm: '60px' },
             bgcolor: 'action.hover',
             position: 'relative',
           }}

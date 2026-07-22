@@ -79,7 +79,7 @@ function CondensedFeedSearchResults({
         renderInput={(params) => (
           <TextField
             {...params}
-            placeholder="Select feed"
+            placeholder="Search or select feed..."
             slotProps={{
               ...params.slotProps,
               htmlInput: {
