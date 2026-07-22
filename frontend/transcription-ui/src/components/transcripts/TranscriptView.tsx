@@ -704,7 +704,8 @@ export function TranscriptView({
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh)',
+        flexGrow: 1,
+        minHeight: 0,
       }}
     >
       <FeedHeader
@@ -723,9 +724,9 @@ export function TranscriptView({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          mt: 1,
+          mt: { xs: 0.5, sm: 1 },
           // Space for the alert icon that hovers above the AudioDisplay.
-          mb: 2.5,
+          mb: { xs: 1.25, sm: 2.5 },
         }}
       >
         <AudioControl
