@@ -4,6 +4,7 @@ import abc
 import base64
 import datetime
 import logging
+import urllib.parse
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -122,7 +123,10 @@ class FireNotificationsRestClient(FireNotificationsClient):
         shutdown_event: asyncio.Event,
     ) -> list[FireNotificationsFile]:
         """Fetch, filter, and parse the file list from HTTP polling endpoint."""
-        poll_url = f"{self.url_base}/{source_feed_id}"
+        dir_path = f"RECORDINGS/{source_feed_id}"
+        poll_url = (
+            f"{self.url_base}/api/audio_file?dir={urllib.parse.quote(dir_path)}"
+        )
 
         def validate_payload(payload: object) -> dict[str, Any]:
             if not isinstance(payload, dict):
@@ -153,7 +157,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
             transport_reason="source_unreachable",
         )
 
-        files_raw = data.get("files")
+        files_raw = data.get("file_list")
         if files_raw is None:
             return []
         if not isinstance(files_raw, list):
@@ -168,15 +172,13 @@ class FireNotificationsRestClient(FireNotificationsClient):
         for f in files_raw:
             if not isinstance(f, dict):
                 continue
-            if f.get("type") != "file":
+            if f.get("filetype") != "file":
                 continue
-            name = f.get("name", "")
+            name = f.get("file", "")
             if not name.endswith(".mp3"):
                 continue
 
             if name in seen_filenames:
-                # TODO(https://linear.app/watchduty/issue/GOO-634): Handle duplicate segments with the same timestamp better once the new API is available.
-                # For now just select the first one seen.
                 continue
             seen_filenames.add(name)
 
@@ -192,7 +194,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
                 )
                 continue
 
-            raw_size = f.get("size")
+            raw_size = f.get("filesize")
             size = None
             if raw_size is not None:
                 try:
