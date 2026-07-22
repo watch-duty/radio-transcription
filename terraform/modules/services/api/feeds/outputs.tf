@@ -1,4 +1,4 @@
-output "feed_store_service_url" {
+output "feeds_api_url" {
   description = "The URL where the Feed Store Service is hosted"
   value       = google_cloud_run_v2_service.feed_store.uri
 }
