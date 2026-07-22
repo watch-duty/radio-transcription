@@ -9,9 +9,10 @@ import {
   Typography,
 } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { type Feed } from '@transcription/common';
+import { type Feed, SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
 import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
@@ -170,6 +171,8 @@ interface TableFeedSearchResultsProps {
   title: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   feedsLoading: boolean;
   feedTotal: number;
   filters: FeedFilters;
@@ -180,6 +183,8 @@ function TableFeedSearchResults({
   title,
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   feedsLoading,
   feedTotal,
   filters,
@@ -199,6 +204,8 @@ function TableFeedSearchResults({
         title={title}
         feeds={feeds}
         tags={tags}
+        sourceTypes={sourceTypes}
+        statuses={statuses}
         feedTotal={feedTotal}
         isLoading={feedsLoading}
         filters={filters}
@@ -266,40 +273,15 @@ export function FeedSearchView({
   const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
   const feedTotal = feedsData?.total ?? 0;
 
+  const { data: searchOptionsData } = useFeedSearchOptions(token);
+
   useEffect(() => {
     if (feedsError) {
       onError(feedsError, 'Loading Feeds');
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
-
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
-  const tags = useMemo<{ key: string; value: string }[]>(() => {
-    const seen = new Set<string>();
-    const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
-    sourceFeeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          uniqueTags.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return uniqueTags.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [allFeeds]);
+  const tags = searchOptionsData?.tags ?? [];
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -323,6 +305,8 @@ export function FeedSearchView({
       title={title}
       feeds={feeds ?? []}
       tags={tags}
+      sourceTypes={searchOptionsData?.sourceTypes}
+      statuses={searchOptionsData?.statuses}
       feedsLoading={feedsLoading}
       feedTotal={feedTotal}
       filters={filters}

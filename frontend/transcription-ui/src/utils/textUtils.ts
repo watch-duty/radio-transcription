@@ -13,6 +13,6 @@ export function toSourceTypeString(type: SourceType) {
     case SourceType.FIRE_NOTIFICATIONS:
       return 'Fire Notifications';
     default:
-      return 'Unknown';
+      return type || 'Unknown';
   }
 }
