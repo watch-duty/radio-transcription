@@ -85,48 +85,49 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             mt: 1,
             width: '100%',
             display: 'flex',
-            flexWrap: 'nowrap',
-            alignItems: isNarrow ? 'flex-start' : 'center',
-            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
             columnGap: 2,
+            rowGap: 0.5,
           }}
         >
-          <Box
+          <Typography
+            component="h1"
             sx={{
-              // Narrow: name on its own line with the chip+status group stacked
-              // below; wide: both inline. Same `isNarrow` trigger as the labels.
-              display: 'flex',
-              flexDirection: isNarrow ? 'column' : 'row',
-              alignItems: isNarrow ? 'flex-start' : 'center',
-              gap: isNarrow ? 0.25 : 1,
-              flexGrow: 1,
-              minWidth: 0,
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              // Name holds its natural size next to the controls (no early
+              // truncation); the controls wrap / the activity truncates first.
+              flexShrink: 0,
+              maxWidth: '100%',
             }}
           >
-            <Typography
-              component="h1"
-              sx={{
-                fontWeight: 'bold',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                // Keep a healthy minimum for the name; the chip+status group
-                // gives (status truncates) before the name does.
-                flexShrink: 1,
-                minWidth: 200,
-                maxWidth: '100%',
-              }}
-            >
-              {searchedFeed.name}
-            </Typography>
+            {searchedFeed.name}
+          </Typography>
+          {/* All the controls wrap to the next line together and stay on one
+              line there. Fills the row so chip+status sit next to the name and
+              the actions are pushed right; the activity truncates if short. */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexGrow: 1,
+              flexShrink: 0,
+              columnGap: 1,
+              maxWidth: '100%',
+            }}
+          >
             <Box
               sx={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 1,
+                gap: 0.75,
                 flexShrink: 1,
                 minWidth: 0,
-                maxWidth: '100%',
               }}
             >
               <Chip
@@ -142,41 +143,45 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                 lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
               />
             </Box>
-          </Box>
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              flexShrink: 0,
-              columnGap: 2,
-            }}
-          >
-            {renderAction(
-              <LinkIcon fontSize="small" />,
-              'Share feed',
-              { component: 'button', type: 'button', onClick: handleShareFeed },
-              'Copy feed deep link'
-            )}
-            {sourceUrl &&
-              renderAction(
-                <OpenInNewOutlinedIcon fontSize="small" />,
-                'Original source link',
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+                columnGap: 0.5,
+              }}
+            >
+              {renderAction(
+                <LinkIcon fontSize="small" />,
+                'Share feed',
                 {
-                  href: sourceUrl,
-                  target: '_blank',
-                  rel: 'noopener noreferrer',
-                }
+                  component: 'button',
+                  type: 'button',
+                  onClick: handleShareFeed,
+                },
+                'Copy feed deep link'
               )}
-            {archiveUrl &&
-              renderAction(
-                <InventoryIcon fontSize="small" />,
-                'Archives link',
-                {
-                  href: archiveUrl,
-                  target: '_blank',
-                  rel: 'noopener noreferrer',
-                }
-              )}
+              {sourceUrl &&
+                renderAction(
+                  <OpenInNewOutlinedIcon fontSize="small" />,
+                  'Original source link',
+                  {
+                    href: sourceUrl,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                  }
+                )}
+              {archiveUrl &&
+                renderAction(
+                  <InventoryIcon fontSize="small" />,
+                  'Archives link',
+                  {
+                    href: archiveUrl,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                  }
+                )}
+            </Box>
           </Box>
         </Box>
       )}
