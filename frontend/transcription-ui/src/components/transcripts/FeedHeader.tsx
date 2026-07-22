@@ -2,13 +2,13 @@ import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
-import Link from '@mui/material/Link';
+import Link, { type LinkProps } from '@mui/material/Link';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
 
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -34,6 +34,41 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   triggerSnackbar,
   onError,
 }) => {
+  const isNarrow = useIsNarrow();
+
+  const handleShareFeed = () => {
+    if (!searchedFeed) {
+      return;
+    }
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('feedId', searchedFeed.id);
+    navigator.clipboard.writeText(url.toString());
+    triggerSnackbar('Feed link copied');
+  };
+
+  const renderAction = (
+    icon: React.ReactNode,
+    label: string,
+    linkProps: LinkProps
+  ) => (
+    <Tooltip title={label}>
+      <Link
+        variant="body2"
+        aria-label={label}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: isNarrow ? 0 : 0.5,
+          p: 0.5,
+        }}
+        {...linkProps}
+      >
+        {icon}
+        {!isNarrow && label}
+      </Link>
+    </Tooltip>
+  );
+
   return (
     <>
       <FeedSearchView
@@ -47,113 +82,99 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
         <Box
           sx={{
             mt: 1,
-            display: 'flex',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 2,
             width: '100%',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            columnGap: 2,
+            rowGap: 0.5,
           }}
         >
+          <Typography
+            component="h1"
+            sx={{
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              // Name holds its natural size next to the controls (no early
+              // truncation); the controls wrap / the activity truncates first.
+              flexShrink: 0,
+              maxWidth: '100%',
+            }}
+          >
+            {searchedFeed.name}
+          </Typography>
+          {/* All controls wrap to the next line together; fills the row so
+              chip+status sit by the name and the actions push right. */}
           <Box
             sx={{
               display: 'flex',
-              flexDirection: 'row',
               alignItems: 'center',
-              gap: 1,
+              justifyContent: 'space-between',
               flexGrow: 1,
-              minWidth: 0,
+              flexShrink: 0,
+              columnGap: 1,
+              maxWidth: '100%',
             }}
           >
-            <Typography
-              component="h1"
+            <Box
               sx={{
-                fontWeight: 'bold',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                flexShrink: 1,
                 minWidth: 0,
               }}
             >
-              {searchedFeed.name}
-            </Typography>
-            <Chip
-              label={toSourceTypeString(searchedFeed.sourceType)}
-              size="small"
-            />
-            <FeedStatusIndicator
-              status={status}
-              substatus={searchedFeed.substatus}
-              statusReason={searchedFeed.statusReason}
-              statusReasonDetail={searchedFeed.statusReasonDetail}
-              lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
-            />
-          </Box>
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: { xs: 1, sm: 2 },
-            }}
-          >
-            <Tooltip title="Copy feed deep link">
-              <Button
-                variant="outlined"
+              <Chip
+                label={toSourceTypeString(searchedFeed.sourceType)}
                 size="small"
-                disabled={!searchedFeed}
-                onClick={() => {
-                  if (!searchedFeed) {
-                    return;
+                sx={{ flexShrink: 0 }}
+              />
+              <FeedStatusIndicator
+                status={status}
+                substatus={searchedFeed.substatus}
+                statusReason={searchedFeed.statusReason}
+                statusReasonDetail={searchedFeed.statusReasonDetail}
+                lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
+              />
+            </Box>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+                columnGap: 0.5,
+              }}
+            >
+              {renderAction(<LinkIcon fontSize="small" />, 'Share feed', {
+                component: 'button',
+                type: 'button',
+                onClick: handleShareFeed,
+              })}
+              {sourceUrl &&
+                renderAction(
+                  <OpenInNewOutlinedIcon fontSize="small" />,
+                  'Original source link',
+                  {
+                    href: sourceUrl,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
                   }
-
-                  const url = new URL(
-                    window.location.origin + window.location.pathname
-                  );
-                  url.searchParams.set('feedId', searchedFeed.id);
-                  navigator.clipboard.writeText(url.toString());
-                  triggerSnackbar('Feed link copied');
-                }}
-                sx={{ textTransform: 'none', cursor: 'copy' }}
-                aria-label="copy feed deeplink"
-                startIcon={<LinkIcon fontSize="small" />}
-              >
-                Share feed
-              </Button>
-            </Tooltip>
-            {sourceUrl && (
-              <Link
-                href={sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="body2"
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.5,
-                }}
-              >
-                <OpenInNewOutlinedIcon fontSize="small" />
-                Original source link
-              </Link>
-            )}
-            {archiveUrl && (
-              <Link
-                href={archiveUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="body2"
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.5,
-                }}
-              >
-                <InventoryIcon fontSize="small" />
-                Archives link
-              </Link>
-            )}
+                )}
+              {archiveUrl &&
+                renderAction(
+                  <InventoryIcon fontSize="small" />,
+                  'Archives link',
+                  {
+                    href: archiveUrl,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                  }
+                )}
+            </Box>
           </Box>
         </Box>
       )}

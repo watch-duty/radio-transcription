@@ -80,10 +80,19 @@ function CondensedFeedSearchResults({
         renderInput={(params) => (
           <TextField
             {...params}
-            label="Select feed"
             placeholder="Search or select feed..."
             slotProps={{
               ...params.slotProps,
+              htmlInput: {
+                ...params.slotProps?.htmlInput,
+                'aria-label': 'Select feed',
+              },
+            }}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: 1,
+              },
             }}
           />
         )}
