@@ -76,4 +76,9 @@ message AlertNotification {
 
   // The list of errors encountered during evaluation.
   repeated string evaluation_errors = 18;
+
+  // Tags from the rules this transmission triggered — the de-duplicated union
+  // of every triggered rule's tags. Kept separate from the feed `tags` above so
+  // downstream routing can distinguish rule labels from feed labels.
+  repeated Tag rule_tags = 20;
 }
