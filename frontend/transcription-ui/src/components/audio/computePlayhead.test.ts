@@ -54,7 +54,7 @@ describe('computePlayhead', () => {
 
   it('anchors on the raw clip playing inside a non-speech bundle, not the bundle start', () => {
     const bundle = seg('r1', 400, 600, {
-      isSilenceBundle: true,
+      isNonSpeechBundle: true,
       bundledSegmentIds: ['r1', 'r2'],
     });
     const p = computePlayhead({

@@ -48,7 +48,7 @@ export function deriveTimelineState({
 
   // Playback is at the live edge: idle-and-listening, or playing the newest clip.
   // Match by containment (like computePlayhead): the playing id is often a raw
-  // segment inside the newest consolidated entry (a silence bundle), so a strict
+  // segment inside the newest consolidated entry (a non-speech bundle), so a strict
   // id equality would miss it and leave the button wrongly enabled at the edge.
   const isPlaybackAtLiveEdge =
     playbackState === 'listening' ||

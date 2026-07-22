@@ -6,7 +6,7 @@ import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegmen
 export type PlaybackState = 'playing' | 'paused' | 'listening';
 
 /**
- * Matches a consolidated segment by its own id or, for silence bundles, by any
+ * Matches a consolidated segment by its own id or, for non-speech bundles, by any
  * of the raw segment ids it contains.
  */
 export function isWithinSegment(
@@ -16,7 +16,7 @@ export function isWithinSegment(
   if (segment.id === id) {
     return true;
   }
-  if (segment.isSilenceBundle && segment.bundledSegmentIds) {
+  if (segment.isNonSpeechBundle && segment.bundledSegmentIds) {
     return segment.bundledSegmentIds.includes(id);
   }
   return false;
@@ -213,9 +213,9 @@ export function getNextContinuousSegment(
   rawAudioSegments: AudioSegment[],
   endedSegmentId: string
 ): { id: string; uri: string } | null {
-  // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
+  // 1. First check if the ended segment was part of a non-speech bundle, and if there is a next newer segment in that same bundle!
   const parentBundle = audioSegments.find(
-    (t) => t.isSilenceBundle && t.bundledSegmentIds?.includes(endedSegmentId)
+    (t) => t.isNonSpeechBundle && t.bundledSegmentIds?.includes(endedSegmentId)
   );
 
   if (parentBundle && parentBundle.bundledSegmentIds) {
@@ -232,7 +232,7 @@ export function getNextContinuousSegment(
     }
   }
 
-  // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
+  // 2. If it was a Speech segment, or the last segment in a non-speech bundle, advance to the next newer audio segment row
   const currentIndex = audioSegments.findIndex((t) =>
     isWithinSegment(t, endedSegmentId)
   );
@@ -241,9 +241,9 @@ export function getNextContinuousSegment(
   while (nextIndex >= 0) {
     const nextAudioSegment = audioSegments[nextIndex];
     if (nextAudioSegment.playbackAudioUri) {
-      // If the next audio segment is a silence bundle, play its first segment
+      // If the next audio segment is a non-speech bundle, play its first segment
       if (
-        nextAudioSegment.isSilenceBundle &&
+        nextAudioSegment.isNonSpeechBundle &&
         nextAudioSegment.bundledSegmentIds &&
         nextAudioSegment.bundledSegmentIds.length > 0
       ) {

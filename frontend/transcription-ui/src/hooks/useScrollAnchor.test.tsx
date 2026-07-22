@@ -13,7 +13,11 @@ const bundle = (
   id: string,
   bundledSegmentIds: string[]
 ): RenderableAudioSegment =>
-  ({ id, isSilenceBundle: true, bundledSegmentIds }) as RenderableAudioSegment;
+  ({
+    id,
+    isNonSpeechBundle: true,
+    bundledSegmentIds,
+  }) as RenderableAudioSegment;
 
 type Props = Parameters<typeof useScrollAnchor>[0];
 

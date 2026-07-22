@@ -121,7 +121,7 @@ export function useAudioTimelineWindow({
     let nextEnd = windowEndTime;
 
     // Follow the live edge as new audio arrives or the head extends (an ongoing
-    // silence bundle keeps its id but gets a later end), unless viewing back.
+    // non-speech bundle keeps its id but gets a later end), unless viewing back.
     if (
       headChanged &&
       isPinnedToLiveEdge(nextEnd, prev.firstEnd, !prev.firstId)

@@ -123,7 +123,7 @@ describe('useConsolidatedAudioSegments', () => {
   });
 
   describe('consolidateAudioSegments', () => {
-    it('consolidates consecutive silence segments within the same calendar day', () => {
+    it('consolidates consecutive non-speech segments within the same calendar day', () => {
       const segments = [
         createSegment('s1', '2026-07-08T12:00:00Z', '2026-07-08T12:00:10Z'),
         createSegment('s2', '2026-07-08T12:00:10Z', '2026-07-08T12:00:20Z'),
@@ -132,7 +132,7 @@ describe('useConsolidatedAudioSegments', () => {
       const result = consolidateAudioSegments(segments);
 
       expect(result).toHaveLength(1);
-      expect(result[0].isSilenceBundle).toBe(true);
+      expect(result[0].isNonSpeechBundle).toBe(true);
       expect(result[0].bundledSegmentIds).toEqual(['s1', 's2']);
       expect(result[0].startTimestamp).toBe('2026-07-08T12:00:00Z');
       expect(result[0].endTimestamp).toBe('2026-07-08T12:00:20Z');
@@ -177,7 +177,7 @@ describe('useConsolidatedAudioSegments', () => {
       expect(result[2].id).toBe('s1');
     });
 
-    it('flushes silence bundle without injecting outage when minor gap (15s) occurs during active feed status', () => {
+    it('flushes non-speech bundle without injecting outage when minor gap (15s) occurs during active feed status', () => {
       const start1 = '2026-07-08T12:00:00.000Z';
       const end1 = '2026-07-08T12:00:10.000Z';
       const start2 = '2026-07-08T12:00:25.000Z';
@@ -203,11 +203,11 @@ describe('useConsolidatedAudioSegments', () => {
         historyEvents
       );
 
-      expect(result).toHaveLength(2); // s2 and s1 as separate silence bundles
+      expect(result).toHaveLength(2); // s2 and s1 as separate non-speech bundles
       expect(result[0].id).toBe('s2');
       expect(result[1].id).toBe('s1');
-      expect(result[0].isSilenceBundle).toBe(true);
-      expect(result[1].isSilenceBundle).toBe(true);
+      expect(result[0].isNonSpeechBundle).toBe(true);
+      expect(result[1].isNonSpeechBundle).toBe(true);
     });
 
     it('injects outage segment when missingPriorContext or missingPostContext is set', () => {

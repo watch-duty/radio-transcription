@@ -70,14 +70,14 @@ describe('deriveTimelineState', () => {
     expect(s.isViewingLive).toBe(false);
   });
 
-  it('playing a raw id inside the head silence bundle → viewing live', () => {
+  it('playing a raw id inside the head non-speech bundle → viewing live', () => {
     const s = deriveTimelineState({
       ...base,
       isAudioPlaying: true,
       currentlyPlayingSegmentId: 'raw-2',
       audioSegments: [
         seg('bundle', {
-          isSilenceBundle: true,
+          isNonSpeechBundle: true,
           bundledSegmentIds: ['raw-1', 'raw-2'],
         }),
       ],
