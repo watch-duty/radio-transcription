@@ -212,10 +212,22 @@ def _log_poll_settled(
 
 async def _settle_accepted(
     futures: collections.abc.Sequence[asyncio.Future[pipeline.FeedBatchResult]],
-) -> tuple[pipeline.FeedBatchResult, ...]:
-    """Settle every accepted batch before surfacing failure or cancellation."""
+) -> tuple[
+    tuple[pipeline.FeedBatchResult, ...],
+    asyncio.CancelledError | None,
+]:
+    """Settle every accepted batch and preserve caller cancellation.
+
+    Returns:
+        Settled batch results plus the caller cancellation to propagate after
+        their durable page effects are applied.
+
+    Raises:
+        BaseException: An accepted worker future failed. Caller cancellation
+            remains the primary exception when both events occur.
+    """
     if not futures:
-        return ()
+        return ((), None)
 
     settlement = asyncio.gather(*futures, return_exceptions=True)
     cancellation: asyncio.CancelledError | None = None
@@ -231,24 +243,43 @@ async def _settle_accepted(
         (result for result in settled if isinstance(result, BaseException)),
         None,
     )
-    if cancellation is not None:
-        if first_error is not None:
-            logger.error(
-                "Accepted SID Feed batch failed during cancellation",
-                exc_info=(
-                    type(first_error),
-                    first_error,
-                    first_error.__traceback__,
-                ),
-            )
-            raise cancellation from first_error
-        raise cancellation
+    if cancellation is not None and first_error is not None:
+        logger.error(
+            "Accepted SID Feed batch failed during cancellation",
+            exc_info=(
+                type(first_error),
+                first_error,
+                first_error.__traceback__,
+            ),
+        )
+        raise cancellation from first_error
     if first_error is not None:
         raise first_error
-    return typing.cast(
-        "tuple[pipeline.FeedBatchResult, ...]",
-        tuple(settled),
+    return (
+        typing.cast(
+            "tuple[pipeline.FeedBatchResult, ...]",
+            tuple(settled),
+        ),
+        cancellation,
     )
+
+
+def _propagate_cancellation(
+    cancellation: asyncio.CancelledError | None,
+) -> None:
+    """Propagate a preserved cancellation after durable settlement.
+
+    Args:
+        cancellation: Original caller cancellation, if one was received.
+
+    Returns:
+        None when no cancellation was preserved.
+
+    Raises:
+        asyncio.CancelledError: The preserved caller cancellation.
+    """
+    if cancellation is not None:
+        raise cancellation
 
 
 class BcfyCallsSidRunner:
@@ -404,7 +435,9 @@ class BcfyCallsSidRunner:
                     for batch in batches:
                         futures.append(await self._work_pool.submit(batch))
                     settlement_started = True
-                    results = await _settle_accepted(futures)
+                    results, settlement_cancellation = await _settle_accepted(
+                        futures
+                    )
                 except asyncio.CancelledError as cancellation:
                     if not settlement_started and futures:
                         try:
@@ -445,6 +478,7 @@ class BcfyCallsSidRunner:
                         ingestion_lease_store.GrantRejected,
                     ):
                         poll_status = "grant_lost"
+                        _propagate_cancellation(settlement_cancellation)
                         return grant_control.RunLost()
 
                 boundary = _valid_page_boundary(
@@ -490,7 +524,10 @@ class BcfyCallsSidRunner:
                     ingestion_lease_store.GrantRejected,
                 ):
                     poll_status = "grant_lost"
+                    _propagate_cancellation(settlement_cancellation)
                     return grant_control.RunLost()
+
+                _propagate_cancellation(settlement_cancellation)
 
                 poll_status = "completed"
             except asyncio.CancelledError:

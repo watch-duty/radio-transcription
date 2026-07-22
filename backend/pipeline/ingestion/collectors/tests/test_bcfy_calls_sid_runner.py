@@ -242,6 +242,95 @@ async def test_cancellation_wins_after_accepted_batch_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancellation_returns_settled_batch_result_for_commit() -> None:
+    completion = asyncio.get_running_loop().create_future()
+    result = pipeline.FeedBatchResult(1, 0, 1, (), None)
+    settlement = asyncio.create_task(sid_runner._settle_accepted((completion,)))
+    await asyncio.sleep(0)
+
+    settlement.cancel()
+    await asyncio.sleep(0)
+    completion.set_result(result)
+
+    results, cancellation = await settlement
+    assert results == (result,)
+    assert isinstance(cancellation, asyncio.CancelledError)
+
+
+@pytest.mark.asyncio
+async def test_forced_cancellation_persists_settled_publish_gap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/gap",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    failure = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+        "publish failed",
+    )
+
+    class DelayedPool:
+        def __init__(self) -> None:
+            self.batch: pipeline.FeedBatch | None = None
+            self.submitted = asyncio.Event()
+            self.completion = asyncio.get_running_loop().create_future()
+
+        async def submit(
+            self,
+            batch: pipeline.FeedBatch,
+        ) -> asyncio.Future[pipeline.FeedBatchResult]:
+            self.batch = batch
+            self.submitted.set()
+            return self.completion
+
+    store = _Store(_snapshot(grant, member))
+    pool = DelayedPool()
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        pool,
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+    run = asyncio.create_task(
+        runner.run(grant, grant_control.ClaimMode.PRIMARY, context)
+    )
+    await pool.submitted.wait()
+    assert pool.batch is not None
+
+    with caplog.at_level(logging.INFO, logger=sid_runner.logger.name):
+        run.cancel()
+        await asyncio.sleep(0)
+        pool.completion.set_result(
+            _result(pool.batch, published=0, terminal=failure)
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await run
+
+    mutation = store.batches[0].mutations[0]
+    assert isinstance(mutation, ingestion_lease_store.FeedFailureTransition)
+    events = [
+        record.__dict__.get("json_fields", {}).get("event_type")
+        for record in caplog.records
+    ]
+    assert "feed_failure_policy_decision" in events
+    assert "post_bookmark_publish_failure" in events
+
+
+@pytest.mark.asyncio
 async def test_admission_error_drains_already_accepted_batch() -> None:
     grant = _grant()
     first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))

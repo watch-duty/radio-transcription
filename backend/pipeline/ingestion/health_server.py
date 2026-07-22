@@ -17,8 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass
 class HealthState:
-    """
-    Shared state between the worker runtime and the /healthz handler.
+    """Shared state between the worker runtime and the /healthz handler.
 
     Lives on the event-loop thread; all reads/writes happen there, so no lock
     is required. The active-count provider reads process-local supervisor
@@ -31,9 +30,18 @@ class HealthState:
     DB success, a transient AlloyDB outage would age every worker's stamp
     simultaneously and trigger fleet-wide autohealer kills (thundering herd
     on recovery).
+
+    Attributes:
+        active_feed_count: Process-local active Feed-grant count provider.
+        active_sid_count: Process-local active SID-grant count provider.
+        bcfy_calls_authority_mode: Selected process authority mode.
+        startup_time: Monotonic process startup observation.
+        last_heartbeat_tick: Latest monotonic heartbeat-dispatch observation.
     """
 
     active_feed_count: collections.abc.Callable[[], int]
+    active_sid_count: collections.abc.Callable[[], int]
+    bcfy_calls_authority_mode: str
     startup_time: float = dataclasses.field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
 
@@ -57,6 +65,8 @@ def _response_payload(
     return {
         "status": status,
         "active_feeds": state.active_feed_count(),
+        "active_sids": state.active_sid_count(),
+        "bcfy_calls_authority_mode": state.bcfy_calls_authority_mode,
         "last_heartbeat_age_sec": heartbeat_age_sec,
     }
 

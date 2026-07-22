@@ -723,10 +723,9 @@ class TestAcceptedOperationSettlement(unittest.IsolatedAsyncioTestCase):
             raise asyncio.CancelledError
 
         with self.assertRaises(asyncio.CancelledError):
-            await audio_pipeline.settle_accepted_operation(
+            await audio_pipeline.settle_post_bookmark_publish(
                 cancel_operation(),
                 event_logger=event_logger,
-                failure_message="failed during caller cancellation",
             )
 
         event_logger.exception.assert_not_called()
@@ -748,10 +747,9 @@ class TestAcceptedOperationSettlement(unittest.IsolatedAsyncioTestCase):
             raise AcceptedOperationError(message)
 
         settlement = asyncio.create_task(
-            audio_pipeline.settle_accepted_operation(
+            audio_pipeline.settle_post_bookmark_publish(
                 fail_operation(),
                 event_logger=event_logger,
-                failure_message="failed during caller cancellation",
             )
         )
         await started.wait()
@@ -764,7 +762,7 @@ class TestAcceptedOperationSettlement(unittest.IsolatedAsyncioTestCase):
             await settlement
 
         event_logger.exception.assert_called_once_with(
-            "failed during caller cancellation"
+            "Post-bookmark publication failed during cancellation"
         )
 
 

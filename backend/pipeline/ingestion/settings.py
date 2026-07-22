@@ -52,7 +52,14 @@ def _load_caps_from_env() -> dict[SourceType, int]:
 
 
 def _load_bcfy_calls_authority_mode() -> worker_profiles.BcfyCallsAuthorityMode:
-    """Load the sole process-wide Broadcastify Calls ownership switch."""
+    """Load the sole process-wide Broadcastify Calls ownership switch.
+
+    Returns:
+        The validated authority mode, defaulting to legacy Feed ownership.
+
+    Raises:
+        ValueError: The configured value is not one of the closed modes.
+    """
     raw = os.environ.get("BCFY_CALLS_AUTHORITY_MODE", "legacy_feed")
     try:
         return worker_profiles.BcfyCallsAuthorityMode(raw)

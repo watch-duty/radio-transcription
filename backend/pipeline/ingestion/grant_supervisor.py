@@ -872,8 +872,8 @@ class GrantSupervisor:
                     failure.__cause__ = exc
                     self._fail_heartbeat_domain(expected, failure)
                 raise
-            except Exception as exc:
-                self._fail_heartbeat_domain(expected, exc)
+            except Exception as error:
+                self._handle_heartbeat_error(domain, expected, error)
                 continue
 
             for managed, result in zip(expected, results, strict=True):
@@ -908,6 +908,39 @@ class GrantSupervisor:
                     continue
                 if managed.runner_closed:
                     self._handle_runner_closed(managed)
+
+    def _handle_heartbeat_error(
+        self,
+        domain: _ErasedRegisteredDomain,
+        expected: typing.Sequence[_ManagedGrant],
+        error: Exception,
+    ) -> None:
+        """Classify a heartbeat error as integrity or retryable backend I/O.
+
+        Args:
+            domain: Domain whose heartbeat backend failed.
+            expected: Exact generations included in the request.
+            error: Backend or integrity failure raised by the domain.
+
+        Returns:
+            None after fatal evidence is surfaced or retry evidence is logged.
+        """
+        if isinstance(error, grant_control.GrantControlIntegrityError):
+            self._fail_heartbeat_domain(expected, error)
+            return
+
+        # Heartbeat renewal is retry-safe: it can only extend the current exact
+        # generation, never create or transfer authority. Keep this domain's
+        # runners fenced and let the next heartbeat retry, while still renewing
+        # other domains.
+        logger.exception(
+            "Grant heartbeat backend failed; retrying next cycle",
+            extra={
+                "json_fields": {
+                    "domain_id": domain.domain_id.value,
+                }
+            },
+        )
 
     def _fail_heartbeat_domain(
         self,

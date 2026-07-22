@@ -519,12 +519,9 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 )
                 return "message-id"
 
-            return await audio_pipeline.settle_accepted_operation(
+            return await audio_pipeline.settle_post_bookmark_publish(
                 publish(),
                 event_logger=pipeline.logger,
-                failure_message=(
-                    "Post-commit publication failed while caller was cancelled"
-                ),
             )
 
         task = asyncio.create_task(exercise_race())

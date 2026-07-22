@@ -6,14 +6,37 @@ import asyncio
 import datetime
 import typing
 
-from backend.pipeline.ingestion import models, slo_contract
+import aiohttp
+from google.api_core import exceptions as google_exceptions
+from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
+
+from backend.pipeline.ingestion import models, retry, slo_contract
 
 if typing.TYPE_CHECKING:
     import collections.abc
     import logging
     import uuid
 
+    from backend.pipeline.common.clients import gcs_client, pubsub_client
+    from backend.pipeline.ingestion.settings import CollectorSettings
     from backend.pipeline.storage import feed_store
+
+
+_GCS_RETRYABLE = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    OSError,
+)
+_PUBSUB_RETRYABLE = (
+    google_exceptions.Aborted,
+    google_exceptions.DeadlineExceeded,
+    google_exceptions.InternalServerError,
+    google_exceptions.ResourceExhausted,
+    google_exceptions.ServiceUnavailable,
+    google_exceptions.Unknown,
+    google_exceptions.Cancelled,
+    pubsub_exceptions.PublishToPausedOrderingKeyException,
+)
 
 
 def staging_parameters(
@@ -40,27 +63,26 @@ def staging_parameters(
     return mime_map.get(mime_type, ("flac", "audio/flac"))
 
 
-async def settle_accepted_operation[ResultT](
+async def settle_post_bookmark_publish[ResultT](
     operation: collections.abc.Coroutine[object, object, ResultT],
     *,
     event_logger: logging.Logger,
-    failure_message: str,
 ) -> ResultT:
-    """Settle an accepted side effect before propagating cancellation.
+    """Settle an accepted post-bookmark publication before cancellation.
 
     Args:
-        operation: Side-effect coroutine that must settle after acceptance.
+        operation: Publication coroutine accepted after durable progress.
         event_logger: Logger that owns failure evidence for the caller.
-        failure_message: Message emitted if settlement fails during caller
-            cancellation.
 
     Returns:
-        The settled operation result.
+        The downstream publication result.
 
     Raises:
-        asyncio.CancelledError: The caller was cancelled while the accepted
-            operation was settling.
-        BaseException: The accepted operation failed before cancellation.
+        asyncio.CancelledError: The caller was cancelled and publication
+            succeeded, or publication itself was cancelled.
+        BaseException: Publication failed. If caller cancellation was also
+            received, the publication failure remains primary and is chained
+            from that cancellation.
     """
     task = asyncio.create_task(operation)
     cancellation: asyncio.CancelledError | None = None
@@ -83,12 +105,131 @@ async def settle_accepted_operation[ResultT](
         result = task.result()
     except BaseException as error:
         if cancellation is not None:
-            event_logger.exception(failure_message)
+            event_logger.exception(
+                "Post-bookmark publication failed during cancellation"
+            )
             raise error from cancellation
         raise
     if cancellation is not None:
         raise cancellation
     return result
+
+
+async def upload_staged_audio_with_retry(
+    operation: collections.abc.Callable[..., collections.abc.Awaitable[str]],
+    *,
+    gcs_client: gcs_client.GcsClient,
+    chunk: models.CapturedChunk,
+    feed: feed_store.LeasedFeed,
+    settings: CollectorSettings,
+    sequence: int,
+    fencing_token: int,
+    extension: str,
+    content_type: str,
+    lease_lost: asyncio.Event,
+    shutdown: asyncio.Event,
+) -> str:
+    """Upload one staged chunk through the shared bounded retry policy.
+
+    Args:
+        operation: Physical GCS upload callable.
+        gcs_client: Shared GCS client manager.
+        chunk: Captured audio and timing metadata.
+        feed: Feed-shaped object metadata used for the staged path.
+        settings: Runtime retry and bucket settings.
+        sequence: Feed-local create-only object sequence.
+        fencing_token: Exact owning generation included in the object path.
+        extension: Staged object file extension.
+        content_type: Staged object HTTP content type.
+        lease_lost: Event that interrupts retries after confirmed authority
+            loss.
+        shutdown: Event that interrupts retries during cooperative shutdown.
+
+    Returns:
+        The uploaded ``gs://`` object URI.
+    """
+    return await retry.retry_with_lease_check(
+        operation,
+        gcs_client,
+        chunk.audio_bytes,
+        feed,
+        settings.audio_staging_bucket,
+        sequence,
+        fencing_token,
+        extension,
+        content_type,
+        lease_lost=lease_lost,
+        shutdown=shutdown,
+        max_retries=settings.gcs_upload_max_retries,
+        base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
+        max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
+        retryable=_GCS_RETRYABLE,
+        operation_name="GCS upload",
+    )
+
+
+async def publish_audio_chunk_after_bookmark(
+    operation: collections.abc.Callable[..., collections.abc.Awaitable[str]],
+    *,
+    pubsub_client: pubsub_client.PubSubClient,
+    topic_path: str,
+    feed_id: uuid.UUID,
+    feed_name: str,
+    source_type: feed_store.SourceType,
+    gcs_uri: str,
+    chunk: models.CapturedChunk,
+    settings: CollectorSettings,
+    lease_lost: asyncio.Event,
+    shutdown: asyncio.Event,
+    event_logger: logging.Logger,
+) -> str:
+    """Publish committed audio through the shared retry and settlement policy.
+
+    Args:
+        operation: Physical Pub/Sub publication callable.
+        pubsub_client: Shared publisher client manager.
+        topic_path: Fully qualified downstream topic.
+        feed_id: Permanent Feed UUID.
+        feed_name: Human-readable Feed name.
+        source_type: Feed source family.
+        gcs_uri: Committed staged audio URI.
+        chunk: Captured audio and timing metadata.
+        settings: Runtime publication retry settings.
+        lease_lost: Event that interrupts retries after confirmed authority
+            loss.
+        shutdown: Event that interrupts retries during cooperative shutdown.
+        event_logger: Logger that owns post-commit failure evidence.
+
+    Returns:
+        The downstream Pub/Sub message identifier.
+    """
+    duration_ms = int(
+        (chunk.chunk_end_time - chunk.chunk_start_time).total_seconds() * 1000
+    )
+    publication = retry.retry_with_lease_check(
+        operation,
+        pubsub_client,
+        topic_path,
+        str(feed_id),
+        feed_name,
+        gcs_uri,
+        chunk.session_id,
+        chunk.chunk_start_time,
+        duration_ms,
+        source_type,
+        chunk.external_audio_segment_id,
+        lease_lost=lease_lost,
+        shutdown=shutdown,
+        max_retries=settings.pubsub_publish_max_retries,
+        base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+        max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+        retryable=_PUBSUB_RETRYABLE,
+        operation_name="Pub/Sub publish",
+    )
+    return await settle_post_bookmark_publish(
+        publication,
+        event_logger=event_logger,
+    )
 
 
 def log_chunk_ingested(

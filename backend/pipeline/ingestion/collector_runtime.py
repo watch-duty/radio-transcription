@@ -21,8 +21,6 @@ import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
-from google.api_core import exceptions as google_exceptions
-from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.common.actor_identity import (
@@ -378,6 +376,10 @@ class CollectorRuntime:
         self._pubsub_client = pubsub_client.PubSubClient()
         self._health_state = HealthState(
             active_feed_count=self._active_feed_count,
+            active_sid_count=self._active_sid_count,
+            bcfy_calls_authority_mode=(
+                settings.bcfy_calls_authority_mode.value
+            ),
         )
         self._health_runner: web.AppRunner | None = None
 
@@ -391,6 +393,17 @@ class CollectorRuntime:
         if supervisor is None:
             return 0
         return supervisor.active_count(grant_control.DomainId.FEED)
+
+    def _active_sid_count(self) -> int:
+        """Return the local active SID count without storage I/O.
+
+        Returns:
+            Number of SID grants currently supervised by this process.
+        """
+        supervisor = self._supervisor
+        if supervisor is None:
+            return 0
+        return supervisor.active_count(grant_control.DomainId.SID)
 
     def run(self) -> None:
         """Start the runtime and block until ordered shutdown completes.
@@ -836,27 +849,18 @@ class CollectorRuntime:
         settings = self._collector_settings
         no_stop = asyncio.Event()
         try:
-            gcs_uri = await retry_with_lease_check(
+            gcs_uri = await audio_pipeline.upload_staged_audio_with_retry(
                 gcp_helper.upload_staged_audio,
-                self._gcs_client,
-                captured_chunk.audio_bytes,
-                feed,
-                settings.audio_staging_bucket,
-                sequence,
-                grant.fencing_token,
-                extension,
-                content_type,
+                gcs_client=self._gcs_client,
+                chunk=captured_chunk,
+                feed=feed,
+                settings=settings,
+                sequence=sequence,
+                fencing_token=grant.fencing_token,
+                extension=extension,
+                content_type=content_type,
                 lease_lost=no_stop,
                 shutdown=no_stop,
-                max_retries=settings.gcs_upload_max_retries,
-                base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
-                max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                retryable=(
-                    aiohttp.ClientError,
-                    asyncio.TimeoutError,
-                    OSError,
-                ),
-                operation_name="GCS upload",
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
@@ -911,48 +915,22 @@ class CollectorRuntime:
             msg = f"Fence violation on bookmark for feed {feed['name']}"
             raise LeaseExpiredError(msg)
 
-        duration_ms = int(
-            (
-                captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
-            ).total_seconds()
-            * 1000
-        )
-        publish = retry_with_lease_check(
-            gcp_helper.publish_audio_chunk,
-            self._pubsub_client,
-            topic_path,
-            str(feed["id"]),
-            feed["name"],
-            gcs_uri,
-            captured_chunk.session_id,
-            captured_chunk.chunk_start_time,
-            duration_ms,
-            feed["source_type"],
-            captured_chunk.external_audio_segment_id,
-            lease_lost=no_stop,
-            shutdown=no_stop,
-            max_retries=settings.pubsub_publish_max_retries,
-            base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
-            max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-            retryable=(
-                google_exceptions.Aborted,
-                google_exceptions.DeadlineExceeded,
-                google_exceptions.InternalServerError,
-                google_exceptions.ResourceExhausted,
-                google_exceptions.ServiceUnavailable,
-                google_exceptions.Unknown,
-                google_exceptions.Cancelled,
-                pubsub_exceptions.PublishToPausedOrderingKeyException,
-            ),
-            operation_name="Pub/Sub publish",
-        )
         try:
-            message_id = await audio_pipeline.settle_accepted_operation(
-                publish,
-                event_logger=logger,
-                failure_message=(
-                    "Accepted side effect failed during cancellation"
-                ),
+            message_id = (
+                await audio_pipeline.publish_audio_chunk_after_bookmark(
+                    gcp_helper.publish_audio_chunk,
+                    pubsub_client=self._pubsub_client,
+                    topic_path=topic_path,
+                    feed_id=feed["id"],
+                    feed_name=feed["name"],
+                    source_type=feed["source_type"],
+                    gcs_uri=gcs_uri,
+                    chunk=captured_chunk,
+                    settings=settings,
+                    lease_lost=no_stop,
+                    shutdown=no_stop,
+                    event_logger=logger,
+                )
             )
         except asyncio.CancelledError:
             raise

@@ -9,16 +9,11 @@ import datetime
 import logging
 import typing
 
-import aiohttp
-from google.api_core import exceptions as google_exceptions
-from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
-
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.ingestion import (
     audio_pipeline,
     grant_control,
     models,
-    retry,
     settings,
 )
 from backend.pipeline.ingestion.collectors import failure_classification
@@ -41,21 +36,6 @@ logger = logging.getLogger(__name__)
 _GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PUBLISH_AFTER_BOOKMARK_FAILED = (
     feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-)
-_GCS_RETRYABLE = (
-    aiohttp.ClientError,
-    asyncio.TimeoutError,
-    OSError,
-)
-_PUBSUB_RETRYABLE = (
-    google_exceptions.Aborted,
-    google_exceptions.DeadlineExceeded,
-    google_exceptions.InternalServerError,
-    google_exceptions.ResourceExhausted,
-    google_exceptions.ServiceUnavailable,
-    google_exceptions.Unknown,
-    google_exceptions.Cancelled,
-    pubsub_exceptions.PublishToPausedOrderingKeyException,
 )
 
 
@@ -314,23 +294,18 @@ class BcfyCallsFeedBatchExecutor:
         extension, content_type = audio_pipeline.staging_parameters(
             chunk.mime_type
         )
-        return await retry.retry_with_lease_check(
+        return await audio_pipeline.upload_staged_audio_with_retry(
             gcp_helper.upload_staged_audio,
-            self._gcs_client,
-            chunk.audio_bytes,
-            feed,
-            self._settings.audio_staging_bucket,
-            sequence,
-            fencing_token,
-            extension,
-            content_type,
+            gcs_client=self._gcs_client,
+            chunk=chunk,
+            feed=feed,
+            settings=self._settings,
+            sequence=sequence,
+            fencing_token=fencing_token,
+            extension=extension,
+            content_type=content_type,
             lease_lost=no_stop,
             shutdown=no_stop,
-            max_retries=self._settings.gcs_upload_max_retries,
-            base_delay_sec=(self._settings.gcs_upload_retry_base_delay_sec),
-            max_delay_sec=self._settings.gcs_upload_retry_max_delay_sec,
-            retryable=_GCS_RETRYABLE,
-            operation_name="GCS upload",
         )
 
     async def _commit_progress(
@@ -386,36 +361,19 @@ class BcfyCallsFeedBatchExecutor:
         gcs_uri: str,
         no_stop: asyncio.Event,
     ) -> str:
-        duration_ms = int(
-            (chunk.chunk_end_time - chunk.chunk_start_time).total_seconds()
-            * 1000
-        )
-        operation = retry.retry_with_lease_check(
+        return await audio_pipeline.publish_audio_chunk_after_bookmark(
             gcp_helper.publish_audio_chunk,
-            self._pubsub_client,
-            self._topic_path,
-            str(member.identity.feed_id),
-            member.name,
-            gcs_uri,
-            chunk.session_id,
-            chunk.chunk_start_time,
-            duration_ms,
-            member.identity.source_type,
-            chunk.external_audio_segment_id,
+            pubsub_client=self._pubsub_client,
+            topic_path=self._topic_path,
+            feed_id=member.identity.feed_id,
+            feed_name=member.name,
+            source_type=member.identity.source_type,
+            gcs_uri=gcs_uri,
+            chunk=chunk,
+            settings=self._settings,
             lease_lost=no_stop,
             shutdown=no_stop,
-            max_retries=self._settings.pubsub_publish_max_retries,
-            base_delay_sec=(self._settings.pubsub_publish_retry_base_delay_sec),
-            max_delay_sec=self._settings.pubsub_publish_retry_max_delay_sec,
-            retryable=_PUBSUB_RETRYABLE,
-            operation_name="Pub/Sub publish",
-        )
-        return await audio_pipeline.settle_accepted_operation(
-            operation,
             event_logger=logger,
-            failure_message=(
-                "Post-commit publication failed while caller was cancelled"
-            ),
         )
 
     def _result(

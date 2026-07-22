@@ -661,7 +661,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await _wait(runner.finished_event(grant))
         self.assertEqual(control.finalize_calls, [])
 
-    async def test_heartbeat_uncertainty_fails_closed_without_finalize(
+    async def test_heartbeat_backend_failure_retries_without_losing_grant(
         self,
     ) -> None:
         control: _Control[
@@ -690,12 +690,15 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         await supervisor.heartbeat_cycle(lambda: None)
 
-        self.assertFalse(supervisor.admission_enabled)
-        self.assertTrue(runner.contexts[grant].stop_requested.is_set())
-        self.assertTrue(runner.contexts[grant].grant_lost.is_set())
+        self.assertTrue(supervisor.admission_enabled)
+        self.assertIsNone(supervisor.integrity_failure)
+        self.assertFalse(runner.contexts[grant].stop_requested.is_set())
+        self.assertFalse(runner.contexts[grant].grant_lost.is_set())
+        control.heartbeat_error = None
+        await supervisor.heartbeat_cycle(lambda: None)
+        self.assertEqual(control.heartbeat_calls, [(grant,), (grant,)])
         runner.release.set()
         await _wait(runner.finished_event(grant))
-        self.assertEqual(control.finalize_calls, [])
 
     async def test_unknown_heartbeat_disposition_fails_domain_closed(
         self,
