@@ -19,7 +19,7 @@ export interface RuleRowProps {
   allowEdit: boolean;
   onEditRule?: (rule: Rule) => void;
   isSubmitting?: boolean;
-  isNarrow?: boolean;
+  isMobile?: boolean;
 }
 
 export function RuleRow({
@@ -30,7 +30,7 @@ export function RuleRow({
   allowEdit,
   onEditRule,
   isSubmitting = false,
-  isNarrow = false,
+  isMobile = false,
 }: RuleRowProps) {
   const isEditing = editingRuleId === rule.ruleId;
   const targetFeedNames = rule.scope.targetFeeds
@@ -160,7 +160,7 @@ export function RuleRow({
             flexWrap: 'wrap',
           }}
         >
-          {isNarrow && (
+          {isMobile && (
             <Typography
               variant="caption"
               color="text.secondary"
@@ -177,7 +177,7 @@ export function RuleRow({
             variant="caption"
             color="text.secondary"
             noWrap
-            sx={{ maxWidth: '100%', mt: 0.5, pl: isNarrow ? 5 : 0 }}
+            sx={{ maxWidth: '100%', mt: 0.5, pl: isMobile ? 5 : 0 }}
             title={targetFeedNames}
           >
             Feeds: {targetFeedNames}
@@ -212,7 +212,7 @@ export function RuleRow({
           minWidth: 0,
         }}
       >
-        {isNarrow && rule.tags && rule.tags.length > 0 && (
+        {isMobile && rule.tags && rule.tags.length > 0 && (
           <Typography
             variant="caption"
             color="text.secondary"

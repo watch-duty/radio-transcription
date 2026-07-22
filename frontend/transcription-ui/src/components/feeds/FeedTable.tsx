@@ -29,9 +29,10 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Feed, SourceType } from '@transcription/common';
 
-import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
@@ -110,16 +111,16 @@ function VirtuosoTableRow(
     context?: {
       editingFeedId?: string;
       allowEdit?: boolean;
-      isNarrow?: boolean;
+      isMobile?: boolean;
     };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingFeedId === item.id);
   const allowEdit = context?.allowEdit ?? false;
-  const isNarrow = context?.isNarrow ?? false;
+  const isMobile = context?.isMobile ?? false;
 
-  const gridTemplateColumns = isNarrow
+  const gridTemplateColumns = isMobile
     ? '1fr auto'
     : allowEdit
       ? '1.5fr 1fr 1fr 100px'
@@ -134,8 +135,8 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
-        gridTemplateRows: isNarrow ? 'auto auto auto' : 'unset',
-        gridTemplateAreas: isNarrow
+        gridTemplateRows: isMobile ? 'auto auto auto' : 'unset',
+        gridTemplateAreas: isMobile
           ? `
             "name-source status"
             "type        links-actions"
@@ -181,7 +182,8 @@ export function FeedTable({
   filters,
   onFiltersChange,
 }: FeedTableProps) {
-  const isNarrow = useIsNarrow();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [historyFeed, setHistoryFeed] = useState<Feed | null>(null);
 
@@ -404,7 +406,7 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  {isNarrow ? (
+                  {isMobile ? (
                     <Link
                       href={feed.sourceUrl}
                       target="_blank"
@@ -436,7 +438,7 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  {isNarrow ? (
+                  {isMobile ? (
                     <Link
                       href={feed.archiveUrl}
                       target="_blank"
@@ -717,7 +719,7 @@ export function FeedTable({
               : 'Register feeds on the left to start listening.'}
           </Typography>
         </Box>
-      ) : isNarrow ? (
+      ) : isMobile ? (
         <TableContainer
           component="div"
           sx={{ flexGrow: 1, overflowY: 'visible' }}
@@ -728,7 +730,7 @@ export function FeedTable({
                 <VirtuosoTableRow
                   key={feed.id}
                   item={feed}
-                  context={{ editingFeedId, allowEdit, isNarrow: true }}
+                  context={{ editingFeedId, allowEdit, isMobile: true }}
                 >
                   {renderRowContent(feed)}
                 </VirtuosoTableRow>
@@ -739,7 +741,7 @@ export function FeedTable({
       ) : (
         <TableVirtuoso
           data={sortFeeds}
-          context={{ editingFeedId, allowEdit, isNarrow: false }}
+          context={{ editingFeedId, allowEdit, isMobile: false }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
