@@ -203,11 +203,24 @@ export function AudioControl({
           sx={{
             display: 'flex',
             alignItems: 'center',
-            gap: { xs: 0.5, sm: 1 },
+            gap: { xs: 0.25, sm: 0.5 },
             position: { xs: 'static', md: 'absolute' },
-            right: 0,
+            left: 0,
           }}
         >
+          <VolumeControl
+            volumeDb={volumeDb}
+            setVolumeDb={setVolumeDb}
+            disableControls={disableControls}
+          />
+          <AudioSettingsMenu
+            pan={pan}
+            setPan={setPan}
+            speed={speed}
+            setSpeed={setSpeed}
+            onReset={onReset}
+            disableControls={disableControls}
+          />
           {pan !== undefined && pan !== DEFAULT_PAN && (
             <Chip
               size="small"
@@ -224,19 +237,6 @@ export function AudioControl({
               onDelete={setSpeed ? () => setSpeed(DEFAULT_SPEED) : undefined}
             />
           )}
-          <VolumeControl
-            volumeDb={volumeDb}
-            setVolumeDb={setVolumeDb}
-            disableControls={disableControls}
-          />
-          <AudioSettingsMenu
-            pan={pan}
-            setPan={setPan}
-            speed={speed}
-            setSpeed={setSpeed}
-            onReset={onReset}
-            disableControls={disableControls}
-          />
         </Box>
       )}
     </Box>

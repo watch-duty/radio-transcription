@@ -64,7 +64,7 @@ describe('AudioControl', () => {
     expect(screen.getByRole('button', { name: 'audio controls' })).toBeTruthy();
   });
 
-  it('renders active Pan and Speed Chip badges left of volume when off-default', () => {
+  it('renders active Pan and Speed Chip badges right of settings button when off-default', () => {
     const setPan = vi.fn();
     const setSpeed = vi.fn();
     render(
