@@ -18,7 +18,7 @@ import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
-import { SegmentInfoPopover } from './SegmentInfoPopover';
+import { TranscriptSharePopover } from './TranscriptSharePopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -398,7 +398,7 @@ export function TranscriptRow({
             alignSelf: 'center',
           }}
         >
-          <SegmentInfoPopover
+          <TranscriptSharePopover
             audioSegment={audioSegment}
             transcriptAnnotation={transcriptAnnotation}
             isSilence={isSilence}

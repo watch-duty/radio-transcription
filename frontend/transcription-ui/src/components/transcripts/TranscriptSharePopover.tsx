@@ -30,7 +30,7 @@ const SHARE_ACTION_SX = {
   px: 1,
 } as const;
 
-interface SegmentInfoPopoverProps {
+interface TranscriptSharePopoverProps {
   audioSegment: AudioSegment;
   transcriptAnnotation: TranscriptAnnotationData | null;
   isSilence: boolean;
@@ -42,7 +42,7 @@ interface SegmentInfoPopoverProps {
 
 // Per-row "Share" popover: copy transcript / copy link / download audio, plus
 // inline segment details for admins.
-export function SegmentInfoPopover({
+export function TranscriptSharePopover({
   audioSegment,
   transcriptAnnotation,
   isSilence,
@@ -50,7 +50,7 @@ export function SegmentInfoPopover({
   hasErrors,
   degradationReasons,
   triggerSnackbar,
-}: SegmentInfoPopoverProps) {
+}: TranscriptSharePopoverProps) {
   const { isAdmin } = useAuth();
   const { id, externalAudioSegmentId } = audioSegment;
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -281,4 +281,4 @@ export function SegmentInfoPopover({
   );
 }
 
-export default SegmentInfoPopover;
+export default TranscriptSharePopover;
