@@ -222,8 +222,8 @@ describe('useAudioTimelineWindow', () => {
     expect(result.current.isLatestTimeWindow).toBe(true);
   });
 
-  it('recenters when advancing to a raw segment inside a silence bundle outside the window', () => {
-    const rawSilence = seg(
+  it('recenters when advancing to a raw segment inside a non-speech bundle outside the window', () => {
+    const rawNonSpeech = seg(
       'silence-raw-2',
       '2026-04-20T08:00:00Z',
       '2026-04-20T08:00:05Z'
@@ -240,7 +240,7 @@ describe('useAudioTimelineWindow', () => {
       {
         initialProps: {
           audioSegments: [NEWEST],
-          rawAudioSegments: [NEWEST, rawSilence],
+          rawAudioSegments: [NEWEST, rawNonSpeech],
           highlightedSegmentId: null as string | null,
         },
       }
@@ -250,7 +250,7 @@ describe('useAudioTimelineWindow', () => {
 
     rerender({
       audioSegments: [NEWEST],
-      rawAudioSegments: [NEWEST, rawSilence],
+      rawAudioSegments: [NEWEST, rawNonSpeech],
       highlightedSegmentId: 'silence-raw-2',
     });
 

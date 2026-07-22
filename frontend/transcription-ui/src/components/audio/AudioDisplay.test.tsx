@@ -492,7 +492,7 @@ describe('AudioDisplay', () => {
     expect(onClipClick).toHaveBeenCalledWith('seg-1', 5);
   });
 
-  it('resolves the correct raw segment and offset when clicking within a silence group', () => {
+  it('resolves the correct raw segment and offset when clicking within a non-speech group', () => {
     const rawSegments: AudioSegment[] = [
       makeMockAudioSegment(
         'silence-1',
@@ -524,7 +524,7 @@ describe('AudioDisplay', () => {
     const consolidatedBundle = {
       ...rawSegments[0],
       endTimestamp: rawSegments[2].endTimestamp,
-      isSilenceBundle: true,
+      isNonSpeechBundle: true,
       bundledSegmentIds: ['silence-1', 'silence-2', 'silence-3'],
     };
 
@@ -563,7 +563,7 @@ describe('AudioDisplay', () => {
       toJSON: () => {},
     });
 
-    // Click at x = 70 (which is 7 seconds into the 15s silence bundle, landing inside silence-2 from 5s-10s at 2s offset)
+    // Click at x = 70 (which is 7 seconds into the 15s non-speech bundle, landing inside silence-2 from 5s-10s at 2s offset)
     fireEvent.click(clipElement, { clientX: 70 });
 
     expect(onClipClick).toHaveBeenCalledWith('silence-2', 2);

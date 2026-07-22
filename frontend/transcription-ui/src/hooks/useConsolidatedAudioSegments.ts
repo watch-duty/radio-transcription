@@ -19,10 +19,10 @@ const MIN_GAP_FOR_OUTAGE_MS = 10;
 export interface RenderableAudioSegment extends AudioSegment {
   /**
    * Indicates whether this segment represents a consolidated bundle of consecutive
-   * non-speech (silence) segments. If true, the row displays a placeholder in the UI
+   * non-speech segments. If true, the row displays a placeholder in the UI
    * rather than active transcript text.
    */
-  isSilenceBundle?: boolean;
+  isNonSpeechBundle?: boolean;
   /**
    * Indicates whether this segment represents a virtual outage bundle
    * when physical audio ingestion was interrupted.
@@ -30,7 +30,7 @@ export interface RenderableAudioSegment extends AudioSegment {
   isOutageBundle?: boolean;
   /**
    * The list of individual raw segment IDs that have been consolidated
-   * into this silence bundle.
+   * into this non-speech bundle.
    */
   bundledSegmentIds?: string[];
 }
@@ -136,12 +136,12 @@ export function consolidateAudioSegments(
   );
 
   const consolidated: RenderableAudioSegment[] = [];
-  let activeSilenceBundle: RenderableAudioSegment | null = null;
+  let activeNonSpeechBundle: RenderableAudioSegment | null = null;
 
-  const flushSilenceBundle = () => {
-    if (activeSilenceBundle) {
-      consolidated.push(activeSilenceBundle);
-      activeSilenceBundle = null;
+  const flushNonSpeechBundle = () => {
+    if (activeNonSpeechBundle) {
+      consolidated.push(activeNonSpeechBundle);
+      activeNonSpeechBundle = null;
     }
   };
 
@@ -170,7 +170,7 @@ export function consolidateAudioSegments(
             (segment.missingPriorContext || prevSegment.missingPostContext));
 
         if (isOutage) {
-          flushSilenceBundle();
+          flushNonSpeechBundle();
 
           // Inject virtual outage segment
           consolidated.push({
@@ -192,8 +192,8 @@ export function consolidateAudioSegments(
           } as RenderableAudioSegment);
         } else {
           // Continuous or non-continuous feed gap where feed was active:
-          // flush silence bundle so silence does not bridge across unrecorded time gaps
-          flushSilenceBundle();
+          // flush non-speech bundle so non-speech does not bridge across unrecorded time gaps
+          flushNonSpeechBundle();
         }
       }
     }
@@ -201,17 +201,17 @@ export function consolidateAudioSegments(
     const isSpeech = segmentHasSpeech(segment);
 
     if (isSpeech) {
-      flushSilenceBundle();
+      flushNonSpeechBundle();
       consolidated.push({ ...segment });
     } else {
-      activeSilenceBundle = extendOrCreateSilenceBundle(
-        activeSilenceBundle,
+      activeNonSpeechBundle = extendOrCreateNonSpeechBundle(
+        activeNonSpeechBundle,
         segment
       );
     }
   }
 
-  flushSilenceBundle();
+  flushNonSpeechBundle();
 
   // Return sorted descending (newest at the top)
   return consolidated.sort(
@@ -219,14 +219,14 @@ export function consolidateAudioSegments(
   );
 }
 
-function extendOrCreateSilenceBundle(
+function extendOrCreateNonSpeechBundle(
   activeBundle: RenderableAudioSegment | null,
   segment: AudioSegment
 ): RenderableAudioSegment {
   if (!activeBundle) {
     return {
       ...segment,
-      isSilenceBundle: true,
+      isNonSpeechBundle: true,
       bundledSegmentIds: [segment.id],
     };
   }
@@ -238,13 +238,13 @@ function extendOrCreateSilenceBundle(
 }
 
 /**
- * Custom hook to consolidate consecutive non-speech (silence) segments into bundles
+ * Custom hook to consolidate consecutive non-speech segments into bundles
  * and sort them descending (newest at the top).
  *
  * @param segments List of raw audio segments.
  * @param audioSource Source type or feed source of the audio (e.g. SourceType.BCFY_FEEDS).
  * @param historyEvents Optional list of feed state history audit events.
- * @returns List of renderable audio segments with consolidated silence bundles.
+ * @returns List of renderable audio segments with consolidated non-speech bundles.
  */
 export function useConsolidatedAudioSegments(
   segments: AudioSegment[],

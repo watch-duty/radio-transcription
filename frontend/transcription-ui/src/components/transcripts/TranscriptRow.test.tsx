@@ -363,15 +363,15 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('renders silence bundle correctly with placeholder text and disabled copy', () => {
-    const mockSilenceBundle: RenderableAudioSegment = {
+  it('renders non-speech bundle correctly with placeholder text and disabled copy', () => {
+    const mockNonSpeechBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
       classification: AudioClassification.OTHER,
       startTimestamp: '2026-04-15T16:00:00Z',
       endTimestamp: '2026-04-15T16:00:10Z',
       playbackAudioUri: 'https://watchduty.example/silence.m4a',
-      isSilenceBundle: true,
+      isNonSpeechBundle: true,
       bundledSegmentIds: ['silence-123', 'silence-124'],
       createdAt: '2026-04-15T16:00:00Z',
       annotations: [],
@@ -383,7 +383,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          audioSegment={mockSilenceBundle}
+          audioSegment={mockNonSpeechBundle}
           index={0}
           totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -403,15 +403,15 @@ describe('TranscriptRow', () => {
     expect(screen.queryByLabelText('copy transcript')).toBeNull();
   });
 
-  it('shows coarse elapsed time without seconds when silence row is at the live edge (ongoing silence)', () => {
-    const mockSilenceBundle: RenderableAudioSegment = {
+  it('shows coarse elapsed time without seconds when non-speech row is at the live edge (ongoing non-speech)', () => {
+    const mockNonSpeechBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
       classification: AudioClassification.OTHER,
       startTimestamp: '2026-04-15T16:00:00Z',
       endTimestamp: '2026-04-15T16:00:10Z',
       playbackAudioUri: 'https://watchduty.example/silence.m4a',
-      isSilenceBundle: true,
+      isNonSpeechBundle: true,
       bundledSegmentIds: ['silence-123', 'silence-124'],
       createdAt: '2026-04-15T16:00:00Z',
       annotations: [],
@@ -423,7 +423,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          audioSegment={mockSilenceBundle}
+          audioSegment={mockNonSpeechBundle}
           index={0}
           totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}

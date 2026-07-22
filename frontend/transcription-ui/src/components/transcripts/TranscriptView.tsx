@@ -141,7 +141,7 @@ export function TranscriptView({
       }
 
       // Autoplay is always-on while playing at the live edge, but only for
-      // incoming SPEECH — stay idle in "listening" through silence rather than
+      // incoming SPEECH — stay idle in "listening" through non-speech rather than
       // auto-playing dead-air clips (which stream continuously on scanner feeds).
       if (
         playbackIntent === 'playing' &&
@@ -321,7 +321,7 @@ export function TranscriptView({
   );
 
   // Resolve a target id to a playable segment — the raw segment by id, else the
-  // consolidated entry containing it (a raw id inside a silence bundle) — and play it.
+  // consolidated entry containing it (a raw id inside a non-speech bundle) — and play it.
   const playSegmentById = useCallback(
     (targetId: string, offsetSeconds?: number) => {
       const raw = rawAudioSegments.find((s) => s.id === targetId);

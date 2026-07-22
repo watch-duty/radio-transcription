@@ -39,7 +39,7 @@ export function createMockRenderableAudioSegment(
   return {
     ...base,
     isOutageBundle: overrides.isOutageBundle,
-    isSilenceBundle: overrides.isSilenceBundle,
+    isNonSpeechBundle: overrides.isNonSpeechBundle,
     bundledSegmentIds: overrides.bundledSegmentIds,
   };
 }

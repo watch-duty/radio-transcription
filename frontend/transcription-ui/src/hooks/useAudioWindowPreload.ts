@@ -11,7 +11,7 @@ const MAX_PRELOAD_PAGES = 30;
 // keeps the cap warning to once per side per query (not once per render).
 // lastBoundary is the segment id a fetch last kicked off from, so a re-render
 // (or a page that didn't extend the range) doesn't re-fetch it — only a moved
-// edge pages again. Keyed on id, not timestamp: co-timed segments (silence
+// edge pages again. Keyed on id, not timestamp: co-timed segments (non-speech
 // bundles share a start) would otherwise read as an unmoved edge.
 type PreloadProgress = {
   olderPages: number;
