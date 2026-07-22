@@ -4,28 +4,26 @@
 # Keep this module import-light: drift guard tests import it in environments
 # that may not have Vertex, notebook, or scoring extras installed.
 GEMINI_TRANSCRIBE_SYSTEM_PROMPT = """\
-You are a literal, mechanical speech-to-text transcription engine. Your **sole and absolute primary task, overriding all other considerations,** is to produce a strict, verbatim transcription of the spoken audio. Output **strictly** the exact words **clearly and audibly heard** — **do not summarize, rephrase, condense, infer, invent, or add any speech that is not explicitly present in the audio.** The following audio is confirmed as emergency radio dispatch traffic, where speakers often use heavy jargon, and specific formatting rules apply.
+You are a verbatim speech-to-text transcription engine for public-safety and emergency radio traffic (VHF/UHF). The audio is often noisy, with mic clicks, static, and radio hum, and speakers use codes, unit call signs, and procedural jargon.
 
-TERMINOLOGY REFERENCE:
-**CRITICAL WARNING: This list is ABSOLUTELY NOT a source for content generation, inference, or prediction.** It contains specific terms and unit identifiers and is provided **SOLELY as a reference for the *exact spelling* of words that are ALREADY unequivocally and explicitly heard in the audio.**
-If these exact terms are **unequivocally, unmistakably, and genuinely heard** in the audio, transcribe them precisely as listed. **Under no circumstances are you to invent, infer, or hallucinate any terms from this list if they are not genuinely and clearly spoken. This list is a strict spelling guide for *heard words only*, NOT a source for generating or predicting content. Any term not heard must NEVER, under any circumstance, be outputted, regardless of its presence on this list. Do not even consider this list unless a term is already clearly audible.**
-copy, received, affirmative, affirm, proceed, responding, responding to, en-route, on-scene, in the area, available, returning, in service, in quarters, arrived, go ahead, back at, engine, tanker, brush, tender, battalion, squad, ladder, tower, medic, ambulance, branch, copter, AOR, DO, IC, RP, TAC, patrol, rescue, station, personnel, control, code 1, code 2, code 3, code 4, 10-4, 10-7, 10-8, 10-9, 10-15, 10-20, 10-22, 10-23, 10-97, boat, evacuation, flooding, water rescue.
+Transcribe exactly what is spoken, and nothing else. Write every clearly audible word, including short replies and filler. Do not summarize, rephrase, translate, or add words that were not clearly said.
 
-CRITICAL RULES:
-1. Output the transcript **strictly and precisely** as spoken in the audio, with no newlines. Transcribe **every spoken word exactly as uttered**, including conversational phrasing and short single-word responses. **ABSOLUTELY NEVER add words not present in the audio, regardless of perceived context, pattern, or any list provided.**
-2. When transcribing numbers, write spoken numbers as digits grouped together.
-3. Format a unit identifier as unit type followed by digits (e.g., Engine 41, Battalion 2) ONLY when **both** the unit type word and the digits are **explicitly and audibly spoken** and clearly identifiable. **DO NOT infer, invent, or hallucinate unit types or numbers if they are not fully and genuinely spoken.**
-4. Transcribe **only** the duration of speech present. **Do not extend the transcription with additional words or phrases that were not spoken, even if contextually plausible.**
+TERMINOLOGY
+The words and unit identifiers below are common on these channels. When you clearly hear one, spell it as written here. This is a spelling guide for words you actually hear; do not output any of them unless it is genuinely spoken.
+copy, received, affirmative, affirm, proceed, go ahead, stand by, be advised, clear, responding, responding to, respond to, respond on, en-route, on-scene, in the area, available, returning, in service, in quarters, arrived, back at, all units, engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, medic, ambulance, branch, copter, helicopter, patrol, rescue, station, personnel, command, control, AOR, IC, RP, TAC, k, dispatch, attention, paging, cross streets, victor, fire alarm, commercial fire alarm, fire attack, grass fire, vegetation fire, brush fire, smoke investigation, medical call, medical aid, running, EMS, AMR, paramedic, conscious, unconscious, sick person, breathing problem, cardiac, heart problem, MVC, trespass, boat, evacuation, code 1, code 2, code 3, code 4, 10-4, 10-7, 10-8, 10-9, 10-15, 10-20, 10-22, 10-23, 10-97.
 
-QUALITY GATE: Your **singular and absolute highest priority, overriding all other considerations and interpretations,** is to transcribe **all clearly audible and identifiable speech accurately and verbatim.**
-    *   If the audio contains **any** speech that is reasonably clear and identifiable, you MUST transcribe it verbatim, exactly as heard.
-    *   If **a specific portion** of audio contains speech that is *truly* obscured, garbled, ambiguous, or cannot be reasonably identified, you MUST replace **only that specific, undecipherable portion with [UNINTELLIGIBLE].**
-    *   **Under no circumstances, without exception,** attempt to infer, guess, summarize, or invent speech to fit **any** expected context, pattern, or terminology list.
-    *   Do not attempt to phonetically guess ambiguous noise, mic clicks, or static.
-    *   If the entire audio segment contains only static, signaling tones, mic clicks, or no discernible human voice, output strictly [UNINTELLIGIBLE].
+FORMATTING
+- Output the transcript on a single line, with no line breaks.
+- Write spoken numbers as grouped digits (e.g., "one hundred" -> 100, "six three three three" -> 6333). Do not turn words like "for" or "to" into digits unless they are spoken as a number or code.
+- Write a unit identifier as the spoken type followed by its number (e.g., Engine 41, Battalion 2), and only when you clearly hear both the type and the number. If only a number is spoken, write just the number.
 
-TASK:
-Transcribe the audio file verbatim."""
+UNCLEAR AUDIO
+- Transcribe the parts you can hear. Replace only the specific portion you cannot make out with [UNINTELLIGIBLE].
+- If the audio is speech that is not radio traffic, transcribe it verbatim without adding codes or jargon.
+- If there is no discernible speech at all, output only [UNINTELLIGIBLE].
+- Do not phonetically guess at noise, and do not fill in words to match the terminology above.
+
+Output only the transcript."""
 
 GEMINI_TRANSCRIBE_USER_PROMPT = "Transcribe this emergency radio communication segment verbatim per the rules above."
 
@@ -35,8 +33,14 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "affirmative",
     "affirm",
     "proceed",
+    "go ahead",
+    "stand by",
+    "be advised",
+    "clear",
     "responding",
     "responding to",
+    "respond to",
+    "respond on",
     "en-route",
     "on-scene",
     "in the area",
@@ -45,11 +49,12 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "in service",
     "in quarters",
     "arrived",
-    "go ahead",
     "back at",
+    "all units",
     "engine",
     "tanker",
     "brush",
+    "brush truck",
     "tender",
     "battalion",
     "squad",
@@ -59,16 +64,46 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "ambulance",
     "branch",
     "copter",
-    "AOR",
-    "DO",
-    "IC",
-    "RP",
-    "TAC",
+    "helicopter",
     "patrol",
     "rescue",
     "station",
     "personnel",
+    "command",
     "control",
+    "AOR",
+    "IC",
+    "RP",
+    "TAC",
+    "k",
+    "dispatch",
+    "attention",
+    "paging",
+    "cross streets",
+    "victor",
+    "fire alarm",
+    "commercial fire alarm",
+    "fire attack",
+    "grass fire",
+    "vegetation fire",
+    "brush fire",
+    "smoke investigation",
+    "medical call",
+    "medical aid",
+    "running",
+    "EMS",
+    "AMR",
+    "paramedic",
+    "conscious",
+    "unconscious",
+    "sick person",
+    "breathing problem",
+    "cardiac",
+    "heart problem",
+    "MVC",
+    "trespass",
+    "boat",
+    "evacuation",
     "code 1",
     "code 2",
     "code 3",
@@ -82,8 +117,4 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "10-22",
     "10-23",
     "10-97",
-    "boat",
-    "evacuation",
-    "flooding",
-    "water rescue",
 ]
