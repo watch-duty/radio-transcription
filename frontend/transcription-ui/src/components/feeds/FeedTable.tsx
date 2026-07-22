@@ -29,10 +29,9 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Feed, SourceType } from '@transcription/common';
 
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
@@ -51,6 +50,8 @@ export interface FeedTableProps {
   title?: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   isLoading: boolean;
   feedTotal: number;
   allowEdit?: boolean;
@@ -114,16 +115,16 @@ function VirtuosoTableRow(
     context?: {
       editingFeedId?: string;
       allowEdit?: boolean;
-      isMobile?: boolean;
+      isNarrow?: boolean;
     };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingFeedId === item.id);
   const allowEdit = context?.allowEdit ?? false;
-  const isMobile = context?.isMobile ?? false;
+  const isNarrow = context?.isNarrow ?? false;
 
-  const gridTemplateColumns = isMobile
+  const gridTemplateColumns = isNarrow
     ? '1fr auto'
     : allowEdit
       ? '1.5fr 1fr 1fr 100px'
@@ -138,8 +139,8 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
-        gridTemplateRows: isMobile ? 'auto auto auto' : 'unset',
-        gridTemplateAreas: isMobile
+        gridTemplateRows: isNarrow ? 'auto auto auto' : 'unset',
+        gridTemplateAreas: isNarrow
           ? `
             "name-source status"
             "type        links-actions"
@@ -176,6 +177,8 @@ export function FeedTable({
   title = 'Feeds',
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   isLoading,
   feedTotal,
   allowEdit = false,
@@ -188,8 +191,7 @@ export function FeedTable({
   isFetchingNextPage,
   onLoadMore,
 }: FeedTableProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
 
   const [historyFeed, setHistoryFeed] = useState<Feed | null>(null);
 
@@ -412,7 +414,7 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  {isMobile ? (
+                  {isNarrow ? (
                     <Link
                       href={feed.sourceUrl}
                       target="_blank"
@@ -444,7 +446,7 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  {isMobile ? (
+                  {isNarrow ? (
                     <Link
                       href={feed.archiveUrl}
                       target="_blank"
@@ -629,27 +631,40 @@ export function FeedTable({
           >
             <TuneIcon color="action" fontSize="small" />
             <Box sx={{ flexGrow: 1 }}>
-              <MultiSelectFilter
+              <MultiSelectFilter<SourceType>
                 label="Source Type"
-                options={ALL_SOURCE_TYPES}
+                options={
+                  sourceTypes && sourceTypes.length > 0
+                    ? sourceTypes
+                    : ALL_SOURCE_TYPES
+                }
                 value={filters.sourceTypes}
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
-                getOptionLabel={toSourceTypeString}
-                renderOptionContent={toSourceTypeString}
-                renderValueLabel={toSourceTypeString}
+                getOptionLabel={(type) => toSourceTypeString(type)}
+                renderOptionContent={(type) => toSourceTypeString(type)}
+                renderValueLabel={(type) => toSourceTypeString(type)}
                 size="small"
               />
             </Box>
             <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
-                options={['Active', 'Inactive', 'Error']}
+                options={
+                  statuses && statuses.length > 0
+                    ? statuses
+                    : ['Active', 'Inactive', 'Error']
+                }
                 value={filters.statuses}
                 onChange={(statuses) =>
                   onFiltersChange({ ...filters, statuses })
                 }
+                getOptionLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
+                renderOptionContent={(s) =>
+                  s.charAt(0).toUpperCase() + s.slice(1)
+                }
+                renderValueLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
                 size="small"
               />
             </Box>
@@ -725,7 +740,7 @@ export function FeedTable({
               : 'Register feeds on the left to start listening.'}
           </Typography>
         </Box>
-      ) : isMobile ? (
+      ) : isNarrow ? (
         <TableContainer
           component="div"
           sx={{ flexGrow: 1, overflowY: 'visible' }}
@@ -736,7 +751,7 @@ export function FeedTable({
                 <VirtuosoTableRow
                   key={feed.id}
                   item={feed}
-                  context={{ editingFeedId, allowEdit, isMobile: true }}
+                  context={{ editingFeedId, allowEdit, isNarrow: true }}
                 >
                   {renderRowContent(feed)}
                 </VirtuosoTableRow>
@@ -759,7 +774,7 @@ export function FeedTable({
       ) : (
         <TableVirtuoso
           data={sortFeeds}
-          context={{ editingFeedId, allowEdit, isMobile: false }}
+          context={{ editingFeedId, allowEdit, isNarrow: false }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}

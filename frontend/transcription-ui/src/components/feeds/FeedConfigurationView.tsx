@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
@@ -18,6 +18,7 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
 import { useFeeds } from '../../hooks/useFeeds';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
@@ -81,23 +82,10 @@ export function FeedConfigurationView({
     }
   }, [feedsError, onError]);
 
-  const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
-    const seen = new Set<string>();
-    const result: { key: string; value: string }[] = [];
-    const sourceFeeds = feeds || [];
-    sourceFeeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          result.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return result.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [feeds]);
+  const { data: searchOptionsData } = useFeedSearchOptions(token);
+  const filterTags = searchOptionsData?.tags ?? [];
+  const sourceTypes = searchOptionsData?.sourceTypes;
+  const statuses = searchOptionsData?.statuses;
 
   const resetForm = () => {
     setId('');
@@ -110,6 +98,9 @@ export function FeedConfigurationView({
   const resetFormAndRefresh = () => {
     resetForm();
     queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+    queryClient.invalidateQueries({
+      queryKey: ['getFeedSearchOptions', token],
+    });
   };
 
   const createMutation = useMutation({
@@ -117,6 +108,9 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" registered successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      queryClient.invalidateQueries({
+        queryKey: ['getFeedSearchOptions', token],
+      });
     },
     onError: (error: Error) => {
       onError(error, 'Registering Feed');
@@ -315,7 +309,9 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
-            tags={uniqueTagsForFilter}
+            tags={filterTags}
+            sourceTypes={sourceTypes}
+            statuses={statuses}
             isLoading={feedsLoading}
             feedTotal={feedTotal}
             allowEdit

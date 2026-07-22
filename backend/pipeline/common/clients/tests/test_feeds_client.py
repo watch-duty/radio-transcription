@@ -41,6 +41,7 @@ class TestFeedsClient(unittest.TestCase):
 
         mock_get.assert_called_once_with(
             "http://test-feeds-api.com/v1/feeds/feed-123",
+            params=None,
             headers={},
             timeout=5,
         )

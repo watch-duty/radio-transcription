@@ -30,7 +30,10 @@ import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useMutation } from '@tanstack/react-query';
 import type {
+  DryRunRequest,
+  DryRunResponse,
   EvaluationType,
   Feed,
   LogicalOperator,
@@ -42,6 +45,8 @@ import type {
   Tag,
 } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
+import { dryRunRule } from '../../service/dryRunRule';
 import {
   buildRulePayload,
   tagAddError,
@@ -49,6 +54,7 @@ import {
   validateTags,
 } from '../../utils/validationUtils';
 import { type TagRow, nextTagRowId, toTagRows } from '../feeds/tagRows';
+import { HighlightedTranscript } from '../transcripts/HighlightedTranscript';
 
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
@@ -105,6 +111,7 @@ export function RuleConfigurationEdit({
   isFetchingNextFeedsPage,
   onFetchNextFeedsPage,
 }: RuleConfigurationEditProps) {
+  const { token } = useAuth();
   const [newKeyword, setNewKeyword] = useState('');
   const [tagRows, setTagRows] = useState<TagRow[]>(() =>
     toTagRows(editingRule.tags ?? [])
@@ -174,6 +181,13 @@ export function RuleConfigurationEdit({
       prev.map((tag) => (tag.id === id ? { ...tag, [field]: value } : tag))
     );
   };
+  const [isDryRunModalOpen, setIsDryRunModalOpen] = useState(false);
+  const [daysLookback, setDaysLookback] = useState(1);
+
+  const testRuleMutation = useMutation({
+    mutationFn: (dryRunPayload: DryRunRequest) =>
+      dryRunRule(dryRunPayload, token!),
+  });
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -308,6 +322,28 @@ export function RuleConfigurationEdit({
     onDeleteRule();
   };
 
+  const handleTestRule = () => {
+    const errors = validateRule(editingRule, newKeyword);
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      return;
+    }
+    setValidationErrors({});
+    const payload = buildRulePayload(editingRule, newKeyword);
+
+    setIsDryRunModalOpen(true);
+
+    const dryRunPayload: DryRunRequest = { rule: payload, daysLookback };
+    if (
+      payload.scope.level === 'FEED_SPECIFIC' &&
+      payload.scope.targetFeeds.length > 0
+    ) {
+      dryRunPayload.feedIds = payload.scope.targetFeeds;
+    }
+
+    testRuleMutation.mutate(dryRunPayload);
+  };
+
   // Filter out the rule itself if in edit mode to avoid self-reference in groups
   const eligibleChildRules = rules.filter(
     (r) => !isEditing || r.ruleId !== editingRuleId
@@ -416,6 +452,37 @@ export function RuleConfigurationEdit({
                 gap: 2,
               }}
             >
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  mr: 'auto',
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  color="info"
+                  onClick={handleTestRule}
+                  disabled={isSubmitting || testRuleMutation.isPending}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Test Rule
+                </Button>
+                <Select
+                  size="small"
+                  value={daysLookback}
+                  onChange={(e) => setDaysLookback(Number(e.target.value))}
+                  disabled={isSubmitting || testRuleMutation.isPending}
+                  sx={{ minWidth: 140 }}
+                >
+                  <MenuItem value={1}>Past day</MenuItem>
+                  <MenuItem value={2}>Past 2 days</MenuItem>
+                  <MenuItem value={3}>Past 3 days</MenuItem>
+                  <MenuItem value={7}>Past 7 days</MenuItem>
+                </Select>
+              </Box>
+
               {isEditing && (
                 <Button
                   variant="outlined"
@@ -522,6 +589,25 @@ export function RuleConfigurationEdit({
         ruleName={editingRule.ruleName}
         onConfirm={handleToggleActiveConfirm}
         isSubmitting={isSubmitting}
+      />
+
+      <DryRunResultsModal
+        isOpen={isDryRunModalOpen}
+        onClose={() => {
+          setIsDryRunModalOpen(false);
+          testRuleMutation.reset();
+        }}
+        isLoading={testRuleMutation.isPending}
+        result={testRuleMutation.data ?? null}
+        error={
+          testRuleMutation.error
+            ? testRuleMutation.error instanceof Error
+              ? testRuleMutation.error.message
+              : 'Failed to dry run rule'
+            : null
+        }
+        feeds={feeds}
+        daysLookback={daysLookback}
       />
     </Card>
   );
@@ -685,6 +771,148 @@ function RuleTagsSection({
         )}
       </Box>
     </Box>
+  );
+}
+
+interface DryRunResultsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  isLoading: boolean;
+  result: DryRunResponse | null;
+  error: string | null;
+  feeds: Feed[];
+  daysLookback: number;
+}
+
+function DryRunResultsModal({
+  isOpen,
+  onClose,
+  isLoading,
+  result,
+  error,
+  feeds,
+  daysLookback,
+}: DryRunResultsModalProps) {
+  return (
+    <Dialog open={isOpen} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Test Rule Results</DialogTitle>
+      <DialogContent dividers>
+        {isLoading && (
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              py: 4,
+              gap: 2,
+            }}
+          >
+            <CircularProgress />
+            <Typography variant="body2" color="text.secondary">
+              Running rule against historical transcripts. This may take a few
+              seconds...
+            </Typography>
+          </Box>
+        )}
+
+        {error && (
+          <Box
+            sx={{
+              p: 2,
+              bgcolor: 'error.main',
+              color: 'error.contrastText',
+              borderRadius: 1,
+            }}
+          >
+            <Typography variant="subtitle2">Error</Typography>
+            <Typography variant="body2">{error}</Typography>
+          </Box>
+        )}
+
+        {result && (
+          <Stack spacing={3}>
+            <Box
+              sx={{
+                p: 2,
+                bgcolor: 'primary.light',
+                color: 'primary.contrastText',
+                borderRadius: 1,
+              }}
+            >
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
+                {(result.totalEvaluated ?? 0).toLocaleString()} transcripts
+                evaluated from the past {daysLookback} day
+                {daysLookback > 1 ? 's' : ''}{' '}
+                {result.totalEvaluated > 0
+                  ? `(${((result.hitCount / result.totalEvaluated) * 100).toFixed(2)}%)`
+                  : ''}
+              </Typography>
+            </Box>
+
+            {result.examples.length > 0 && (
+              <Box>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ mb: 1.5, fontWeight: 600 }}
+                >
+                  Matched examples
+                </Typography>
+                <Stack spacing={2}>
+                  {result.examples.map((example, i) => (
+                    <Card key={i} variant="outlined">
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', mb: 1, fontWeight: 500 }}
+                        >
+                          Feed:{' '}
+                          {feeds.find((f) => f.id === example.feedId)?.name ||
+                            example.feedId}{' '}
+                          • Segment: {example.audioSegmentId}
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          <HighlightedTranscript
+                            text={example.text}
+                            ruleAnnotations={{
+                              'dry-run-rule': {
+                                textMatch: example.matchedSpans,
+                              },
+                            }}
+                          />
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {result.examples.length === 0 && result.hitCount === 0 && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}
+              >
+                No matches found in the recent history for these conditions.
+              </Typography>
+            )}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={isLoading}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
