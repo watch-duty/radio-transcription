@@ -117,7 +117,7 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
         called_url = self.session.get.call_args[0][0]
         self.assertEqual(
             called_url,
-            "http://mock-api/api/audio_file?dir=RECORDINGS/SAN-JOSE-DISP",
+            "http://mock-api/api/audio_file?dir=RECORDINGS%2FSAN-JOSE-DISP",
         )
 
         # It should only return 2 files (uuid1 and uuid3), with uuid2 filtered out as a duplicate name.
@@ -129,6 +129,25 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(files[1].uuid, "3bc21da2-c1bf-4abc-8def-1234567890ab")
         self.assertEqual(
             files[1].filename, "SAN-JOSE-DISP 2026-06-15 17-50-00.mp3"
+        )
+
+    async def test_fetch_file_list_handles_recordings_prefix(self) -> None:
+        payload = {"file_list": []}
+        self.session.get = MagicMock(
+            return_value=_mock_response(200, json_data=payload)
+        )
+
+        await self.client.fetch_file_list(
+            source_feed_id="RECORDINGS/SAN-JOSE-DISP",
+            feed_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+
+        self.session.get.assert_called_once()
+        called_url = self.session.get.call_args[0][0]
+        self.assertEqual(
+            called_url,
+            "http://mock-api/api/audio_file?dir=RECORDINGS%2FSAN-JOSE-DISP",
         )
 
     async def test_non_retryable_4xx(self) -> None:
