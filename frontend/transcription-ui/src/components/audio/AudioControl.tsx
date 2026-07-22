@@ -10,8 +10,9 @@ import Box from '@mui/material/Box';
 import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import { type SxProps, type Theme, useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
+import { type SxProps, type Theme } from '@mui/material/styles';
+
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 
 export interface AudioControlProps {
   isAudioPlaying: boolean;
@@ -39,10 +40,9 @@ export function AudioControl({
   settingsButton,
   sx,
 }: AudioControlProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
 
-  const controlSize = isMobile ? 'medium' : 'large';
+  const controlSize = isNarrow ? 'medium' : 'large';
 
   return (
     <Box
