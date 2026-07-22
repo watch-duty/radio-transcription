@@ -49,10 +49,9 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   const renderAction = (
     icon: React.ReactNode,
     label: string,
-    linkProps: LinkProps,
-    tooltip: string = label
+    linkProps: LinkProps
   ) => (
-    <Tooltip title={tooltip}>
+    <Tooltip title={label}>
       <Link
         variant="body2"
         aria-label={label}
@@ -150,16 +149,11 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                 columnGap: 0.5,
               }}
             >
-              {renderAction(
-                <LinkIcon fontSize="small" />,
-                'Share feed',
-                {
-                  component: 'button',
-                  type: 'button',
-                  onClick: handleShareFeed,
-                },
-                'Copy feed deep link'
-              )}
+              {renderAction(<LinkIcon fontSize="small" />, 'Share feed', {
+                component: 'button',
+                type: 'button',
+                onClick: handleShareFeed,
+              })}
               {sourceUrl &&
                 renderAction(
                   <OpenInNewOutlinedIcon fontSize="small" />,

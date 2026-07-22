@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { saveAs } from 'file-saver';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import DonwloadIcon from '@mui/icons-material/Download';
+import DownloadIcon from '@mui/icons-material/Download';
 import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -106,6 +106,8 @@ export function SegmentInfoPopover({
         <IconButton
           size="small"
           aria-label="Share"
+          aria-haspopup="dialog"
+          aria-expanded={Boolean(anchor)}
           onClick={(e) => {
             e.stopPropagation();
             setAnchor(e.currentTarget);
@@ -152,7 +154,7 @@ export function SegmentInfoPopover({
             disabled={!audioSegment.playbackAudioUri}
             sx={SHARE_ACTION_SX}
           >
-            <DonwloadIcon fontSize="small" />
+            <DownloadIcon fontSize="small" />
             Download audio
           </Button>
           {isAdmin && (
