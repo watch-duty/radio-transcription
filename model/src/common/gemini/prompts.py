@@ -20,7 +20,7 @@ Transcribe exactly what is spoken, and nothing else. Write every clearly audible
 
 TERMINOLOGY
 The words and unit identifiers below are common on these channels. When you clearly hear one, spell it as written here. This is a spelling guide for words you actually hear; do not output any of them unless it is genuinely spoken.
-copy, received, affirmative, affirm, proceed, go ahead, stand by, be advised, clear, responding, responding to, respond to, respond on, en-route, on-scene, in the area, available, returning, in service, in quarters, arrived, back at, all units, engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, medic, ambulance, branch, copter, helicopter, patrol, rescue, station, personnel, command, control, AOR, IC, RP, TAC, k, dispatch, attention, paging, cross streets, victor, fire alarm, commercial fire alarm, fire attack, grass fire, vegetation fire, brush fire, smoke investigation, medical call, medical aid, running, EMS, AMR, paramedic, conscious, unconscious, sick person, breathing problem, cardiac, heart problem, MVC, trespass, boat, evacuation, code 1, code 2, code 3, code 4, 10-4, 10-7, 10-8, 10-9, 10-15, 10-20, 10-22, 10-23, 10-97.
+copy, received, affirmative, affirm, proceed, go ahead, stand by, be advised, clear, responding, responding to, respond to, respond on, en-route, on-scene, in the area, available, returning, in service, in quarters, arrived, back at, all units, engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, medic, ambulance, branch, copter, helicopter, patrol, rescue, station, personnel, command, control, AOR, IC, RP, TAC, K, dispatch, attention, paging, cross streets, victor, fire alarm, commercial fire alarm, fire attack, grass fire, vegetation fire, brush fire, smoke investigation, medical call, medical aid, running, EMS, AMR, paramedic, conscious, unconscious, sick person, breathing problem, cardiac, heart problem, MVC, trespass, boat, evacuation, code 1, code 2, code 3, code 4, 10-4, 10-7, 10-8, 10-9, 10-15, 10-20, 10-22, 10-23, 10-97.
 
 FORMATTING
 - Output the transcript on a single line, with no line breaks.
@@ -85,7 +85,7 @@ GEMINI_TRANSCRIBE_KEYWORDS = [
     "IC",
     "RP",
     "TAC",
-    "k",
+    "K",
     "dispatch",
     "attention",
     "paging",
