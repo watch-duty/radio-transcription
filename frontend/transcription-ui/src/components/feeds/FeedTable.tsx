@@ -51,6 +51,8 @@ export interface FeedTableProps {
   title?: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   isLoading: boolean;
   feedTotal: number;
   allowEdit?: boolean;
@@ -173,6 +175,8 @@ export function FeedTable({
   title = 'Feeds',
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   isLoading,
   feedTotal,
   allowEdit = false,
@@ -623,27 +627,40 @@ export function FeedTable({
           >
             <TuneIcon color="action" fontSize="small" />
             <Box sx={{ flexGrow: 1 }}>
-              <MultiSelectFilter
+              <MultiSelectFilter<SourceType>
                 label="Source Type"
-                options={ALL_SOURCE_TYPES}
+                options={
+                  sourceTypes && sourceTypes.length > 0
+                    ? sourceTypes
+                    : ALL_SOURCE_TYPES
+                }
                 value={filters.sourceTypes}
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
-                getOptionLabel={toSourceTypeString}
-                renderOptionContent={toSourceTypeString}
-                renderValueLabel={toSourceTypeString}
+                getOptionLabel={(type) => toSourceTypeString(type)}
+                renderOptionContent={(type) => toSourceTypeString(type)}
+                renderValueLabel={(type) => toSourceTypeString(type)}
                 size="small"
               />
             </Box>
             <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
-                options={['Active', 'Inactive', 'Error']}
+                options={
+                  statuses && statuses.length > 0
+                    ? statuses
+                    : ['Active', 'Inactive', 'Error']
+                }
                 value={filters.statuses}
                 onChange={(statuses) =>
                   onFiltersChange({ ...filters, statuses })
                 }
+                getOptionLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
+                renderOptionContent={(s) =>
+                  s.charAt(0).toUpperCase() + s.slice(1)
+                }
+                renderValueLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
                 size="small"
               />
             </Box>

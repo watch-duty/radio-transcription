@@ -21,6 +21,7 @@ import { SourceType } from '@transcription/common';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
+import { getFeedSearchOptions } from '../../service/getFeedSearchOptions';
 import { listFeeds } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
@@ -63,6 +64,10 @@ vi.mock('../../service/deactivateFeed', () => ({
 
 vi.mock('../../service/resetFeed', () => ({
   resetFeed: vi.fn(),
+}));
+
+vi.mock('../../service/getFeedSearchOptions', () => ({
+  getFeedSearchOptions: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -112,6 +117,14 @@ describe('FeedConfigurationView', () => {
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
     vi.mocked(resetFeed).mockResolvedValue({} as Feed);
+    vi.mocked(getFeedSearchOptions).mockResolvedValue({
+      sourceTypes: [],
+      statuses: [],
+      tags: [
+        { key: 'county', value: 'Marin' },
+        { key: 'county', value: 'Sonoma' },
+      ],
+    });
 
     // Mock window.scrollTo since JSDOM does not implement it
     window.scrollTo = vi.fn();
