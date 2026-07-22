@@ -94,6 +94,25 @@ logger = get_task_logger(
 )
 
 
+def _parse_receipt_ms(
+    chunk_proto: ContinuousAudio, element: PubsubMessage
+) -> int | None:
+    if (
+        chunk_proto.HasField("receipt_timestamp")
+        and chunk_proto.receipt_timestamp.seconds > 0
+    ):
+        return (
+            chunk_proto.receipt_timestamp.seconds * MS_PER_SECOND
+            + chunk_proto.receipt_timestamp.nanos // NANOS_PER_MS
+        )
+    if element.attributes and "timestamp_ms" in element.attributes:
+        try:
+            return int(element.attributes["timestamp_ms"])
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 @beam.typehints.with_input_types(PubsubMessage)
 @beam.typehints.with_output_types(tuple[str, ChunkMetadata])
 class ParseAndKeyFn(beam.DoFn):
@@ -189,8 +208,15 @@ class ParseAndKeyFn(beam.DoFn):
                     and chunk_proto.start_timestamp.seconds > 0
                     else None
                 )
-                if start_ms is not None:
-                    freshness_ms = int(time.time() * 1000) - start_ms
+                receipt_ms = _parse_receipt_ms(chunk_proto, element)
+                freshness_reference_ms = (
+                    receipt_ms if receipt_ms is not None else start_ms
+                )
+
+                if freshness_reference_ms is not None:
+                    freshness_ms = (
+                        int(time.time() * 1000) - freshness_reference_ms
+                    )
                     self.data_freshness_ms.update(freshness_ms)
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
@@ -203,6 +229,7 @@ class ParseAndKeyFn(beam.DoFn):
                     traceparent=traceparent,
                     baggage=baggage,
                     timestamp_ms=start_ms,
+                    receipt_time_ms=receipt_ms,
                 )
                 logger.debug(
                     "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",

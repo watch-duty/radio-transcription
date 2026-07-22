@@ -6,7 +6,6 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
@@ -22,6 +21,7 @@ import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
 } from '../../hooks/useConsolidatedAudioSegments';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
@@ -55,7 +55,7 @@ export function TranscriptView({
   onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
   const { token } = useAuth();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -704,7 +704,8 @@ export function TranscriptView({
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh)',
+        flexGrow: 1,
+        minHeight: 0,
       }}
     >
       <FeedHeader
@@ -723,9 +724,9 @@ export function TranscriptView({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          mt: 1,
+          mt: { xs: 0.5, sm: 1 },
           // Space for the alert icon that hovers above the AudioDisplay.
-          mb: 2.5,
+          mb: { xs: 1.25, sm: 2.5 },
         }}
       >
         <AudioControl
@@ -815,7 +816,7 @@ export function TranscriptView({
             highlightedSegmentId={highlightedSegmentId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
-            isMobile={isMobile}
+            isNarrow={isNarrow}
           />
         ) : feedsFetching || isAudioSegmentsInitialLoading ? (
           <Box

@@ -41,6 +41,9 @@ class BufferedChunkProto(betterproto.Message):
     baggage: Optional[str] = betterproto.string_field(
         4, optional=True, group="_baggage"
     )
+    receipt_time_ms: Optional[int] = betterproto.int64_field(
+        5, optional=True, group="_receipt_time_ms"
+    )
 
 
 @dataclass(eq=False, repr=False)
@@ -65,6 +68,9 @@ class ChunkMetadataProto(betterproto.Message):
 
     baggage: Optional[str] = betterproto.string_field(
         8, optional=True, group="_baggage"
+    )
+    receipt_time_ms: Optional[int] = betterproto.int64_field(
+        9, optional=True, group="_receipt_time_ms"
     )
 
 
