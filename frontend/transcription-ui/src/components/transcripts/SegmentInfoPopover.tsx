@@ -20,9 +20,8 @@ import type {
 import { useAuth } from '../../context/AuthContext';
 import { getAudioUrl } from '../../utils/audioUtils';
 
-// Left-aligned icon+label row for the actions. The icon is a plain child (not
-// `startIcon`) so its `fontSize="small"` isn't shrunk by MUI's small-button
-// icon sizing, keeping every popover icon the same size.
+// Icon is a plain child (not `startIcon`) so its `fontSize="small"` isn't
+// shrunk by MUI's small-button icon sizing.
 const SHARE_ACTION_SX = {
   justifyContent: 'flex-start',
   textTransform: 'none',
@@ -31,7 +30,7 @@ const SHARE_ACTION_SX = {
   px: 1,
 } as const;
 
-interface TranscriptSharePopoverProps {
+interface SegmentInfoPopoverProps {
   audioSegment: AudioSegment;
   transcriptAnnotation: TranscriptAnnotationData | null;
   isSilence: boolean;
@@ -41,10 +40,9 @@ interface TranscriptSharePopoverProps {
   triggerSnackbar: (message: string) => void;
 }
 
-// Per-row "Share" affordance: a trigger that opens a popover with copy
-// transcript / copy link / download audio, plus inline segment details for
-// admins.
-export function TranscriptSharePopover({
+// Per-row "Share" popover: copy transcript / copy link / download audio, plus
+// inline segment details for admins.
+export function SegmentInfoPopover({
   audioSegment,
   transcriptAnnotation,
   isSilence,
@@ -52,7 +50,7 @@ export function TranscriptSharePopover({
   hasErrors,
   degradationReasons,
   triggerSnackbar,
-}: TranscriptSharePopoverProps) {
+}: SegmentInfoPopoverProps) {
   const { isAdmin } = useAuth();
   const { id, externalAudioSegmentId } = audioSegment;
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -281,4 +279,4 @@ export function TranscriptSharePopover({
   );
 }
 
-export default TranscriptSharePopover;
+export default SegmentInfoPopover;

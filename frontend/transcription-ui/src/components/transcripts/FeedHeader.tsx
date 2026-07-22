@@ -107,9 +107,8 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
           >
             {searchedFeed.name}
           </Typography>
-          {/* All the controls wrap to the next line together and stay on one
-              line there. Fills the row so chip+status sit next to the name and
-              the actions are pushed right; the activity truncates if short. */}
+          {/* All controls wrap to the next line together; fills the row so
+              chip+status sit by the name and the actions push right. */}
           <Box
             sx={{
               display: 'flex',

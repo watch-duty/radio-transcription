@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import { TranscriptSharePopover } from './TranscriptSharePopover';
+import { SegmentInfoPopover } from './SegmentInfoPopover';
 
 vi.mock('../../context/AuthContext', () => ({
   useAuth: vi.fn(() => ({ isAdmin: true })),
@@ -32,7 +32,7 @@ function renderPopover(
   reasons?: string[]
 ) {
   return render(
-    <TranscriptSharePopover
+    <SegmentInfoPopover
       audioSegment={{ ...mockAudioSegment, ...overrides }}
       transcriptAnnotation={null}
       isSilence={false}
@@ -47,7 +47,7 @@ function renderPopover(
 const mockTriggerSnackbar = vi.fn();
 const openPopover = () => fireEvent.click(screen.getByLabelText('Share'));
 
-describe('TranscriptSharePopover', () => {
+describe('SegmentInfoPopover', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.assign(navigator, {
