@@ -1040,3 +1040,22 @@ SELECT COUNT(*)
 FROM feed_audit_events
 WHERE feed_id = $1
 """
+
+GET_FEED_SEARCH_OPTIONS_TAGS_SQL = """\
+SELECT DISTINCT elem->>'key' AS key, elem->>'value' AS value
+FROM feed_properties, jsonb_array_elements(COALESCE(tags, '[]'::jsonb)) AS elem
+WHERE elem->>'key' IS NOT NULL AND elem->>'value' IS NOT NULL
+ORDER BY key, value;
+"""
+
+GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL = """\
+SELECT DISTINCT source_type
+FROM feeds
+ORDER BY source_type;
+"""
+
+GET_FEED_SEARCH_OPTIONS_STATUSES_SQL = """\
+SELECT DISTINCT status
+FROM feeds
+ORDER BY status;
+"""

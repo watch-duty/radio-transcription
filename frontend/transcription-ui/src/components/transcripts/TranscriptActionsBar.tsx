@@ -2,6 +2,7 @@ import React from 'react';
 
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import ClearIcon from '@mui/icons-material/Clear';
+import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import FormControl from '@mui/material/FormControl';
@@ -17,6 +18,7 @@ import Tooltip from '@mui/material/Tooltip';
 
 import type { AlertFilter } from '../../hooks/useAudioSegments';
 import { useDraftPopover } from '../../hooks/useDraftPopover';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { DateTimePicker } from '../common/DateTimePicker';
 
 export interface TranscriptActionsBarProps {
@@ -161,14 +163,104 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     if (searchQuery) setSearchQuery('');
   };
 
+  // Narrow: collapse search/filter/redact into a settings popover so the row fits.
+  const isNarrow = useIsNarrow();
+  const [controlsAnchor, setControlsAnchor] =
+    React.useState<HTMLElement | null>(null);
+  const hasActiveControls =
+    alertFilter !== 'all' || redactTranscripts || Boolean(searchQuery);
+
+  const renderSearchField = (inPopover: boolean) => (
+    <TextField
+      size="small"
+      fullWidth={inPopover}
+      placeholder="Search transcripts…"
+      value={searchDraft}
+      onChange={(e) => setSearchDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') setSearchQuery(searchDraft);
+      }}
+      sx={{
+        ...(inPopover ? {} : { width: SEARCH_WIDTH, flexShrink: 0 }),
+        '& .MuiOutlinedInput-root': {
+          height: CONTROL_HEIGHT,
+          borderRadius: CONTROL_RADIUS,
+          fontSize: CONTROL_FONT_SIZE,
+        },
+      }}
+      slotProps={{
+        input: {
+          'aria-label': 'Search transcripts',
+          endAdornment: searchDraft ? (
+            <InputAdornment position="end">
+              <IconButton
+                aria-label="clear search"
+                size="small"
+                edge="end"
+                onClick={clearSearch}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </InputAdornment>
+          ) : null,
+        },
+      }}
+    />
+  );
+
+  const redactControl = (
+    <FormControlLabel
+      control={
+        <Switch
+          checked={redactTranscripts}
+          onChange={(e) => setRedactTranscripts(e.target.checked)}
+          size="small"
+        />
+      }
+      label="Redact transcripts"
+      slotProps={{ typography: { sx: { fontSize: CONTROL_FONT_SIZE } } }}
+      sx={{ ml: 0, mr: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+    />
+  );
+
+  const filterSelect = (fullWidth: boolean) => (
+    <FormControl
+      size="small"
+      fullWidth={fullWidth}
+      sx={{ flexShrink: 0, minWidth: fullWidth ? undefined : 110 }}
+    >
+      <Select
+        value={alertFilter}
+        onChange={(e) => setAlertFilter(e.target.value as AlertFilter)}
+        inputProps={{ 'aria-label': 'Transcript filter' }}
+        sx={{
+          height: CONTROL_HEIGHT,
+          borderRadius: CONTROL_RADIUS,
+          fontSize: CONTROL_FONT_SIZE,
+          '& .MuiSelect-select': {
+            py: 0,
+            display: 'flex',
+            alignItems: 'center',
+          },
+        }}
+      >
+        <MenuItem value="all" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+          All transcripts
+        </MenuItem>
+        <MenuItem value="alerts" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+          Alerts only
+        </MenuItem>
+      </Select>
+    </FormControl>
+  );
+
   return (
     <Box
       sx={{
         display: 'flex',
-        flexDirection: { xs: 'column', md: 'row' },
-        justifyContent: 'space-between',
-        alignItems: { xs: 'stretch', md: 'center' },
-        gap: { xs: 1, md: 0 },
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 0.75,
         mb: 0.5,
         // Lift the bar (and its overflowing speaker badges) above the list's
         // sticky headers (zIndex 1) so they aren't clipped behind them.
@@ -176,156 +268,114 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         zIndex: 2,
       }}
     >
-      <Box
+      <Button
+        variant="contained"
+        size="small"
+        disableElevation
+        disabled={disableJumpToLive}
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          width: { xs: '100%', md: 'auto' },
+          textTransform: 'none',
+          fontSize: CONTROL_FONT_SIZE,
+          height: CONTROL_HEIGHT,
+          borderRadius: CONTROL_RADIUS,
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
         }}
+        onClick={onClickViewLatest}
       >
-        <Button
-          variant="contained"
+        Jump to live
+      </Button>
+
+      <Tooltip title="Filter by date and time">
+        <IconButton
+          aria-label="filter by date"
           size="small"
-          disableElevation
-          disabled={disableJumpToLive}
+          onClick={dateFilter.open}
           sx={{
-            textTransform: 'none',
-            fontSize: CONTROL_FONT_SIZE,
+            width: CONTROL_HEIGHT,
             height: CONTROL_HEIGHT,
-            borderRadius: CONTROL_RADIUS,
-            whiteSpace: 'nowrap',
-            flexGrow: { xs: 1, md: 0 },
+            flexShrink: 0,
+            ...(dateTime && ACTIVE_FILTER_SX),
           }}
-          onClick={onClickViewLatest}
         >
-          Jump to live
-        </Button>
-
-        <Tooltip title="Filter by date and time">
-          <IconButton
-            aria-label="filter by date"
-            size="small"
-            onClick={dateFilter.open}
-            sx={{
-              width: CONTROL_HEIGHT,
-              height: CONTROL_HEIGHT,
-              ...(dateTime && ACTIVE_FILTER_SX),
-            }}
-          >
-            <CalendarMonthIcon />
-          </IconButton>
-        </Tooltip>
-        <DraftFilterPopover
-          anchorEl={dateFilter.anchorEl}
-          onCancel={dateFilter.cancel}
-          onClear={dateFilter.clear}
-          onApply={dateFilter.apply}
-        >
-          {/* Popover owns Clear/Cancel/Apply, so the picker shows only OK. */}
-          <DateTimePicker
-            label="Date/time"
-            dateTime={dateFilter.draft}
-            setDateTime={dateFilter.setDraft}
-            actions={['accept']}
-            width="100%"
-          />
-        </DraftFilterPopover>
-      </Box>
-
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: { xs: 'column', sm: 'row' },
-          alignItems: { xs: 'stretch', sm: 'center' },
-          gap: 1,
-          width: { xs: '100%', md: 'auto' },
-        }}
+          <CalendarMonthIcon />
+        </IconButton>
+      </Tooltip>
+      <DraftFilterPopover
+        anchorEl={dateFilter.anchorEl}
+        onCancel={dateFilter.cancel}
+        onClear={dateFilter.clear}
+        onApply={dateFilter.apply}
       >
-        <TextField
-          size="small"
-          placeholder="Search transcripts…"
-          value={searchDraft}
-          onChange={(e) => setSearchDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') setSearchQuery(searchDraft);
-          }}
-          sx={{
-            width: { xs: '100%', sm: SEARCH_WIDTH },
-            '& .MuiOutlinedInput-root': {
-              height: CONTROL_HEIGHT,
-              borderRadius: CONTROL_RADIUS,
-              fontSize: CONTROL_FONT_SIZE,
-            },
-          }}
-          slotProps={{
-            input: {
-              'aria-label': 'Search transcripts',
-              endAdornment: searchDraft ? (
-                <InputAdornment position="end">
-                  <IconButton
-                    aria-label="clear search"
-                    size="small"
-                    edge="end"
-                    onClick={clearSearch}
-                  >
-                    <ClearIcon fontSize="small" />
-                  </IconButton>
-                </InputAdornment>
-              ) : null,
-            },
-          }}
+        {/* Popover owns Clear/Cancel/Apply, so the picker shows only OK. */}
+        <DateTimePicker
+          label="Date/time"
+          dateTime={dateFilter.draft}
+          setDateTime={dateFilter.setDraft}
+          actions={['accept']}
+          width="100%"
         />
+      </DraftFilterPopover>
+
+      {isNarrow ? (
+        <>
+          <Tooltip title="Transcript settings">
+            <IconButton
+              aria-label="Transcript settings"
+              size="small"
+              onClick={(e) => setControlsAnchor(e.currentTarget)}
+              sx={{
+                width: CONTROL_HEIGHT,
+                height: CONTROL_HEIGHT,
+                flexShrink: 0,
+                ml: 'auto',
+                ...(hasActiveControls && ACTIVE_FILTER_SX),
+              }}
+            >
+              <TuneIcon />
+            </IconButton>
+          </Tooltip>
+          <Popover
+            // Guard against a stale anchor retained across a breakpoint switch:
+            // the stored button unmounts when the bar goes wide, so only open
+            // while it is still in the document.
+            open={Boolean(controlsAnchor?.isConnected)}
+            anchorEl={controlsAnchor}
+            onClose={() => setControlsAnchor(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          >
+            <Box
+              sx={{
+                p: 2,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1.5,
+                width: 260,
+              }}
+            >
+              {renderSearchField(true)}
+              {filterSelect(true)}
+              {redactControl}
+            </Box>
+          </Popover>
+        </>
+      ) : (
         <Box
           sx={{
             display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 1,
-            width: { xs: '100%', sm: 'auto' },
+            justifyContent: 'flex-end',
+            gap: 0.75,
+            ml: 'auto',
           }}
         >
-          <FormControl
-            size="small"
-            sx={{ flexGrow: { xs: 1, sm: 0 }, minWidth: { xs: 0, sm: 120 } }}
-          >
-            <Select
-              value={alertFilter}
-              onChange={(e) => setAlertFilter(e.target.value as AlertFilter)}
-              inputProps={{ 'aria-label': 'Transcript filter' }}
-              sx={{
-                height: CONTROL_HEIGHT,
-                borderRadius: CONTROL_RADIUS,
-                fontSize: CONTROL_FONT_SIZE,
-                '& .MuiSelect-select': {
-                  py: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                },
-              }}
-            >
-              <MenuItem value="all" sx={{ fontSize: CONTROL_FONT_SIZE }}>
-                All transcripts
-              </MenuItem>
-              <MenuItem value="alerts" sx={{ fontSize: CONTROL_FONT_SIZE }}>
-                Alerts only
-              </MenuItem>
-            </Select>
-          </FormControl>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={redactTranscripts}
-                onChange={(e) => setRedactTranscripts(e.target.checked)}
-                size="small"
-              />
-            }
-            label="Redact transcripts"
-            slotProps={{ typography: { sx: { fontSize: CONTROL_FONT_SIZE } } }}
-            sx={{ ml: 0, mr: 0, whiteSpace: 'nowrap' }}
-          />
+          {renderSearchField(false)}
+          {filterSelect(false)}
+          {redactControl}
         </Box>
-      </Box>
+      )}
     </Box>
   );
 };

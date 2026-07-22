@@ -188,7 +188,7 @@ export default function AppContainer({
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
+          p: { xs: 1.5, sm: 3 },
           height: '100vh',
           display: 'flex',
           flexDirection: 'column',

@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -68,7 +68,13 @@ class SourceType(enum.StrEnum):
         deploy.
     """
 
+    # Continuous Icecast-protocol stream for Broadcastify feeds
+    # (handled by icecast_collector.py). Currently the primary stream source
+    # using the Icecast collector; feeds into Dataflow segmentation.
+    # Note: Do not confuse with BCFY_CALLS (discrete REST polling collector).
     BCFY_FEEDS = "bcfy_feeds"
+    # Discrete call REST polling API collector for Broadcastify Calls
+    # (bcfy_calls_collector.py). Does NOT pass through Dataflow segmentation.
     BCFY_CALLS = "bcfy_calls"
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
@@ -1426,3 +1432,23 @@ class FeedStore:
                 )
             )
         return PaginatedFeedAuditEvents(events, new_next_token, total)
+
+    async def get_feed_search_options(self) -> dict[str, list[Any]]:
+        """Fetch precomputed search filter options for feeds."""
+        async with self._pool.acquire() as conn:
+            tag_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_TAGS_SQL
+            )
+            st_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL
+            )
+            status_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL
+            )
+            return {
+                "source_types": [r["source_type"] for r in st_rows],
+                "statuses": [r["status"] for r in status_rows],
+                "tags": [
+                    {"key": r["key"], "value": r["value"]} for r in tag_rows
+                ],
+            }
