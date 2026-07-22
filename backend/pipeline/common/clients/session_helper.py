@@ -3,8 +3,16 @@ from __future__ import annotations
 import httpx
 import requests
 from requests.adapters import HTTPAdapter
-from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 from urllib3.util import Retry
+
+from backend.pipeline.common import auth_client, env
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 
 DEFAULT_STATUS_FORCELIST = [429, 500, 502, 503, 504]
 
@@ -68,3 +76,46 @@ def get_httpx_retry_config(
         "retry": retry_if_exception(is_transient_httpx_error),
         "reraise": True,
     }
+
+
+def authenticated_get(
+    client: httpx.Client,
+    base_url: str,
+    url: str,
+    *,
+    params: dict | None = None,
+    timeout: float = 5,
+    total_attempts: int = 4,
+    multiplier: float = 0.5,
+    min_seconds: float = 0.5,
+    max_seconds: float = 2.0,
+) -> httpx.Response:
+    """Performs a GET against an internal API with traceparent propagation, GCP
+    auth, and retries on transient errors.
+
+    Raises the last ``httpx.HTTPError`` if every retry attempt is exhausted.
+    """
+    headers: dict[str, str] = {}
+
+    traceparent = get_current_traceparent()
+    if traceparent:
+        headers["traceparent"] = traceparent
+
+    if env.is_gcp_env():
+        token = auth_client.get_id_token(base_url)
+        headers["Authorization"] = f"Bearer {token}"
+
+    for attempt in Retrying(
+        **get_httpx_retry_config(
+            total_attempts=total_attempts,
+            multiplier=multiplier,
+            min_seconds=min_seconds,
+            max_seconds=max_seconds,
+        )
+    ):
+        with attempt:
+            response = client.get(
+                url, params=params, headers=headers, timeout=timeout
+            )
+            response.raise_for_status()
+    return response
