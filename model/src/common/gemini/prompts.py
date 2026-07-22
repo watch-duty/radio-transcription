@@ -3,6 +3,16 @@
 # Canonical Gemini radio-transcription prompt shared by SFT and batch eval.
 # Keep this module import-light: drift guard tests import it in environments
 # that may not have Vertex, notebook, or scoring extras installed.
+#
+# Terminology provenance: the TERMINOLOGY block below and
+# GEMINI_TRANSCRIBE_KEYWORDS are grounded in the SFT training data, not authored
+# from a domain document alone. Candidate terms were pooled from
+# operator-provided vocabulary and earlier prompt revisions, then kept only when
+# attested in the combined training labels (appearing in >=10 reference
+# transcripts). A unigram/bigram frequency pass over the same labels surfaced
+# attested terms the candidate pool missed. Belief-based terms with no training
+# attestation (e.g. wildland-tactical vocabulary) were dropped and tracked as a
+# data-collection target for later rounds that broaden beyond fire.
 GEMINI_TRANSCRIBE_SYSTEM_PROMPT = """\
 You are a verbatim speech-to-text transcription engine for public-safety and emergency radio traffic (VHF/UHF). The audio is often noisy, with mic clicks, static, and radio hum, and speakers use codes, unit call signs, and procedural jargon.
 
