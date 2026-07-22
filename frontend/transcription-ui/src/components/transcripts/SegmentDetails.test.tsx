@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import { SegmentInfoPopover } from './SegmentInfoPopover';
+import { SegmentDetails } from './SegmentDetails';
 
 const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
@@ -23,7 +23,7 @@ const mockAudioSegment: AudioSegment = {
   annotations: [],
 };
 
-describe('SegmentInfoPopover', () => {
+describe('SegmentDetails', () => {
   const mockTriggerSnackbar = vi.fn();
 
   beforeEach(() => {
@@ -39,43 +39,28 @@ describe('SegmentInfoPopover', () => {
     cleanup();
   });
 
-  it('renders info button and opens popover with details on click', async () => {
+  it('renders segment and external IDs and copies them', () => {
     const segmentWithExtId = {
       ...mockAudioSegment,
       externalAudioSegmentId: 'ext-segment-abc-123',
     };
 
     render(
-      <SegmentInfoPopover
+      <SegmentDetails
         audioSegment={segmentWithExtId}
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
 
-    // Verify info button is rendered
-    const infoButton = screen.getByLabelText('view segment info');
-    expect(infoButton).toBeInTheDocument();
-
-    // Popover content shouldn't be visible yet
-    expect(screen.queryByText('Segment Details')).not.toBeInTheDocument();
-
-    // Click to open popover
-    fireEvent.click(infoButton);
-
-    // Verify popover is visible
-    expect(await screen.findByText('Segment Details')).toBeInTheDocument();
+    expect(screen.getByText('Segment ID')).toBeInTheDocument();
     expect(screen.getByText('tx-123')).toBeInTheDocument();
     expect(screen.getByText('ext-segment-abc-123')).toBeInTheDocument();
 
-    // Test copying segment ID from popover
-    const copySegmentIdBtn = screen.getByLabelText('copy segment id');
-    fireEvent.click(copySegmentIdBtn);
+    fireEvent.click(screen.getByLabelText('copy segment id'));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('tx-123');
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Segment ID copied');
 
-    // Test copying external ID from popover
-    const copyExternalIdBtn = screen.getByLabelText('copy external segment id');
-    fireEvent.click(copyExternalIdBtn);
+    fireEvent.click(screen.getByLabelText('copy external segment id'));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       'ext-segment-abc-123'
     );
@@ -84,27 +69,23 @@ describe('SegmentInfoPopover', () => {
     );
   });
 
-  it('does not render external segment ID inside popover if not present', async () => {
+  it('does not render external segment ID when not present', () => {
     render(
-      <SegmentInfoPopover
+      <SegmentDetails
         audioSegment={mockAudioSegment}
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
 
-    const infoButton = screen.getByLabelText('view segment info');
-    fireEvent.click(infoButton);
-
-    expect(await screen.findByText('Segment Details')).toBeInTheDocument();
     expect(screen.getByText('tx-123')).toBeInTheDocument();
     expect(
       screen.queryByLabelText('copy external segment id')
     ).not.toBeInTheDocument();
   });
 
-  it('renders degradation reasons as segment errors inside the popover', async () => {
+  it('renders degradation reasons as segment errors', () => {
     render(
-      <SegmentInfoPopover
+      <SegmentDetails
         audioSegment={mockAudioSegment}
         triggerSnackbar={mockTriggerSnackbar}
         degradationReasons={[
@@ -114,10 +95,7 @@ describe('SegmentInfoPopover', () => {
       />
     );
 
-    const infoButton = screen.getByLabelText('view segment info');
-    fireEvent.click(infoButton);
-
-    expect(await screen.findByText('Segment error(s)')).toBeInTheDocument();
+    expect(screen.getByText('Segment error(s)')).toBeInTheDocument();
     expect(screen.getByText('Audio cut off at the end')).toBeInTheDocument();
     expect(screen.getByText('System max tokens reached')).toBeInTheDocument();
   });

@@ -2,10 +2,8 @@ import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
-import IconButton from '@mui/material/IconButton';
-import Link from '@mui/material/Link';
+import Link, { type LinkProps } from '@mui/material/Link';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
@@ -36,7 +34,6 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   triggerSnackbar,
   onError,
 }) => {
-  // Narrow: collapse the action links to icons so they stay on the title's line.
   const isNarrow = useIsNarrow();
 
   const handleShareFeed = () => {
@@ -49,38 +46,29 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
     triggerSnackbar('Feed link copied');
   };
 
-  // Narrow shows an icon-only button; wide shows an icon + text link.
-  const renderExternalLink = (
-    href: string,
+  const renderAction = (
     icon: React.ReactNode,
-    label: string
-  ) =>
-    isNarrow ? (
-      <Tooltip title={label}>
-        <IconButton
-          size="small"
-          color="primary"
-          component="a"
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={label}
-        >
-          {icon}
-        </IconButton>
-      </Tooltip>
-    ) : (
+    label: string,
+    linkProps: LinkProps,
+    tooltip: string = label
+  ) => (
+    <Tooltip title={tooltip}>
       <Link
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
         variant="body2"
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}
+        aria-label={label}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: isNarrow ? 0 : 0.5,
+          p: 0.5,
+        }}
+        {...linkProps}
       >
         {icon}
-        {label}
+        {!isNarrow && label}
       </Link>
-    );
+    </Tooltip>
+  );
 
   return (
     <>
@@ -95,26 +83,24 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
         <Box
           sx={{
             mt: 1,
-            display: 'flex',
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: { xs: 'nowrap', sm: 'wrap' },
-            gap: { xs: 1, sm: 2 },
             width: '100%',
+            display: 'flex',
+            flexWrap: 'nowrap',
+            alignItems: isNarrow ? 'flex-start' : 'center',
+            justifyContent: 'space-between',
+            columnGap: 2,
           }}
         >
           <Box
             sx={{
+              // Narrow: name on its own line with the chip+status group stacked
+              // below; wide: both inline. Same `isNarrow` trigger as the labels.
               display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 1,
+              flexDirection: isNarrow ? 'column' : 'row',
+              alignItems: isNarrow ? 'flex-start' : 'center',
+              gap: isNarrow ? 0.25 : 1,
               flexGrow: 1,
               minWidth: 0,
-              // Clip rather than push the action icons off-screen when the row
-              // can't wrap (xs) and the name/chip/status don't fit.
-              overflow: 'hidden',
             }}
           >
             <Typography
@@ -124,72 +110,72 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                minWidth: 0,
+                // Keep a healthy minimum for the name; the chip+status group
+                // gives (status truncates) before the name does.
+                flexShrink: 1,
+                minWidth: 200,
+                maxWidth: '100%',
               }}
             >
               {searchedFeed.name}
             </Typography>
-            <Chip
-              label={toSourceTypeString(searchedFeed.sourceType)}
-              size="small"
-            />
-            <FeedStatusIndicator
-              status={status}
-              substatus={searchedFeed.substatus}
-              statusReason={searchedFeed.statusReason}
-              statusReasonDetail={searchedFeed.statusReasonDetail}
-              lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
-            />
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                flexShrink: 1,
+                minWidth: 0,
+                maxWidth: '100%',
+              }}
+            >
+              <Chip
+                label={toSourceTypeString(searchedFeed.sourceType)}
+                size="small"
+                sx={{ flexShrink: 0 }}
+              />
+              <FeedStatusIndicator
+                status={status}
+                substatus={searchedFeed.substatus}
+                statusReason={searchedFeed.statusReason}
+                statusReasonDetail={searchedFeed.statusReasonDetail}
+                lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
+              />
+            </Box>
           </Box>
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
-              flexWrap: 'wrap',
-              justifyContent: 'flex-end',
               flexShrink: 0,
-              gap: { xs: 0.5, sm: 2 },
+              columnGap: 2,
             }}
           >
-            {isNarrow ? (
-              <Tooltip title="Share feed">
-                <IconButton
-                  size="small"
-                  color="primary"
-                  disabled={!searchedFeed}
-                  onClick={handleShareFeed}
-                  aria-label="copy feed deeplink"
-                  sx={{ cursor: 'copy' }}
-                >
-                  <LinkIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            ) : (
-              <Tooltip title="Copy feed deep link">
-                <Button
-                  variant="outlined"
-                  size="small"
-                  disabled={!searchedFeed}
-                  onClick={handleShareFeed}
-                  sx={{ textTransform: 'none', cursor: 'copy' }}
-                  aria-label="copy feed deeplink"
-                  startIcon={<LinkIcon fontSize="small" />}
-                >
-                  Share feed
-                </Button>
-              </Tooltip>
+            {renderAction(
+              <LinkIcon fontSize="small" />,
+              'Share feed',
+              { component: 'button', type: 'button', onClick: handleShareFeed },
+              'Copy feed deep link'
             )}
             {sourceUrl &&
-              renderExternalLink(
-                sourceUrl,
+              renderAction(
                 <OpenInNewOutlinedIcon fontSize="small" />,
-                'Original source link'
+                'Original source link',
+                {
+                  href: sourceUrl,
+                  target: '_blank',
+                  rel: 'noopener noreferrer',
+                }
               )}
             {archiveUrl &&
-              renderExternalLink(
-                archiveUrl,
+              renderAction(
                 <InventoryIcon fontSize="small" />,
-                'Archives link'
+                'Archives link',
+                {
+                  href: archiveUrl,
+                  target: '_blank',
+                  rel: 'noopener noreferrer',
+                }
               )}
           </Box>
         </Box>

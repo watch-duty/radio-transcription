@@ -6,8 +6,11 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DonwloadIcon from '@mui/icons-material/Download';
 import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
+import Popover from '@mui/material/Popover';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -27,7 +30,18 @@ import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
-import { SegmentInfoPopover } from './SegmentInfoPopover';
+import { SegmentDetails } from './SegmentDetails';
+
+// Left-aligned icon+label row for the actions inside the share popover. The
+// icon is a plain child (not `startIcon`) so its `fontSize="small"` isn't
+// shrunk by MUI's small-button icon sizing, keeping every popover icon equal.
+const SHARE_ACTION_SX = {
+  justifyContent: 'flex-start',
+  textTransform: 'none',
+  color: 'text.primary',
+  gap: 1,
+  px: 1,
+} as const;
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -68,6 +82,7 @@ export function TranscriptRow({
   const { isAdmin } = useAuth();
 
   const [isHovered, setIsHovered] = useState(false);
+  const [shareAnchor, setShareAnchor] = useState<HTMLElement | null>(null);
 
   const currentDate = new Date(audioSegment.startTimestamp);
 
@@ -158,6 +173,52 @@ export function TranscriptRow({
       return theme.palette.primary.main;
     }
     return theme.palette.primary.light;
+  };
+
+  const closeShare = () => setShareAnchor(null);
+
+  const handleCopyTranscript = () => {
+    if (transcriptAnnotation?.text) {
+      navigator.clipboard.writeText(transcriptAnnotation.text);
+      triggerSnackbar('Transcript copied');
+    }
+    closeShare();
+  };
+
+  const handleCopyLink = () => {
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('feedId', audioSegment.feedId);
+    url.searchParams.set('segmentId', audioSegment.id);
+    url.searchParams.set(
+      'timestamp',
+      new Date(audioSegment.startTimestamp).getTime().toString()
+    );
+    navigator.clipboard.writeText(url.toString());
+    triggerSnackbar('Transcript link copied');
+    closeShare();
+  };
+
+  const handleDownloadAudio = async () => {
+    if (!audioSegment.playbackAudioUri) {
+      return;
+    }
+    try {
+      const url = getAudioUrl(audioSegment.playbackAudioUri);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch audio: ${response.statusText}`);
+      }
+      const blob = await response.blob();
+      const fileName =
+        audioSegment.playbackAudioUri.split('/').pop() ||
+        audioSegment.playbackAudioUri;
+      saveAs(blob, fileName);
+      triggerSnackbar('Audio downloaded');
+    } catch (err) {
+      console.error('Failed to download audio:', err);
+      triggerSnackbar('Failed to download audio');
+    }
+    closeShare();
   };
 
   return (
@@ -412,93 +473,77 @@ export function TranscriptRow({
             mt: 0,
           }}
         >
-          {!isSilence && !isOutage && (
-            <Tooltip title="Copy transcript">
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label="copy transcript"
-                  onClick={(e) => {
-                    if (transcriptAnnotation?.text) {
-                      e.stopPropagation();
-                      navigator.clipboard.writeText(transcriptAnnotation.text);
-                      triggerSnackbar('Transcript copied');
-                    }
-                  }}
-                  sx={{ cursor: 'copy' }}
-                  disabled={!transcriptAnnotation || hasErrors}
-                >
-                  <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          )}
-          <Tooltip title="Copy transcript deep link">
+          <Tooltip title="Share">
             <IconButton
               size="small"
-              aria-label="copy deeplink"
+              aria-label="Share"
               onClick={(e) => {
                 e.stopPropagation();
-                const url = new URL(
-                  window.location.origin + window.location.pathname
-                );
-                url.searchParams.set('feedId', audioSegment.feedId);
-                url.searchParams.set('segmentId', audioSegment.id);
-                url.searchParams.set(
-                  'timestamp',
-                  new Date(audioSegment.startTimestamp).getTime().toString()
-                );
-                navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Transcript link copied');
+                setShareAnchor(e.currentTarget);
               }}
-              sx={{ cursor: 'copy' }}
             >
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Download audio">
-            <IconButton
-              size="small"
-              aria-label="download audio"
-              disabled={!audioSegment.playbackAudioUri}
-              onClick={async (e) => {
-                e.stopPropagation();
-
-                // Button will be disabled, but need this for type safety.
-                if (!audioSegment.playbackAudioUri) {
-                  return;
-                }
-
-                try {
-                  const url = getAudioUrl(audioSegment.playbackAudioUri);
-                  const response = await fetch(url);
-                  if (!response.ok) {
-                    throw new Error(
-                      `Failed to fetch audio: ${response.statusText}`
-                    );
-                  }
-                  const blob = await response.blob();
-                  const fileName =
-                    audioSegment.playbackAudioUri.split('/').pop() ||
-                    audioSegment.playbackAudioUri;
-                  saveAs(blob, fileName);
-                  triggerSnackbar('Audio downloaded');
-                } catch (err) {
-                  console.error('Failed to download audio:', err);
-                  triggerSnackbar('Failed to download audio');
-                }
+          <Popover
+            open={Boolean(shareAnchor)}
+            anchorEl={shareAnchor}
+            onClose={closeShare}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Box
+              sx={{
+                p: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.5,
+                width: isAdmin ? 240 : 180,
               }}
             >
-              <DonwloadIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          {isAdmin && (
-            <SegmentInfoPopover
-              audioSegment={audioSegment}
-              degradationReasons={degradationReasons}
-              triggerSnackbar={triggerSnackbar}
-            />
-          )}
+              {!isSilence && !isOutage && (
+                <Button
+                  size="small"
+                  onClick={handleCopyTranscript}
+                  disabled={!transcriptAnnotation || hasErrors}
+                  sx={SHARE_ACTION_SX}
+                >
+                  <ContentCopyIcon fontSize="small" />
+                  Copy transcript
+                </Button>
+              )}
+              <Button
+                size="small"
+                onClick={handleCopyLink}
+                sx={SHARE_ACTION_SX}
+              >
+                <LinkIcon fontSize="small" />
+                Copy link
+              </Button>
+              <Button
+                size="small"
+                onClick={handleDownloadAudio}
+                disabled={!audioSegment.playbackAudioUri}
+                sx={SHARE_ACTION_SX}
+              >
+                <DonwloadIcon fontSize="small" />
+                Download audio
+              </Button>
+              {isAdmin && (
+                <>
+                  <Divider sx={{ my: 0.5 }} />
+                  <Box sx={{ py: 0.5 }}>
+                    <SegmentDetails
+                      audioSegment={audioSegment}
+                      degradationReasons={degradationReasons}
+                      triggerSnackbar={triggerSnackbar}
+                    />
+                  </Box>
+                </>
+              )}
+            </Box>
+          </Popover>
         </Box>
       </ListItem>
     </Box>
