@@ -123,9 +123,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         shutdown_event: asyncio.Event,
     ) -> list[FireNotificationsFile]:
         """Fetch, filter, and parse the file list from HTTP polling endpoint."""
-        clean_id = source_feed_id.removeprefix("RECORDINGS/")
-        dir_path = f"RECORDINGS/{clean_id}"
-        query = urllib.parse.urlencode({"dir": dir_path})
+        query = urllib.parse.urlencode({"dir": source_feed_id})
         poll_url = f"{self.url_base}/api/audio_file?{query}"
 
         def validate_payload(payload: object) -> dict[str, Any]:
