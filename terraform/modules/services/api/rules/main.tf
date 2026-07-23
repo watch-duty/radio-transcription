@@ -4,62 +4,59 @@ locals {
   project_id = data.google_project.project.project_id
 }
 
-# Service account for the feed store service
-resource "google_service_account" "feed_store_sa" {
-  account_id   = "feed-store-${var.environment}"
-  display_name = "Feed Store Service Account"
-  description  = "Service account for the Feed Store Cloud Run service"
+# Service account for the rules api service
+resource "google_service_account" "rules_api_sa" {
+  account_id   = "rules-management-${var.environment}"
+  display_name = "Rules api Service Account"
+  description  = "Service account for the Rules Management Cloud Run service"
 }
 
-# Allow feed store service to invoke protected Cloud Run services
-resource "google_project_iam_member" "feed_store_run_invoker" {
+# Allow rules api service to invoke protected Cloud Run services
+resource "google_project_iam_member" "rules_api_run_invoker" {
   project = local.project_id
   role    = "roles/run.invoker"
-  member  = "serviceAccount:${google_service_account.feed_store_sa.email}"
+  member  = "serviceAccount:${google_service_account.rules_api_sa.email}"
 }
 
-# Allow feed store service to access the AlloyDB worker password secret
-resource "google_secret_manager_secret_iam_member" "feed_store_alloydb_secret_accessor" {
+# Allow rules api service to access the AlloyDB worker password secret
+resource "google_secret_manager_secret_iam_member" "rules_api_alloydb_secret_accessor" {
   project   = local.project_id
   secret_id = var.worker_password_secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.feed_store_sa.email}"
+  member    = "serviceAccount:${google_service_account.rules_api_sa.email}"
 }
 
 # Standard roles for logging, monitoring, and tracing in Cloud Run
-resource "google_project_iam_member" "feed_store_cloudtrace_agent" {
+resource "google_project_iam_member" "rules_api_cloudtrace_agent" {
   project = local.project_id
   role    = "roles/cloudtrace.agent"
-  member  = "serviceAccount:${google_service_account.feed_store_sa.email}"
+  member  = "serviceAccount:${google_service_account.rules_api_sa.email}"
 }
 
-resource "google_project_iam_member" "feed_store_log_writer" {
+resource "google_project_iam_member" "rules_api_log_writer" {
   project = local.project_id
   role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.feed_store_sa.email}"
+  member  = "serviceAccount:${google_service_account.rules_api_sa.email}"
 }
 
-resource "google_project_iam_member" "feed_store_metric_writer" {
+resource "google_project_iam_member" "rules_api_metric_writer" {
   project = local.project_id
   role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${google_service_account.feed_store_sa.email}"
+  member  = "serviceAccount:${google_service_account.rules_api_sa.email}"
 }
 
-# Cloud Run service that manages feeds
-resource "google_cloud_run_v2_service" "feed_store" {
-  name                = "feed-store-${var.environment}"
+# Cloud Run service that manages transcription rules
+resource "google_cloud_run_v2_service" "rules_api" {
+  name                = "rules-management-${var.environment}"
   location            = var.region
   deletion_protection = false
 
   depends_on = [
-    google_secret_manager_secret_iam_member.feed_store_alloydb_secret_accessor
+    google_secret_manager_secret_iam_member.rules_api_alloydb_secret_accessor
   ]
 
   template {
-    scaling {
-      min_instance_count = 1
-    }
-    service_account = google_service_account.feed_store_sa.email
+    service_account = google_service_account.rules_api_sa.email
 
     vpc_access {
       network_interfaces {

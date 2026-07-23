@@ -9,8 +9,9 @@ import Chip from '@mui/material/Chip';
 import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import { type SxProps, type Theme, useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
+import { type SxProps, type Theme } from '@mui/material/styles';
+
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 
 import { DEFAULT_PAN, DEFAULT_SPEED } from '../../audio/audioSettings';
 import { AudioSettingsMenu } from './control/AudioSettingsMenu';
@@ -55,10 +56,9 @@ export function AudioControl({
   onReset,
   sx,
 }: AudioControlProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
 
-  const controlSize = isMobile ? 'medium' : 'large';
+  const controlSize = isNarrow ? 'medium' : 'large';
 
   const hasAudioSettings =
     volumeDb !== undefined &&
