@@ -494,6 +494,76 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             1,
         )
 
+    async def test_admission_cycle_emits_domain_operational_summary(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        grant = _feed_grant(uuid.uuid4(), 1)
+        control.queue_claims(grant_control.ClaimMode.PRIMARY)
+        control.queue_claims(
+            grant_control.ClaimMode.RECOVERY,
+            grant_control.ClaimedGrant(grant, _feed_payload(grant)),
+        )
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+
+        with unittest.mock.patch.object(
+            grant_supervisor.logger,
+            "info",
+        ) as log_info:
+            await supervisor.admit_cycle(_OWNER)
+
+        fields = log_info.call_args.kwargs["extra"]["json_fields"]
+        self.assertEqual(fields["event_type"], "lease_admission_cycle")
+        self.assertEqual(fields["worker_id"], str(_OWNER))
+        self.assertEqual(fields["domain_id"], "feed")
+        self.assertEqual(fields["active_units"], 1)
+        self.assertEqual(fields["max_units"], 800)
+        self.assertEqual(fields["slack"], 799)
+        self.assertEqual(fields["admission_budget"], 20)
+        self.assertEqual(fields["primary_acquired"], 0)
+        self.assertEqual(fields["recovery_acquired"], 1)
+        self.assertEqual(fields["total_acquired"], 1)
+        self.assertFalse(fields["memory_paused"])
+        self.assertIsNone(fields["error"])
+        runner.release.set()
+        await _wait(runner.finished_event(grant))
+
+    async def test_memory_pause_observes_cycle_without_claiming(self) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+
+        with unittest.mock.patch.object(
+            grant_supervisor.logger,
+            "info",
+        ) as log_info:
+            await supervisor.admit_cycle(_OWNER, memory_paused=True)
+
+        self.assertEqual(control.claim_calls, [])
+        fields = log_info.call_args.kwargs["extra"]["json_fields"]
+        self.assertTrue(fields["memory_paused"])
+        self.assertEqual(fields["admission_budget"], 0)
+        self.assertEqual(fields["total_acquired"], 0)
+
     async def test_in_flight_reservations_prevent_concurrent_overclaim(
         self,
     ) -> None:
@@ -546,9 +616,14 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             worker_profiles.LEGACY_PROFILE,
             _feed_registration(control, runner),
         )
-        control.claim_error = OSError("database unavailable")
+        control.claim_error = grant_control.GrantControlBackendUnavailable(
+            "database unavailable"
+        )
 
-        with self.assertRaisesRegex(OSError, "database unavailable"):
+        with self.assertRaisesRegex(
+            grant_control.GrantControlBackendUnavailable,
+            "database unavailable",
+        ):
             await supervisor.admit_cycle(_OWNER)
 
         self.assertTrue(supervisor.admission_enabled)
@@ -573,6 +648,33 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         )
         runner.release.set()
         await _wait(runner.finished_event(grant))
+
+    async def test_untyped_claim_failure_fails_supervisor_closed(self) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        control.claim_error = RuntimeError("malformed store result")
+
+        with self.assertRaisesRegex(
+            grant_control.GrantControlIntegrityError,
+            "outside the typed backend boundary",
+        ):
+            await supervisor.admit_cycle(_OWNER)
+
+        self.assertIsInstance(
+            supervisor.integrity_failure,
+            grant_control.GrantControlIntegrityError,
+        )
+        self.assertTrue(supervisor.integrity_failure_event.is_set())
 
     async def test_heartbeat_ineligible_stops_only_one_runner_without_write(
         self,
@@ -680,7 +782,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 grant_control.ClaimMode.PRIMARY,
             ),
         )
-        control.heartbeat_error = RuntimeError("database unavailable")
+        control.heartbeat_error = grant_control.GrantControlBackendUnavailable(
+            "database unavailable"
+        )
         supervisor = self._supervisor(
             _sid_profile(),
             _sid_registration(control, runner),
@@ -697,6 +801,42 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         control.heartbeat_error = None
         await supervisor.heartbeat_cycle(lambda: None)
         self.assertEqual(control.heartbeat_calls, [(grant,), (grant,)])
+        runner.release.set()
+        await _wait(runner.finished_event(grant))
+
+    async def test_untyped_heartbeat_failure_fails_domain_closed(self) -> None:
+        control: _Control[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Control()
+        runner: _Runner[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Runner()
+        grant = _sid_grant("123", 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(
+                grant,
+                grant_control.ClaimMode.PRIMARY,
+            ),
+        )
+        control.heartbeat_error = RuntimeError("malformed store result")
+        supervisor = self._supervisor(
+            _sid_profile(),
+            _sid_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+
+        await supervisor.heartbeat_cycle(lambda: None)
+
+        self.assertIsInstance(
+            supervisor.integrity_failure,
+            grant_control.GrantControlIntegrityError,
+        )
+        self.assertTrue(runner.contexts[grant].grant_lost.is_set())
+        self.assertTrue(runner.contexts[grant].stop_requested.is_set())
         runner.release.set()
         await _wait(runner.finished_event(grant))
 
@@ -968,7 +1108,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 grant_control.ClaimMode.PRIMARY,
             ),
         )
-        control.finalize_error = RuntimeError("connection lost")
+        control.finalize_error = grant_control.GrantControlBackendUnavailable(
+            "connection lost"
+        )
         supervisor = self._supervisor(
             _sid_profile(),
             _sid_registration(control, runner),
@@ -983,6 +1125,47 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(supervisor.admission_enabled)
         self.assertIsNone(supervisor.integrity_failure)
         self.assertFalse(supervisor.integrity_failure_event.is_set())
+        self.assertEqual(
+            supervisor.active_count(grant_control.DomainId.SID),
+            0,
+        )
+
+    async def test_untyped_finalize_failure_fails_supervisor_closed(
+        self,
+    ) -> None:
+        control: _Control[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Control()
+        runner: _Runner[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Runner()
+        grant = _sid_grant("123", 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(
+                grant,
+                grant_control.ClaimMode.PRIMARY,
+            ),
+        )
+        control.finalize_error = RuntimeError("malformed store result")
+        supervisor = self._supervisor(
+            _sid_profile(),
+            _sid_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+
+        runner.release.set()
+        await _wait(control.finalize_started)
+        await _wait(runner.finished_event(grant))
+
+        self.assertIsInstance(
+            supervisor.integrity_failure,
+            grant_control.GrantControlIntegrityError,
+        )
+        self.assertTrue(supervisor.integrity_failure_event.is_set())
         self.assertEqual(
             supervisor.active_count(grant_control.DomainId.SID),
             0,

@@ -13,7 +13,6 @@ import signal
 import socket
 import threading
 import time
-import typing
 import uuid  # noqa: TC003 - runtime type-hint resolution
 from pathlib import Path
 
@@ -68,6 +67,7 @@ from backend.pipeline.ingestion.retry import (
     retry_with_lease_check,
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
+from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage import (
     feed_lifecycle,
     feed_store,
@@ -84,10 +84,6 @@ from backend.pipeline.storage.feed_store import (
     SourceObservationResult,
     SourceType,
 )
-
-if typing.TYPE_CHECKING:
-    from backend.pipeline.ingestion.settings import CollectorSettings
-
 
 CaptureFn = collections.abc.Callable[
     [LeasedFeed, asyncio.Event, CaptureResources],
@@ -320,10 +316,6 @@ class CollectorRuntime:
         runtime_actor_id: str | None = None,
     ) -> None:
         if settings is None:
-            from backend.pipeline.ingestion.settings import (  # noqa: PLC0415
-                CollectorSettings,
-            )
-
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
@@ -781,6 +773,10 @@ class CollectorRuntime:
 
         while not shutdown.is_set():
             if self._memory_watchdog.is_paused():
+                await supervisor.admit_cycle(
+                    self._collector_settings.worker_id,
+                    memory_paused=True,
+                )
                 wait_sec = (
                     self._collector_settings.rss_watchdog_poll_interval_sec
                 )

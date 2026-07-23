@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+import collections.abc  # noqa: TC003 - public hints resolve at runtime.
 import dataclasses
 import logging
 import time
-import typing
 
 from aiohttp import web
 
-if typing.TYPE_CHECKING:
-    import collections.abc
-
-    from backend.pipeline.ingestion.settings import CollectorSettings
+from backend.pipeline.ingestion.settings import (  # noqa: TC001
+    CollectorSettings,
+)
 
 logger = logging.getLogger(__name__)
 

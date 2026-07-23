@@ -8,6 +8,8 @@ import logging
 import types
 import typing
 
+import asyncpg
+
 from backend.pipeline.ingestion import (
     failure_policy,
     failure_telemetry,
@@ -21,6 +23,11 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _QUARANTINE_OBSERVER_TIMEOUT_SEC = 2.0
+_TRANSIENT_BACKEND_ERRORS = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    OSError,
+)
 
 type QuarantineObserver = typing.Callable[
     [
@@ -30,6 +37,18 @@ type QuarantineObserver = typing.Callable[
     ],
     typing.Awaitable[None],
 ]
+
+
+async def _store_call[ResultT](
+    awaitable: typing.Awaitable[ResultT],
+    operation: str,
+) -> ResultT:
+    """Translate only retryable transport I/O at the adapter boundary."""
+    try:
+        return await awaitable
+    except _TRANSIENT_BACKEND_ERRORS as error:
+        message = f"{operation} backend is unavailable"
+        raise grant_control.GrantControlBackendUnavailable(message) from error
 
 
 def _calculate_branch_limits(
@@ -181,18 +200,27 @@ class FeedGrantControl:
         if limit == 0:
             return ()
 
-        held = await self._data_store.count_held_by_type(owner_worker_id)
+        held = await _store_call(
+            self._data_store.count_held_by_type(owner_worker_id),
+            "Feed claim",
+        )
         limits = _calculate_branch_limits(limit, self._source_caps, held)
         if mode is grant_control.ClaimMode.PRIMARY:
-            payloads = await self._data_store.acquire_feeds_batch(
-                owner_worker_id,
-                limits,
+            payloads = await _store_call(
+                self._data_store.acquire_feeds_batch(
+                    owner_worker_id,
+                    limits,
+                ),
+                "Feed claim",
             )
         else:
-            payloads = await self._data_store.acquire_feeds_recovery(
-                owner_worker_id,
-                self._abandonment_window.total_seconds(),
-                limits,
+            payloads = await _store_call(
+                self._data_store.acquire_feeds_recovery(
+                    owner_worker_id,
+                    self._abandonment_window.total_seconds(),
+                    limits,
+                ),
+                "Feed claim",
             )
 
         if len(payloads) > limit:
@@ -236,7 +264,10 @@ class FeedGrantControl:
                 cardinality, identity, order, or disposition.
         """
         grants = tuple(grants)
-        results = await self._heartbeat_store.renew_grant_heartbeats(grants)
+        results = await _store_call(
+            self._heartbeat_store.renew_grant_heartbeats(grants),
+            "Feed heartbeat",
+        )
         if len(results) != len(grants):
             msg = "Feed heartbeat result cardinality mismatch"
             raise grant_control.GrantControlIntegrityError(msg)
@@ -307,10 +338,13 @@ class FeedGrantControl:
             raise grant_control.GrantControlIntegrityError(msg)
 
         if isinstance(terminal, grant_control.NeutralRelease):
-            applied = await self._data_store.release_feed(
-                grant.feed_id,
-                grant.owner_worker_id,
-                grant.fencing_token,
+            applied = await _store_call(
+                self._data_store.release_feed(
+                    grant.feed_id,
+                    grant.owner_worker_id,
+                    grant.fencing_token,
+                ),
+                "Feed finalization",
             )
             disposition = (
                 grant_control.FinalizeDisposition.APPLIED
@@ -321,26 +355,32 @@ class FeedGrantControl:
 
         treatment = terminal.treatment
         if isinstance(treatment, failure_policy.ConsumeFailureBudget):
-            status = await self._data_store.report_feed_failure(
-                grant.feed_id,
-                grant.owner_worker_id,
-                grant.fencing_token,
-                treatment.failure_threshold,
-                treatment.backoff_base_sec,
-                treatment.backoff_max_sec,
-                actor_id=self._actor_id,
-                reason=terminal.reason,
-                status_reason=terminal.status_reason,
+            status = await _store_call(
+                self._data_store.report_feed_failure(
+                    grant.feed_id,
+                    grant.owner_worker_id,
+                    grant.fencing_token,
+                    treatment.failure_threshold,
+                    treatment.backoff_base_sec,
+                    treatment.backoff_max_sec,
+                    actor_id=self._actor_id,
+                    reason=terminal.reason,
+                    status_reason=terminal.status_reason,
+                ),
+                "Feed finalization",
             )
         elif isinstance(treatment, failure_policy.RetryWithoutBudget):
-            status = await self._data_store.release_non_budgeted_failure(
-                grant.feed_id,
-                grant.owner_worker_id,
-                grant.fencing_token,
-                retry_after=treatment.retry_after,
-                status_reason=terminal.status_reason,
-                actor_id=self._actor_id,
-                reason=terminal.reason,
+            status = await _store_call(
+                self._data_store.release_non_budgeted_failure(
+                    grant.feed_id,
+                    grant.owner_worker_id,
+                    grant.fencing_token,
+                    retry_after=treatment.retry_after,
+                    status_reason=terminal.status_reason,
+                    actor_id=self._actor_id,
+                    reason=terminal.reason,
+                ),
+                "Feed finalization",
             )
         else:
             msg = "terminal must be a closed TerminalDecision"

@@ -11,6 +11,8 @@ import math
 import typing
 import uuid
 
+import asyncpg
+
 from backend.pipeline.ingestion import (
     failure_policy,
     failure_telemetry,
@@ -32,6 +34,7 @@ _POLL_INTERVAL_SEC = 10.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _RECENT_URL_LIMIT = 1_000
 _MEMBERSHIP_INVALID = "bcfy_calls_sid_membership_invalid"
+_MEMBERSHIP_REFRESH_FAILED = "bcfy_calls_sid_membership_refresh_failed"
 _MIXED_FEED_FAILURES = "mixed_feed_failures"
 _POST_BOOKMARK_FAILURE = (
     feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
@@ -42,6 +45,11 @@ _TRANSIENT_METADATA_FAILURES = frozenset(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
     }
+)
+_TRANSIENT_MEMBERSHIP_FAILURES = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    OSError,
 )
 
 type FailurePlanner = collections.abc.Callable[
@@ -369,7 +377,22 @@ class BcfyCallsSidRunner:
                 return grant_control.RunCompleted()
 
             poll_started = self._clock()
-            membership = await self._store.load_membership(grant)
+            try:
+                membership = await self._store.load_membership(grant)
+            except _TRANSIENT_MEMBERSHIP_FAILURES as error:
+                _log_poll_settled(
+                    grant,
+                    status="membership_failed",
+                    error=type(error).__name__,
+                )
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    return grant_control.RunFailed(
+                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        _MEMBERSHIP_REFRESH_FAILED,
+                    )
+                await self._finish_poll_wait(poll_started, context)
+                continue
             if isinstance(membership, ingestion_lease_store.GrantRejected):
                 return grant_control.RunLost()
             if isinstance(

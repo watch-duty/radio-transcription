@@ -118,6 +118,30 @@ class _Store:
         return ingestion_lease_store.BatchCommitted(children)
 
 
+class _ScriptedMembershipStore(_Store):
+    def __init__(
+        self,
+        snapshot: ingestion_lease_store.MembershipSnapshot,
+        *membership_results: (
+            ingestion_lease_store.MembershipSnapshot | BaseException
+        ),
+    ) -> None:
+        super().__init__(snapshot)
+        self.membership_results = list(membership_results)
+        self.membership_calls = 0
+
+    async def load_membership(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> ingestion_lease_store.MembershipSnapshot:
+        assert grant == self.snapshot.grant
+        self.membership_calls += 1
+        result = self.membership_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
 class _Provider:
     def __init__(
         self,
@@ -215,6 +239,101 @@ def test_page_boundary_uses_the_integer_position_sent_to_provider() -> None:
         )
         == boundary
     )
+
+
+@pytest.mark.asyncio
+async def test_transient_membership_failure_retries_before_fetch() -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    snapshot = _snapshot(grant, member)
+    context = _context()
+    store = _ScriptedMembershipStore(
+        snapshot,
+        OSError("connection reset"),
+        snapshot,
+    )
+    page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
+    calls_provider = _Provider([page], context)
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        calls_provider,
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert store.membership_calls == 2
+    assert calls_provider.positions == [member.last_bookmark_time]
+
+
+@pytest.mark.asyncio
+async def test_tenth_transient_membership_failure_closes_sid_run() -> None:
+    grant = _grant()
+    snapshot = _snapshot(grant)
+    context = _context()
+    store = _ScriptedMembershipStore(
+        snapshot,
+        *(OSError("database unavailable") for _ in range(10)),
+    )
+    calls_provider = _Provider([], context)
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        calls_provider,
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert outcome == grant_control.RunFailed(
+        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        "bcfy_calls_sid_membership_refresh_failed",
+    )
+    assert store.membership_calls == 10
+    assert calls_provider.positions == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_membership_failure_propagates() -> None:
+    grant = _grant()
+    snapshot = _snapshot(grant)
+    context = _context()
+    store = _ScriptedMembershipStore(
+        snapshot,
+        RuntimeError("malformed membership result"),
+    )
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([], context),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="malformed membership result"):
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
 
 
 @pytest.mark.asyncio

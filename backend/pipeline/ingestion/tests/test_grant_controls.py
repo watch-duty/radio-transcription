@@ -438,6 +438,45 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.heartbeat_store.renew_grant_heartbeats.assert_awaited_once()
 
+    async def test_transient_store_io_is_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        operations = (
+            (
+                self.data_store.count_held_by_type,
+                self.control.claim(
+                    grant_control.ClaimMode.PRIMARY,
+                    _OWNER_ID,
+                    1,
+                ),
+            ),
+            (
+                self.heartbeat_store.renew_grant_heartbeats,
+                self.control.heartbeat((grant,)),
+            ),
+            (
+                self.data_store.release_feed,
+                self.control.finalize(
+                    grant,
+                    payload,
+                    grant_control.NeutralRelease(),
+                ),
+            ),
+        )
+
+        for store_call, operation in operations:
+            with self.subTest(store_call=store_call._mock_name):
+                failure = OSError("connection reset")
+                store_call.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await operation
+                self.assertIs(raised.exception.__cause__, failure)
+                store_call.side_effect = None
+
     async def test_neutral_release_uses_exact_feed_release(self) -> None:
         grant = _feed_grant()
         self.data_store.release_feed.return_value = True
@@ -1060,6 +1099,44 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             await self.control.heartbeat((grant,))
 
         self.heartbeat_store.renew_heartbeats.assert_awaited_once()
+
+    async def test_transient_store_io_is_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _lease_grant()
+        operations = (
+            (
+                self.data_store.claim_unclaimed,
+                self.control.claim(
+                    grant_control.ClaimMode.PRIMARY,
+                    _OWNER_ID,
+                    1,
+                ),
+            ),
+            (
+                self.heartbeat_store.renew_heartbeats,
+                self.control.heartbeat((grant,)),
+            ),
+            (
+                self.data_store.release,
+                self.control.finalize(
+                    grant,
+                    grant_control.ClaimMode.PRIMARY,
+                    grant_control.NeutralRelease(),
+                ),
+            ),
+        )
+
+        for store_call, operation in operations:
+            with self.subTest(store_call=store_call._mock_name):
+                failure = OSError("connection reset")
+                store_call.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await operation
+                self.assertIs(raised.exception.__cause__, failure)
+                store_call.side_effect = None
 
     async def test_neutral_release_maps_to_exact_lease_release(
         self,

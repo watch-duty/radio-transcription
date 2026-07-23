@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import collections.abc
 import time
+import typing
 import unittest
 from typing import TYPE_CHECKING
 from unittest import mock
@@ -8,6 +10,7 @@ from unittest import mock
 from aiohttp.test_utils import AioHTTPTestCase
 
 from backend.pipeline.ingestion.health_server import HealthState, build_app
+from backend.pipeline.ingestion.settings import CollectorSettings
 
 if TYPE_CHECKING:
     from aiohttp import web
@@ -43,6 +46,16 @@ class HealthzHandlerTests(AioHTTPTestCase):
             bcfy_calls_authority_mode="legacy_feed",
         )
         return build_app(self.settings, self.state)
+
+    def test_public_annotations_resolve_at_runtime(self) -> None:
+        state_hints = typing.get_type_hints(HealthState)
+        app_hints = typing.get_type_hints(build_app)
+
+        self.assertEqual(
+            state_hints["active_feed_count"],
+            collections.abc.Callable[[], int],
+        )
+        self.assertIs(app_hints["settings"], CollectorSettings)
 
     async def _get_healthz(self) -> tuple[int, dict]:
         resp = await self.client.request("GET", "/healthz")

@@ -16,6 +16,8 @@ from backend.pipeline.ingestion import (
 
 logger = logging.getLogger(__name__)
 
+_LEASE_ADMISSION_EVENT_TYPE = "lease_admission_cycle"
+
 
 type FailurePlanner = typing.Callable[
     [grant_control.RunFailed],
@@ -324,11 +326,14 @@ class GrantSupervisor:
     async def admit_cycle(  # noqa: PLR0912
         self,
         owner_worker_id: uuid.UUID,
+        *,
+        memory_paused: bool = False,
     ) -> None:
         """Run one capacity-safe primary-then-recovery admission cycle.
 
         Args:
             owner_worker_id: Worker that must own every returned exact grant.
+            memory_paused: Whether memory pressure suppresses claims this cycle.
 
         Returns:
             None after all reserved claim calls settle.
@@ -338,7 +343,18 @@ class GrantSupervisor:
                 the exact-grant contract.
             asyncio.CancelledError: The admission cycle is cancelled.
         """
-        if not self._admission_enabled:
+        acquired = {
+            (domain.domain_id, mode): 0
+            for domain in self._domains
+            for mode in grant_control.ClaimMode
+        }
+        if not self._admission_enabled or memory_paused:
+            self._log_admission_cycle(
+                owner_worker_id,
+                acquired,
+                memory_paused=memory_paused,
+                error=None,
+            )
             return
         enabled = tuple(
             domain
@@ -346,6 +362,12 @@ class GrantSupervisor:
             if domain.allocation.claims_enabled
         )
         if not enabled:
+            self._log_admission_cycle(
+                owner_worker_id,
+                acquired,
+                memory_paused=False,
+                error=None,
+            )
             return
         remaining = {
             domain.domain_id: domain.allocation.claims_per_cycle
@@ -357,7 +379,7 @@ class GrantSupervisor:
             grant_control.ClaimMode.RECOVERY,
         ):
             if not self._admission_enabled:
-                return
+                break
             reservations: list[tuple[_ErasedRegisteredDomain, int]] = []
             for domain in enabled:
                 ask = self._reserve_admission(
@@ -396,9 +418,78 @@ class GrantSupervisor:
                     if first_failure is None:
                         first_failure = result
                 else:
+                    acquired[(domain.domain_id, mode)] += result
                     remaining[domain.domain_id] += ask - result
             if first_failure is not None:
+                self._log_admission_cycle(
+                    owner_worker_id,
+                    acquired,
+                    memory_paused=False,
+                    error=first_failure,
+                )
                 raise first_failure
+
+        self._log_admission_cycle(
+            owner_worker_id,
+            acquired,
+            memory_paused=False,
+            error=None,
+        )
+
+    def _log_admission_cycle(
+        self,
+        owner_worker_id: uuid.UUID,
+        acquired: typing.Mapping[
+            tuple[grant_control.DomainId, grant_control.ClaimMode],
+            int,
+        ],
+        *,
+        memory_paused: bool,
+        error: BaseException | None,
+    ) -> None:
+        """Emit one domain-aware operational summary for this cadence."""
+        for domain in self._domains:
+            allocation = domain.allocation
+            active = self._owned_by_domain[domain.domain_id]
+            slack = allocation.owned_cap - active
+            admission_budget = (
+                min(max(0, slack), allocation.claims_per_cycle)
+                if (
+                    self._admission_enabled
+                    and allocation.claims_enabled
+                    and not memory_paused
+                )
+                else 0
+            )
+            primary = acquired[
+                (domain.domain_id, grant_control.ClaimMode.PRIMARY)
+            ]
+            recovery = acquired[
+                (domain.domain_id, grant_control.ClaimMode.RECOVERY)
+            ]
+            logger.info(
+                "Grant admission cycle",
+                extra={
+                    "json_fields": {
+                        "event_type": _LEASE_ADMISSION_EVENT_TYPE,
+                        "worker_id": str(owner_worker_id),
+                        "domain_id": domain.domain_id.value,
+                        "active_units": active,
+                        "max_units": allocation.owned_cap,
+                        "slack": slack,
+                        "admission_budget": admission_budget,
+                        "primary_acquired": primary,
+                        "recovery_acquired": recovery,
+                        "total_acquired": primary + recovery,
+                        "claims_enabled": allocation.claims_enabled,
+                        "admission_enabled": self._admission_enabled,
+                        "memory_paused": memory_paused,
+                        "error": (
+                            type(error).__name__ if error is not None else None
+                        ),
+                    }
+                },
+            )
 
     def _reserve_admission(
         self,
@@ -465,6 +556,15 @@ class GrantSupervisor:
             except grant_control.GrantControlIntegrityError as failure:
                 self._surface_integrity_failure(failure)
                 raise
+            except grant_control.GrantControlBackendUnavailable:
+                raise
+            except Exception as exc:
+                failure = grant_control.GrantControlIntegrityError(
+                    "claim failed outside the typed backend boundary"
+                )
+                failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
+                raise failure
 
             try:
                 self._require_claim_count(claims, reservation)
@@ -790,12 +890,12 @@ class GrantSupervisor:
             if not self._is_current(managed):
                 return
             managed.discard_without_finalize = True
-            if isinstance(
-                exc,
-                grant_control.GrantControlIntegrityError,
-            ):
+            if isinstance(exc, grant_control.GrantControlIntegrityError):
                 self._surface_integrity_failure(exc)
-            else:
+            elif isinstance(
+                exc,
+                grant_control.GrantControlBackendUnavailable,
+            ):
                 # A closed runner has no remaining side effects to protect.
                 # Whether this fenced finalization committed or not, dropping
                 # the local generation is safe: storage already released it,
@@ -810,6 +910,12 @@ class GrantSupervisor:
                         }
                     },
                 )
+            else:
+                failure = grant_control.GrantControlIntegrityError(
+                    "finalization failed outside the typed backend boundary"
+                )
+                failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
             self._discard_current(managed)
             return
 
@@ -934,6 +1040,17 @@ class GrantSupervisor:
         """
         if isinstance(error, grant_control.GrantControlIntegrityError):
             self._fail_heartbeat_domain(expected, error)
+            return
+
+        if not isinstance(
+            error,
+            grant_control.GrantControlBackendUnavailable,
+        ):
+            failure = grant_control.GrantControlIntegrityError(
+                "heartbeat failed outside the typed backend boundary"
+            )
+            failure.__cause__ = error
+            self._fail_heartbeat_domain(expected, failure)
             return
 
         # Heartbeat renewal is retry-safe: it can only extend the current exact

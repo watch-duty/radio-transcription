@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import typing
 import unittest
 import uuid
 from unittest import mock
@@ -431,6 +432,16 @@ class TestStartupCleanup(unittest.IsolatedAsyncioTestCase):
 class TestAdmissionAndHeartbeat(unittest.IsolatedAsyncioTestCase):
     """Admission and heartbeat both delegate to the sole supervisor."""
 
+    def test_public_constructor_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(
+            collector_runtime.CollectorRuntime.__init__
+        )
+
+        self.assertEqual(
+            hints["settings"],
+            ingestion_settings.CollectorSettings | None,
+        )
+
     async def test_admission_cycle_delegates_once(self) -> None:
         runtime = _runtime()
         supervisor = mock.MagicMock()
@@ -445,7 +456,7 @@ class TestAdmissionAndHeartbeat(unittest.IsolatedAsyncioTestCase):
 
         supervisor.admit_cycle.assert_awaited_once_with(_WORKER_ID)
 
-    async def test_memory_pause_skips_admission(self) -> None:
+    async def test_memory_pause_records_suppressed_admission(self) -> None:
         runtime = _runtime()
         supervisor = mock.MagicMock()
         supervisor.admit_cycle = mock.AsyncMock()
@@ -457,7 +468,10 @@ class TestAdmissionAndHeartbeat(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(runtime, "_sleep_or_shutdown", sleep):
             await runtime._leasing_loop()
 
-        supervisor.admit_cycle.assert_not_awaited()
+        supervisor.admit_cycle.assert_awaited_once_with(
+            _WORKER_ID,
+            memory_paused=True,
+        )
 
     async def test_heartbeat_delegates_and_stamps_health(self) -> None:
         runtime = _runtime()
