@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import mimetypes
 import re
+from typing import Literal
 
 import httpx
 import pydantic
@@ -90,6 +91,109 @@ class SafetySetting:
 
     category: str
     threshold: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _GeminiAttempt:
+    """Facts identifying one application call to Gemini."""
+
+    context: base.TranscriptionContext | None
+    audio_uri: str | None
+    model: str
+    call_stage: Literal["primary", "fallback"]
+    attempt: int
+
+    @property
+    def is_tuned_primary(self) -> bool:
+        """Return whether empty text is a retryable tuned-primary failure."""
+        return self.call_stage == "primary" and _is_tuned_model(self.model)
+
+
+def _is_tuned_model(model: str) -> bool:
+    """Return whether the model uses the existing tuned-endpoint form."""
+    return "projects/" in model
+
+
+def _response_text(response: types.GenerateContentResponse) -> str:
+    """Return the same first-candidate text consumed by the transcriber."""
+    if not response.candidates:
+        return ""
+    candidate = response.candidates[0]
+    if not candidate.content or not candidate.content.parts:
+        return ""
+    return "".join(
+        part.text for part in candidate.content.parts if part.text
+    ).strip()
+
+
+def _response_log_fields(
+    response: types.GenerateContentResponse | None,
+) -> dict[str, object | None]:
+    """Extract JSON-safe facts already available on a Gemini response."""
+    if response is None:
+        return {
+            "response_id": None,
+            "candidate_count": None,
+            "finish_reason": None,
+            "response_text": None,
+        }
+
+    candidates = response.candidates or []
+    finish_reason = None
+    if candidates and candidates[0].finish_reason is not None:
+        reason_name = candidates[0].finish_reason.name
+        finish_reason = (
+            reason_name if isinstance(reason_name, str) else str(reason_name)
+        )
+    response_id = response.response_id
+    return {
+        "response_id": (
+            response_id
+            if isinstance(response_id, str)
+            else str(response_id)
+            if response_id is not None
+            else None
+        ),
+        "candidate_count": len(candidates),
+        "finish_reason": finish_reason,
+        "response_text": _response_text(response),
+    }
+
+
+def _log_inference_attempt(
+    attempt: _GeminiAttempt,
+    response: types.GenerateContentResponse | None,
+    error: Exception | None,
+) -> None:
+    """Emit best-effort structured facts for one relevant Gemini call."""
+    try:
+        error_code = getattr(error, "code", None) if error else None
+        if error_code is not None and not isinstance(
+            error_code,
+            (str, int, float, bool),
+        ):
+            error_code = str(error_code)
+        fields: dict[str, object | None] = {
+            "event_type": "gemini_inference_attempt",
+            "segment_id": (
+                attempt.context.segment_id if attempt.context else None
+            ),
+            "feed_id": attempt.context.feed_id if attempt.context else None,
+            "audio_uri": attempt.audio_uri,
+            "model": attempt.model,
+            "call_stage": attempt.call_stage,
+            "attempt": attempt.attempt,
+            **_response_log_fields(response),
+            "exception_type": type(error).__name__ if error else None,
+            "error_code": error_code,
+            "error_message": str(error) if error else None,
+        }
+        logger.info(
+            "Gemini inference attempt",
+            extra={"json_fields": fields},
+        )
+    except Exception:
+        logger.exception("Failed to emit Gemini inference attempt log")
 
 
 class GeminiConfig(utils.ConfigBase):
@@ -190,6 +294,7 @@ class GeminiTranscriber(base.Transcriber):
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
+        context: base.TranscriptionContext | None = None,
     ) -> str | None:
         """Transcribes the audio payload using Gemini API.
 
@@ -199,6 +304,7 @@ class GeminiTranscriber(base.Transcriber):
             audio_data: Optional raw audio bytes to transcribe.
             uri: Optional GCS URI (gs://...) of the audio file.
             duration_ms: Duration of the audio segment in milliseconds.
+            context: Optional segment metadata for request diagnostics.
 
         Returns:
             The transcribed text, or None if transcription failed or the
@@ -255,7 +361,12 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        return await self._transcribe_tuned(contents, generation_config)
+        return await self._transcribe_tuned(
+            contents,
+            generation_config,
+            context=context,
+            audio_uri=uri,
+        )
 
     async def _execute_transcribe_attempt(
         self,
@@ -263,30 +374,43 @@ class GeminiTranscriber(base.Transcriber):
         contents: types.Content,
         generation_config: types.GenerateContentConfig,
         *,
-        is_sft_model: bool,
-    ) -> str:
+        attempt: _GeminiAttempt,
+    ) -> tuple[str, types.GenerateContentResponse]:
         """Executes a single transcription attempt and parses results."""
-        response = await client.aio.models.generate_content(
-            model=self.config.model,
-            contents=contents,
-            config=generation_config,
-        )
-        transcript = self._parse_response(response)
+        response = None
+        try:
+            response = await client.aio.models.generate_content(
+                model=attempt.model,
+                contents=contents,
+                config=generation_config,
+            )
+            transcript = self._parse_response(response)
+        except Exception as error:
+            if attempt.is_tuned_primary or attempt.call_stage == "fallback":
+                _log_inference_attempt(attempt, response, error)
+            raise
 
         # If we get a valid transcript, or if this is the foundation
         # model (which returns empty transcripts legitimately for
         # silent audio), we return the result immediately.
-        if transcript.strip() or not is_sft_model:
-            return transcript
+        if transcript.strip() or not attempt.is_tuned_primary:
+            if attempt.call_stage == "fallback":
+                _log_inference_attempt(attempt, response, None)
+            return transcript, response
 
         # SFT model returned empty transcript: treat as transient.
         msg = "Tuned model returned empty transcript"
-        raise GeminiTransientTranscriptionError(msg)
+        error = GeminiTransientTranscriptionError(msg)
+        _log_inference_attempt(attempt, response, error)
+        raise error
 
     async def _transcribe_tuned(
         self,
         contents: types.Content,
         generation_config: types.GenerateContentConfig,
+        *,
+        context: base.TranscriptionContext | None,
+        audio_uri: str | None,
     ) -> str:
         primary_location = self._resolve_location(
             self.config.model, self.location
@@ -295,21 +419,28 @@ class GeminiTranscriber(base.Transcriber):
 
         # Tuned/SFT models reside in projects/.../endpoints/... resource paths.
         # Default foundation models use string names (e.g. gemini-3.1-flash).
-        is_sft_model = "projects/" in self.config.model
+        is_tuned_model = _is_tuned_model(self.config.model)
 
         # We only run in-situ retries for SFT models because they occasionally
         # fail to process valid audio and return empty responses or NONE.
         # Foundation models do not need these retry policies or fallbacks.
-        attempts = self.config.retry_attempts if is_sft_model else 1
+        attempts = self.config.retry_attempts if is_tuned_model else 1
         last_exception = None
 
         for attempt in range(1, attempts + 1):
+            attempt_context = _GeminiAttempt(
+                context=context,
+                audio_uri=audio_uri,
+                model=self.config.model,
+                call_stage="primary",
+                attempt=attempt,
+            )
             try:
-                return await self._execute_transcribe_attempt(
+                transcript, _ = await self._execute_transcribe_attempt(
                     primary_client,
                     contents,
                     generation_config,
-                    is_sft_model=is_sft_model,
+                    attempt=attempt_context,
                 )
             except (
                 GeminiTransientTranscriptionError,
@@ -327,6 +458,8 @@ class GeminiTranscriber(base.Transcriber):
                 # the original model later, bypassing fallback.
                 if attempt == attempts:
                     raise
+            else:
+                return transcript
 
             if attempt < attempts:
                 await asyncio.sleep(1)
@@ -340,12 +473,14 @@ class GeminiTranscriber(base.Transcriber):
             (GeminiTransientTranscriptionError, GeminiNoCandidatesError),
         )
         if is_fallback_eligible_error and (
-            is_sft_model or self.config.model == fallback_model
+            is_tuned_model or self.config.model == fallback_model
         ):
             return await self._fallback_transcribe(
                 contents,
                 generation_config,
                 str(last_exception),
+                context=context,
+                audio_uri=audio_uri,
             )
 
         if last_exception:
@@ -358,6 +493,9 @@ class GeminiTranscriber(base.Transcriber):
         contents: types.Content,
         generation_config: types.GenerateContentConfig,
         reason: str,
+        *,
+        context: base.TranscriptionContext | None,
+        audio_uri: str | None,
     ) -> str:
         """Falls back to foundation model if tuned model fails with empty/None.
 
@@ -400,15 +538,23 @@ class GeminiTranscriber(base.Transcriber):
 
         attempts = self.config.fallback_retry_attempts
         for attempt in range(1, attempts + 1):
+            attempt_context = _GeminiAttempt(
+                context=context,
+                audio_uri=audio_uri,
+                model=fallback_model,
+                call_stage="fallback",
+                attempt=attempt,
+            )
             try:
-                fallback_response = (
-                    await fallback_client.aio.models.generate_content(
-                        model=fallback_model,
-                        contents=contents,
-                        config=generation_config,
-                    )
+                (
+                    transcript,
+                    fallback_response,
+                ) = await self._execute_transcribe_attempt(
+                    fallback_client,
+                    contents,
+                    generation_config,
+                    attempt=attempt_context,
                 )
-                transcript = self._parse_response(fallback_response)
                 if transcript.strip():
                     return transcript
 
@@ -563,11 +709,7 @@ class GeminiTranscriber(base.Transcriber):
 
             raise exceptions.InvalidFinishReasonError(msg)
 
-        transcript = ""
-        if candidate.content and candidate.content.parts:
-            text_parts = [p.text for p in candidate.content.parts if p.text]
-            if text_parts:
-                transcript = "".join(text_parts).strip()
+        transcript = _response_text(response)
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(

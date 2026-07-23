@@ -36,7 +36,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.enums import TranscriptionStatus
-from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers import base
 from backend.pipeline.transcription.transcribers.gemini import (
     GeminiNoCandidatesError,
     GeminiOtherFinishReasonError,
@@ -60,7 +60,7 @@ class TranscriptionEventProcessor:
         *,
         project_id: str,
         output_topic: str,
-        transcriber: Transcriber,
+        transcriber: base.Transcriber,
         publisher: pubsub_v1.PublisherClient,
         audio_segments_client: audio_segments_client.AsyncAudioSegmentsClient
         | None = None,
@@ -176,6 +176,11 @@ class TranscriptionEventProcessor:
     ) -> str:
         """Invokes the active transcriber, handles empty transcripts, and returns the text."""
         duration_ms = self._get_duration_ms(claim)
+        audio_uri = claim.transcription_audio_uri or claim.canonical_audio_uri
+        context = base.TranscriptionContext(
+            segment_id=claim.segment_id,
+            feed_id=claim.feed_id,
+        )
 
         record_pipeline_stage(
             "transcription_status", TranscriptionStatus.ATTEMPTS
@@ -187,9 +192,9 @@ class TranscriptionEventProcessor:
             span.set_attribute("duration_ms", duration_ms)
             try:
                 transcript = await self.transcriber.transcribe(
-                    uri=claim.transcription_audio_uri
-                    or claim.canonical_audio_uri,
+                    uri=audio_uri,
                     duration_ms=duration_ms,
+                    context=context,
                 )
             except PartialTranscriptionError as e:
                 logger.warning(
