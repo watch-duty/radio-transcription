@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
+
 import httpx
 import requests
 from requests.adapters import HTTPAdapter
@@ -23,6 +28,7 @@ def create_resilient_session(
     status_forcelist: list[int] | None = None,
     *,
     raise_on_status: bool = False,
+    allowed_methods: Collection[str] | None = Retry.DEFAULT_ALLOWED_METHODS,
 ) -> requests.Session:
     """
     Creates a requests.Session configured with exponential backoff retries
@@ -34,6 +40,7 @@ def create_resilient_session(
         status_forcelist: List of HTTP status codes to retry. Defaults to [502, 503, 504].
         raise_on_status: Whether to raise an exception immediately on matched status codes.
             Must be passed as a keyword argument.
+        allowed_methods: Collection of HTTP methods to retry. Set to None to retry all methods.
 
     Returns:
         A requests.Session instance.
@@ -47,6 +54,7 @@ def create_resilient_session(
             if status_forcelist is not None
             else DEFAULT_STATUS_FORCELIST,
             raise_on_status=raise_on_status,
+            allowed_methods=allowed_methods,
         )
         adapter = HTTPAdapter(max_retries=retries)
         session.mount("http://", adapter)

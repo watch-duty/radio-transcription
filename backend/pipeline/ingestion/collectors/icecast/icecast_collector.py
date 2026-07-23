@@ -817,6 +817,13 @@ class IcecastTimelineManager:
                 last_receipt - last_chunk.chunk_end_time
             ).total_seconds()
 
+            if self._last_yielded_end_time is not None:
+                first_chunk = self.burst_buffer[0]
+                min_shift_sec = (
+                    self._last_yielded_end_time - first_chunk.chunk_start_time
+                ).total_seconds()
+                shift_seconds = max(shift_seconds, min_shift_sec)
+
             old_anchor = self.stream_anchor_time
             self.stream_anchor_time += datetime.timedelta(seconds=shift_seconds)
 
