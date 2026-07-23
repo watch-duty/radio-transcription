@@ -179,10 +179,11 @@ async def retry_with_lease_check[T](
             finally:
                 for t in (lease_task, shutdown_task):
                     t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
+                await asyncio.gather(
+                    lease_task,
+                    shutdown_task,
+                    return_exceptions=True,
+                )
 
             if lease_lost.is_set():
                 msg = f"Lease lost during {operation_name} backoff"

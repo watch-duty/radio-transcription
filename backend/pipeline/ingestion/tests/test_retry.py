@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import typing
 import unittest
 from unittest import mock
 
@@ -281,6 +282,52 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
                 retryable=(OSError,),
             )
         await task
+
+    async def test_caller_cancellation_during_backoff_cleanup_propagates(
+        self,
+    ) -> None:
+        marker = object()
+        attempts = 0
+        retry_task: asyncio.Task[str] | None = None
+
+        class CancelParentWhenCleanedUp(asyncio.Event):
+            async def wait(self) -> typing.Literal[True]:
+                try:
+                    return await super().wait()
+                except asyncio.CancelledError:
+                    assert retry_task is not None
+                    retry_task.cancel(marker)
+                    raise
+
+        async def fail_once() -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                message = "transient"
+                raise OSError(message)
+            return "unexpected retry"
+
+        with mock.patch(
+            "backend.pipeline.ingestion.retry.random.uniform",
+            return_value=0.01,
+        ):
+            retry_task = asyncio.create_task(
+                retry_with_lease_check(
+                    fail_once,
+                    lease_lost=CancelParentWhenCleanedUp(),
+                    shutdown=asyncio.Event(),
+                    max_retries=1,
+                    base_delay_sec=0.01,
+                    max_delay_sec=0.01,
+                    retryable=(OSError,),
+                )
+            )
+
+            with self.assertRaises(asyncio.CancelledError) as raised:
+                await retry_task
+
+        self.assertIsInstance(raised.exception, asyncio.CancelledError)
+        self.assertEqual(attempts, 1)
 
 
 class TestRetryJitterBounds(unittest.IsolatedAsyncioTestCase):
