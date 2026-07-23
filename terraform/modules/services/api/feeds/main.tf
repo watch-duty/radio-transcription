@@ -56,6 +56,9 @@ resource "google_cloud_run_v2_service" "feed_store" {
   ]
 
   template {
+    scaling {
+      min_instance_count = 1
+    }
     service_account = google_service_account.feed_store_sa.email
 
     vpc_access {
