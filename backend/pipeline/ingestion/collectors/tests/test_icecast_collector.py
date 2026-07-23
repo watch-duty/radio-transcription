@@ -2197,6 +2197,75 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res4[0].chunk_start_time, now + datetime.timedelta(seconds=60)
         )
 
+    def test_midstream_burst_does_not_shift_anchor_before_last_yielded_end(
+        self,
+    ) -> None:
+        """Verify mid-stream burst unrolling bounds backward anchor shift to preserve monotonicity."""
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk0 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk0, 16000 * 15, process_done=False)
+        self.assertEqual(manager.stream_anchor_time, now)
+
+        # Mid-stream burst of fast chunks
+        c1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=15),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=18),
+        )
+        c2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=30),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=21),
+        )
+        c3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=45),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=24),
+        )
+        manager.process_chunk(c1, 16000 * 30, process_done=False)
+        manager.process_chunk(c2, 16000 * 45, process_done=False)
+        manager.process_chunk(c3, 16000 * 60, process_done=False)
+
+        # Exit burst mode on steady chunk c4
+        c4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=60),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=39),
+        )
+        res_burst = manager.process_chunk(c4, 16000 * 75, process_done=False)
+        self.assertEqual(len(res_burst), 4)
+
+        # Anchoring should remain contiguous with last yielded end time (now)
+        self.assertEqual(manager.stream_anchor_time, now)
+        self.assertEqual(
+            res_burst[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(
+            res_burst[3].chunk_end_time,
+            now + datetime.timedelta(seconds=75),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
