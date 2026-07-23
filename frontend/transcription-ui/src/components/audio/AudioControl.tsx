@@ -11,9 +11,8 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import { type SxProps, type Theme } from '@mui/material/styles';
 
-import { useIsNarrow } from '../../hooks/useIsNarrow';
-
 import { DEFAULT_PAN, DEFAULT_SPEED } from '../../audio/audioSettings';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { AudioSettingsMenu } from './control/AudioSettingsMenu';
 import { VolumeControl } from './control/VolumeControl';
 
