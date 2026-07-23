@@ -114,7 +114,7 @@ export function ScannerPanel({
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: 520,
+        height: 470,
         border: '1px solid',
         borderColor: isDropTarget ? 'primary.main' : 'divider',
         borderRadius: 2,

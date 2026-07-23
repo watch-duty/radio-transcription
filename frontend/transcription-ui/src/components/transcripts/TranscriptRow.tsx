@@ -10,6 +10,7 @@ import {
 } from '@transcription/common';
 
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { feedPanelWideQuery } from '../../hooks/useIsNarrow';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
@@ -126,6 +127,11 @@ export function TranscriptRow({
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
   );
+  const hasDecisions = (evaluationAnnotation?.decisions?.length ?? 0) > 0;
+
+  // Wide (non-narrow) layout keys off the FeedPanel container's width, so rows
+  // in a narrow scanner card stack even when the window is wide.
+  const wide = feedPanelWideQuery(theme);
 
   const isCurrentlyPlaying =
     isAudioPlaying &&
@@ -193,32 +199,32 @@ export function TranscriptRow({
         id={`transcript-${audioSegment.id}`}
         divider={index < totalAudioSegments - 1}
         sx={{
-          display: { xs: 'grid', sm: 'flex' },
-          gridTemplateColumns: { xs: '1fr auto', sm: 'unset' },
-          gridTemplateRows: { xs: 'auto auto', sm: 'unset' },
-          gridTemplateAreas: {
-            xs: `
-              "meta    actions"
-              "text    text"
-            `,
-            sm: 'unset',
-          },
+          display: 'grid',
+          gridTemplateColumns: '1fr auto',
+          gridTemplateRows: 'auto auto',
+          gridTemplateAreas: `
+            "meta    actions"
+            "text    text"
+          `,
           alignItems: 'center',
-          columnGap: { xs: 1, sm: 2 },
-          rowGap: { xs: 0.25, sm: 2 },
+          columnGap: 1,
+          rowGap: 0.25,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
           borderLeft: `5px solid ${getBorderColor()}`,
-          pt:
-            isSilence || isOutage
-              ? '0px !important'
-              : { xs: 0.75, sm: undefined },
-          pb:
-            isSilence || isOutage
-              ? '0px !important'
-              : { xs: 0.75, sm: undefined },
-          px: { xs: 1.5, sm: 2 },
+          pt: isSilence || isOutage ? '0px !important' : 0.75,
+          pb: isSilence || isOutage ? '0px !important' : 0.75,
+          px: 1.5,
+          [wide]: {
+            display: 'flex',
+            gridTemplateColumns: 'unset',
+            gridTemplateRows: 'unset',
+            gridTemplateAreas: 'unset',
+            columnGap: 2,
+            rowGap: 2,
+            px: 2,
+          },
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
@@ -228,25 +234,27 @@ export function TranscriptRow({
         {/* Meta Box (Play, Alert, Time/Duration) */}
         <Box
           sx={{
-            gridArea: { xs: 'meta', sm: 'unset' },
+            gridArea: 'meta',
             display: 'flex',
             flexDirection: 'row',
             alignItems: 'center',
-            gap: { xs: 1, sm: 2 },
+            gap: 1,
             flexShrink: 0,
-            width: { xs: '100%', sm: 'auto' },
+            width: '100%',
+            [wide]: { gridArea: 'unset', gap: 2, width: 'auto' },
           }}
         >
           {/* Play Control (First on mobile, third on desktop) */}
           <Box
             sx={{
-              order: { xs: 1, sm: 3 },
+              order: 1,
               width: theme.spacing(5),
               height: theme.spacing(5),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
+              [wide]: { order: 3 },
             }}
           >
             {!isOutage && (
@@ -268,20 +276,12 @@ export function TranscriptRow({
           {/* Alert Tooltip (Second on mobile, first on desktop) */}
           <Box
             sx={{
-              order: { xs: 2, sm: 1 },
-              width: {
-                xs:
-                  (evaluationAnnotation?.decisions?.length ?? 0) > 0
-                    ? theme.spacing(3)
-                    : 0,
-                sm: theme.spacing(3),
-              },
-              display:
-                (evaluationAnnotation?.decisions?.length ?? 0) > 0
-                  ? 'flex'
-                  : { xs: 'none', sm: 'flex' },
+              order: 2,
+              width: hasDecisions ? theme.spacing(3) : 0,
+              display: hasDecisions ? 'flex' : 'none',
               justifyContent: 'center',
               flexShrink: 0,
+              [wide]: { order: 1, width: theme.spacing(3), display: 'flex' },
             }}
           >
             <AlertTooltip
@@ -296,13 +296,20 @@ export function TranscriptRow({
           {/* Time & Duration Box (Third on mobile, second on desktop) */}
           <Box
             sx={{
-              order: { xs: 3, sm: 2 },
+              order: 3,
               display: 'flex',
-              flexDirection: { xs: 'row', sm: 'column' },
-              alignItems: { xs: 'center', sm: 'flex-end' },
-              gap: { xs: 1, sm: 0 },
-              width: { xs: 'auto', sm: 90 },
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 1,
+              width: 'auto',
               flexShrink: 0,
+              [wide]: {
+                order: 2,
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                gap: 0,
+                width: 90,
+              },
             }}
           >
             {!isSilence && (
@@ -339,12 +346,13 @@ export function TranscriptRow({
         {/* Text Box */}
         <Box
           sx={{
-            gridArea: { xs: 'text', sm: 'unset' },
+            gridArea: 'text',
             flexGrow: 1,
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
             mt: 0,
+            [wide]: { gridArea: 'unset' },
           }}
         >
           <Typography
@@ -393,9 +401,10 @@ export function TranscriptRow({
         </Box>
         <Box
           sx={{
-            gridArea: { xs: 'actions', sm: 'unset' },
+            gridArea: 'actions',
             flexShrink: 0,
             alignSelf: 'center',
+            [wide]: { gridArea: 'unset' },
           }}
         >
           <SegmentInfoPopover

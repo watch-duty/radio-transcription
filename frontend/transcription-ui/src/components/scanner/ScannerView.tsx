@@ -40,8 +40,7 @@ interface ScannerViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
-// Shared by the add-feed row and the panel grid so the add controls track the
-// first panel column across breakpoints.
+// Responsive column count for the panel grid.
 const SCANNER_GRID_COLUMNS = {
   xs: '1fr',
   md: 'repeat(2, 1fr)',
@@ -122,22 +121,67 @@ export function ScannerView({ triggerSnackbar, onError }: ScannerViewProps) {
         minHeight: 0,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          flexWrap: 'wrap',
+          rowGap: 1,
+          mb: 2,
+        }}
+      >
         <GraphicEqIcon color="primary" />
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          Scanner
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {scannerFeeds.length} feed{scannerFeeds.length === 1 ? '' : 's'}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            Scanner
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {scannerFeeds.length} feed{scannerFeeds.length === 1 ? '' : 's'}
+          </Typography>
+        </Box>
+        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Wide enough for the "Search or select feed…" placeholder at the
+              smaller font. `&&` outweighs FeedSearchView's own input height. */}
+          <Box
+            sx={{
+              display: 'flex',
+              width: 200,
+              '&& .MuiOutlinedInput-root': { height: 30 },
+              '& .MuiInputBase-input': { fontSize: 13 },
+            }}
+          >
+            <FeedSearchView
+              title="Add feed"
+              condensed
+              fullWidth
+              retainSelection
+              value={pendingFeed}
+              onFeedSelect={setPendingFeed}
+              triggerSnackbar={triggerSnackbar}
+              onError={onError}
+            />
+          </Box>
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<AddIcon />}
+            disabled={!pendingFeed}
+            onClick={handleAddPendingFeed}
+            sx={{ flexShrink: 0, fontSize: 13 }}
+          >
+            Add
+          </Button>
+        </Box>
         <Box
           sx={{
-            ml: 'auto',
             display: 'flex',
             alignItems: 'center',
-            gap: 0.5,
+            gap: 0.25,
             flexWrap: 'wrap',
             justifyContent: 'flex-end',
+            // Tighten the transport buttons (Play/Pause/Mute/Remove all).
+            '& .MuiIconButton-root': { p: 0.5 },
           }}
         >
           {!isEmpty && (
@@ -206,45 +250,6 @@ export function ScannerView({ triggerSnackbar, onError }: ScannerViewProps) {
               label="One at a time"
             />
           </Tooltip>
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          mb: 2,
-          display: 'grid',
-          gridTemplateColumns: SCANNER_GRID_COLUMNS,
-          gap: SCANNER_GRID_GAP,
-        }}
-      >
-        <Box
-          sx={{
-            gridColumn: '1',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-            minWidth: 0,
-          }}
-        >
-          <FeedSearchView
-            title="Add feed"
-            condensed
-            fullWidth
-            retainSelection
-            value={pendingFeed}
-            onFeedSelect={setPendingFeed}
-            triggerSnackbar={triggerSnackbar}
-            onError={onError}
-          />
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            disabled={!pendingFeed}
-            onClick={handleAddPendingFeed}
-            sx={{ flexShrink: 0 }}
-          >
-            Add
-          </Button>
         </Box>
       </Box>
 

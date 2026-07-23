@@ -8,6 +8,7 @@ import { type AudioSegment } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { type HistogramMark } from '../../hooks/useTimelineHistogram';
 import {
   findEvaluationAnnotationData,
@@ -311,6 +312,7 @@ export function AudioDisplay({
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
+  const isNarrow = useIsNarrow();
 
   const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] =
     useState<number>(0);
@@ -444,7 +446,7 @@ export function AudioDisplay({
         display: 'flex',
         alignItems: 'flex-start',
         width: '100%',
-        mb: { xs: 0.5, sm: 1 },
+        mb: isNarrow ? 0.5 : 1,
       }}
     >
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
@@ -452,7 +454,7 @@ export function AudioDisplay({
           variant="outlined"
           sx={{
             width: '100%',
-            height: { xs: '40px', sm: '60px' },
+            height: isNarrow ? '40px' : '60px',
             bgcolor: 'action.hover',
             position: 'relative',
           }}

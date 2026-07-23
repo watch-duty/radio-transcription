@@ -168,7 +168,7 @@ export function AudioControl({
           </span>
         </Tooltip>
         {settingsButton && (
-          <Box sx={{ display: 'inline-flex', ml: { xs: 0.5, sm: 1 } }}>
+          <Box sx={{ display: 'inline-flex', ml: isNarrow ? 0.5 : 1 }}>
             {settingsButton}
           </Box>
         )}

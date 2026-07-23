@@ -321,8 +321,13 @@ export function useFeedView({
 
   const bulkPauseRef = useRef<() => void>(() => {});
   bulkPauseRef.current = () => {
+    // Freeze in place like the single-feed pause: pause the current clip
+    // without clearing it. stopPlayback() would null currentlyPlayingSegmentId,
+    // which snaps the playhead/window to the live edge.
     setPlaybackIntent('paused');
-    stopPlayback();
+    if (isAudioPlaying && currentlyPlayingSegmentId) {
+      playSegmentById(currentlyPlayingSegmentId);
+    }
   };
 
   useEffect(() => {

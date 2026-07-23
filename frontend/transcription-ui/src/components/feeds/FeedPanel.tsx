@@ -4,8 +4,14 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { type Feed } from '@transcription/common';
 
+import { useContainerWidth } from '../../hooks/useContainerWidth';
 import { useFeedView } from '../../hooks/useFeedView';
-import { useIsNarrow } from '../../hooks/useIsNarrow';
+import {
+  FEED_PANEL_CONTAINER,
+  NarrowContext,
+  feedPanelWideQuery,
+  useIsNarrow,
+} from '../../hooks/useIsNarrow';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import AudioSettingsButton from '../transcripts/AudioSettingsButton';
@@ -49,7 +55,16 @@ export function FeedPanel({
   preloadWindowMs,
 }: FeedPanelProps) {
   const theme = useTheme();
-  const isNarrow = useIsNarrow();
+  // Drive the narrow layout off the panel's own rendered width, not the
+  // viewport — in the scanner grid each card is far narrower than the window.
+  // Fall back to the viewport check until a real width lands (0 = unmeasured
+  // or momentarily hidden).
+  const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>();
+  const viewportNarrow = useIsNarrow();
+  const isNarrow =
+    containerWidth != null && containerWidth > 0
+      ? containerWidth < theme.breakpoints.values.sm
+      : viewportNarrow;
 
   const {
     audioSegments,
@@ -123,144 +138,154 @@ export function FeedPanel({
     preloadWindowMs,
   });
 
+  const wide = feedPanelWideQuery(theme);
+
   return (
-    <Box
-      sx={{
-        width: '100%',
-        textAlign: 'left',
-        display: 'flex',
-        flexDirection: 'column',
-        flexGrow: 1,
-        minHeight: 0,
-      }}
-    >
+    <NarrowContext.Provider value={isNarrow}>
       <Box
+        ref={containerRef}
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          mt: { xs: 0.5, sm: 1 },
-          // Space for the alert icon that hovers above the AudioDisplay.
-          mb: { xs: 1.25, sm: 2.5 },
-        }}
-      >
-        <AudioControl
-          sx={{ flex: 1, mb: 0 }}
-          isAudioPlaying={playbackIntent === 'playing'}
-          onTogglePlayPause={handleTogglePlayPause}
-          onSkipToNext={skipToNext}
-          onSkipToPrevious={skipToPrevious}
-          onFastForward={skipToNextSpeech}
-          onFastRewind={skipToPreviousSpeech}
-          onSkipTime={skipTime}
-          disableControls={rawAudioSegments.length === 0}
-          settingsButton={
-            <AudioSettingsButton
-              volumeDb={volumeDb}
-              setVolumeDb={setVolumeDb}
-              pan={pan}
-              setPan={setPan}
-              speed={speed}
-              setSpeed={setSpeed}
-              onReset={reset}
-              disableControls={rawAudioSegments.length === 0}
-              muted={muted}
-            />
-          }
-        />
-      </Box>
-
-      <AudioDisplay
-        audioSegments={audioSegments}
-        rawAudioSegments={rawAudioSegments}
-        currentlyPlayingSegmentId={currentlyPlayingSegmentId}
-        highlightedSegmentId={highlightedSegmentId}
-        onClipClick={handleClipClick}
-        windowEndTime={windowEndTime}
-        windowDurationMs={windowDurationMs}
-        histogramMarks={histogramMarks}
-        rangeStartMs={rangeStartMs}
-        maxEnd={rangeEndMs}
-        onCenterWindow={handleCenterWindow}
-        isAudioPlaying={isAudioPlaying}
-        playbackState={playbackState}
-        currentAudioRef={currentAudioRef}
-        seekTrigger={seekTrigger}
-      />
-
-      <Box
-        sx={{
-          flexGrow: 1,
-          minHeight: 0,
+          // Establish a query container so descendants (transcript rows, audio
+          // controls) switch layout on this panel's width, not the viewport.
+          containerType: 'inline-size',
+          containerName: FEED_PANEL_CONTAINER,
+          width: '100%',
+          textAlign: 'left',
           display: 'flex',
           flexDirection: 'column',
+          flexGrow: 1,
+          minHeight: 0,
         }}
       >
-        <TranscriptActionsBar
-          disableJumpToLive={isViewingLive}
-          redactTranscripts={redactTranscripts}
-          setRedactTranscripts={setRedactTranscripts}
-          dateTime={activeDateTime}
-          setDateTime={handleFilterByDateTime}
-          alertFilter={alertFilter}
-          setAlertFilter={setAlertFilter}
-          onClickViewLatest={handleJumpToLive}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-        />
-        {audioSegments.length > 0 && ready ? (
-          <TranscriptDisplay
-            ref={virtuosoRef}
-            audioSegments={audioSegments}
-            firstItemIndex={firstItemIndex}
-            groupCounts={groupCounts}
-            groupTitles={groupTitles}
-            setIsViewAtTopOfAudioSegments={handleAtTopStateChange}
-            hasNewerAudioSegments={hasNewerAudioSegments}
-            isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
-            isAudioSegmentsPolling={isAudioSegmentsPolling}
-            hasOlderAudioSegments={hasOlderAudioSegments}
-            isFetchingOlderAudioSegments={isFetchingOlderAudioSegments}
-            fetchOlderAudioSegments={fetchOlderAudioSegments}
-            audioSegmentsLastUpdated={audioSegmentsLastUpdated}
-            triggerSnackbar={triggerSnackbar}
-            ruleIdToNameMap={ruleIdToNameMap}
-            rulesLoading={rulesLoading}
-            onToggleAudio={handleToggleAudio}
-            isAudioPlaying={isAudioPlaying}
-            currentlyPlayingSegmentId={currentlyPlayingSegmentId}
-            highlightedSegmentId={highlightedSegmentId}
-            redactTranscripts={redactTranscripts}
-            onRowClick={handleRowClick}
-            isNarrow={isNarrow}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            mt: 0.5,
+            // Space for the alert icon that hovers above the AudioDisplay.
+            mb: 1.25,
+            [wide]: { mt: 1, mb: 2.5 },
+          }}
+        >
+          <AudioControl
+            sx={{ flex: 1, mb: 0 }}
+            isAudioPlaying={playbackIntent === 'playing'}
+            onTogglePlayPause={handleTogglePlayPause}
+            onSkipToNext={skipToNext}
+            onSkipToPrevious={skipToPrevious}
+            onFastForward={skipToNextSpeech}
+            onFastRewind={skipToPreviousSpeech}
+            onSkipTime={skipTime}
+            disableControls={rawAudioSegments.length === 0}
+            settingsButton={
+              <AudioSettingsButton
+                volumeDb={volumeDb}
+                setVolumeDb={setVolumeDb}
+                pan={pan}
+                setPan={setPan}
+                speed={speed}
+                setSpeed={setSpeed}
+                onReset={reset}
+                disableControls={rawAudioSegments.length === 0}
+                muted={muted}
+              />
+            }
           />
-        ) : !ready || isAudioSegmentsInitialLoading ? (
-          <Box
-            sx={{
-              display: 'flex',
-              justifyContent: 'center',
-              mt: theme.spacing(2),
-            }}
-          >
-            <CircularProgress data-testid="loading-spinner" />
-          </Box>
-        ) : audioSegmentsError ? (
-          <Typography
-            color="error"
-            align="center"
-            sx={{ mt: theme.spacing(2) }}
-          >
-            Error loading transcripts
-          </Typography>
-        ) : isAudioSegmentsSuccess ? (
-          <Box sx={{ mt: theme.spacing(2), textAlign: 'center' }}>
-            <Typography color="textSecondary" align="center">
-              No transcripts found
+        </Box>
+
+        <AudioDisplay
+          audioSegments={audioSegments}
+          rawAudioSegments={rawAudioSegments}
+          currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+          highlightedSegmentId={highlightedSegmentId}
+          onClipClick={handleClipClick}
+          windowEndTime={windowEndTime}
+          windowDurationMs={windowDurationMs}
+          histogramMarks={histogramMarks}
+          rangeStartMs={rangeStartMs}
+          maxEnd={rangeEndMs}
+          onCenterWindow={handleCenterWindow}
+          isAudioPlaying={isAudioPlaying}
+          playbackState={playbackState}
+          currentAudioRef={currentAudioRef}
+          seekTrigger={seekTrigger}
+        />
+
+        <Box
+          sx={{
+            flexGrow: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <TranscriptActionsBar
+            disableJumpToLive={isViewingLive}
+            redactTranscripts={redactTranscripts}
+            setRedactTranscripts={setRedactTranscripts}
+            dateTime={activeDateTime}
+            setDateTime={handleFilterByDateTime}
+            alertFilter={alertFilter}
+            setAlertFilter={setAlertFilter}
+            onClickViewLatest={handleJumpToLive}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+          />
+          {audioSegments.length > 0 && ready ? (
+            <TranscriptDisplay
+              ref={virtuosoRef}
+              audioSegments={audioSegments}
+              firstItemIndex={firstItemIndex}
+              groupCounts={groupCounts}
+              groupTitles={groupTitles}
+              setIsViewAtTopOfAudioSegments={handleAtTopStateChange}
+              hasNewerAudioSegments={hasNewerAudioSegments}
+              isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
+              isAudioSegmentsPolling={isAudioSegmentsPolling}
+              hasOlderAudioSegments={hasOlderAudioSegments}
+              isFetchingOlderAudioSegments={isFetchingOlderAudioSegments}
+              fetchOlderAudioSegments={fetchOlderAudioSegments}
+              audioSegmentsLastUpdated={audioSegmentsLastUpdated}
+              triggerSnackbar={triggerSnackbar}
+              ruleIdToNameMap={ruleIdToNameMap}
+              rulesLoading={rulesLoading}
+              onToggleAudio={handleToggleAudio}
+              isAudioPlaying={isAudioPlaying}
+              currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+              highlightedSegmentId={highlightedSegmentId}
+              redactTranscripts={redactTranscripts}
+              onRowClick={handleRowClick}
+              isNarrow={isNarrow}
+            />
+          ) : !ready || isAudioSegmentsInitialLoading ? (
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'center',
+                mt: theme.spacing(2),
+              }}
+            >
+              <CircularProgress data-testid="loading-spinner" />
+            </Box>
+          ) : audioSegmentsError ? (
+            <Typography
+              color="error"
+              align="center"
+              sx={{ mt: theme.spacing(2) }}
+            >
+              Error loading transcripts
             </Typography>
-          </Box>
-        ) : null}
+          ) : isAudioSegmentsSuccess ? (
+            <Box sx={{ mt: theme.spacing(2), textAlign: 'center' }}>
+              <Typography color="textSecondary" align="center">
+                No transcripts found
+              </Typography>
+            </Box>
+          ) : null}
+        </Box>
       </Box>
-    </Box>
+    </NarrowContext.Provider>
   );
 }
 
