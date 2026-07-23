@@ -204,7 +204,7 @@ export function AudioControl({
             display: 'flex',
             alignItems: 'center',
             gap: { xs: 0.25, sm: 0.5 },
-            position: { xs: 'static', md: 'absolute' },
+            position: 'absolute',
             left: 0,
           }}
         >
