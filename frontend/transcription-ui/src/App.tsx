@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import { Route, Routes } from 'react-router';
+import { Navigate, Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
 
@@ -29,11 +29,41 @@ import SettingsView from './components/settings/SettingsView';
 import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
+import { useScanner } from './context/ScannerContext';
 import { ScannerProvider } from './context/ScannerProvider';
 
 import './App.css';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
+
+/**
+ * Landing view for the app root. When the scanner has channels added, the
+ * scanner is the default view; otherwise the Feeds page is shown.
+ */
+function RootView({
+  triggerSnackbar,
+  onError,
+}: {
+  triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
+}) {
+  const { count } = useScanner();
+
+  if (count > 0) {
+    return <Navigate to="/scanner" replace />;
+  }
+
+  return (
+    <>
+      <title>Radio Transcription</title>
+      <FeedSearchView
+        title="Feeds"
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
+      />
+    </>
+  );
+}
 
 const CSAT_SURVEY_START_DATE = new Date('2026-07-20T00:00:00');
 const CSAT_SURVEY_END_DATE = new Date('2026-07-29T23:59:59');
@@ -261,14 +291,10 @@ function App() {
               <Route
                 path="/"
                 element={
-                  <>
-                    <title>Radio Transcription</title>
-                    <FeedSearchView
-                      title="Feeds"
-                      triggerSnackbar={triggerSnackbar}
-                      onError={handleError}
-                    />
-                  </>
+                  <RootView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
                 }
               />
               <Route
