@@ -13,12 +13,6 @@ variable "environment" {
   }
 }
 
-variable "enabled" {
-  type        = bool
-  description = "Whether to enable Cloud Logging to Pub/Sub routing and delivery alerting."
-  default     = false
-}
-
 variable "webhook_url" {
   description = "Destination webhook URL. Must include the HTTP(S) scheme."
   type        = string
