@@ -14,7 +14,7 @@ from backend.pipeline.common.tracing_utils import (
 )
 
 logger = logging.getLogger(__name__)
-pipeline_metrics_logger = logging.getLogger("pipeline.metrics")
+pipeline_metrics_logger: logging.Logger = logging.getLogger("pipeline.metrics")
 
 
 def record_pipeline_stage(stage: str, status: str = "start") -> None:
@@ -23,7 +23,12 @@ def record_pipeline_stage(stage: str, status: str = "start") -> None:
     Emits a structured log to power Log-Based Metrics. This avoids data loss
     from scale-to-zero container destruction in Cloud Run / GCF.
     """
-    pipeline_metrics_logger.info(
+    active_logger = (
+        pipeline_metrics_logger
+        if pipeline_metrics_logger.handlers
+        else get_logger("pipeline.metrics")
+    )
+    active_logger.info(
         f"Pipeline stage recorded: {stage} -> {status}",
         extra={
             "json_fields": {

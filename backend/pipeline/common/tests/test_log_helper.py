@@ -1,7 +1,13 @@
+import io
+import json
 import logging
 from unittest import TestCase, mock
 
-from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.log_helper import (
+    TaskJsonFormatter,
+    record_pipeline_stage,
+    setup_logging,
+)
 
 
 class TestLogging(TestCase):
@@ -85,3 +91,21 @@ class TestLogging(TestCase):
             threading.excepthook(hook_args)
             mock_get_logger.assert_called_with("unhandled_exception.bg_thread")
             mock_logger.critical.assert_called_once()
+
+    def test_record_pipeline_stage_structured_json(self) -> None:
+        stream = io.StringIO()
+        logger = logging.getLogger("pipeline.metrics")
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(TaskJsonFormatter())
+        logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
+        logger.setLevel(logging.INFO)
+
+        record_pipeline_stage("transcription_status", "fallback")
+
+        output = stream.getvalue().strip()
+        data = json.loads(output)
+        self.assertEqual(data["logger"], "pipeline.metrics")
+        self.assertEqual(data["json_fields"]["event_type"], "pipeline_stage")
+        self.assertEqual(data["json_fields"]["stage"], "transcription_status")
+        self.assertEqual(data["json_fields"]["status"], "fallback")
