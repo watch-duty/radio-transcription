@@ -9,8 +9,8 @@ from unittest import mock
 
 from aiohttp.test_utils import AioHTTPTestCase
 
+from backend.pipeline.ingestion import settings as ingestion_settings
 from backend.pipeline.ingestion.health_server import HealthState, build_app
-from backend.pipeline.ingestion.settings import CollectorSettings
 
 if TYPE_CHECKING:
     from aiohttp import web
@@ -55,7 +55,10 @@ class HealthzHandlerTests(AioHTTPTestCase):
             state_hints["active_feed_count"],
             collections.abc.Callable[[], int],
         )
-        self.assertIs(app_hints["settings"], CollectorSettings)
+        self.assertIs(
+            app_hints["settings"],
+            ingestion_settings.CollectorSettings,
+        )
 
     async def _get_healthz(self) -> tuple[int, dict]:
         resp = await self.client.request("GET", "/healthz")

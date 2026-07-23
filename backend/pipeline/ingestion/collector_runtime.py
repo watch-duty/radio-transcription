@@ -98,6 +98,7 @@ _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 INGESTION_IO_MAX_WORKERS = 512
 _UUID_INT_RANGE = 1 << 128
+_HEARTBEAT_COMMAND_BUDGET_FRACTION = 0.8
 
 
 def _bounded_jitter(max_sec: float) -> float:
@@ -150,6 +151,33 @@ def _advance_heartbeat_tick(
     if now - advanced > interval:
         return now + interval
     return advanced
+
+
+def _heartbeat_command_timeout_sec(settings: CollectorSettings) -> float:
+    """Fit serial domain heartbeats inside the process stall watchdog.
+
+    The dedicated heartbeat pool has one connection, so selected ownership
+    domains renew serially. Reserve part of the watchdog for event-loop
+    scheduling, result validation, and timeout cleanup, then divide the
+    remaining database budget equally across domains.
+
+    Args:
+        settings: Validated collector and database configuration.
+
+    Returns:
+        A positive per-command timeout bounded by the configured database
+        timeout.
+    """
+    domain_count = len(settings.worker_profile.allocations)
+    per_domain_budget = (
+        settings.heartbeat_stall_timeout_sec
+        * _HEARTBEAT_COMMAND_BUDGET_FRACTION
+        / domain_count
+    )
+    configured_timeout = settings.db.command_timeout_sec
+    if configured_timeout > 0.0:
+        return min(configured_timeout, per_domain_budget)
+    return per_domain_budget
 
 
 class _PipelineFailure(Exception):
@@ -618,6 +646,7 @@ class CollectorRuntime:
             heartbeat_settings = settings.db.replace(
                 pool_min_size=1,
                 pool_max_size=1,
+                command_timeout_sec=_heartbeat_command_timeout_sec(settings),
             )
             self._heartbeat_pool = await create_pool_with_retry(
                 heartbeat_settings

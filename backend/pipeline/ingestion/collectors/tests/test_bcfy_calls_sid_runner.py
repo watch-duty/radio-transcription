@@ -310,6 +310,117 @@ async def test_tenth_transient_membership_failure_closes_sid_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_successful_backoff_polls_reset_membership_failure_streak() -> (
+    None
+):
+    grant = _grant()
+    deferred = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+        retry_after=_NOW + datetime.timedelta(minutes=1),
+    )
+    due = ingestion_lease_store.LeaseMember(
+        identity=deferred.identity,
+        name=deferred.name,
+        last_bookmark_time=deferred.last_bookmark_time,
+        retry_after=None,
+    )
+    deferred_snapshot = _snapshot(grant, deferred)
+    due_snapshot = _snapshot(grant, due)
+    membership_results: list[
+        ingestion_lease_store.MembershipSnapshot | BaseException
+    ] = []
+    for _ in range(10):
+        membership_results.extend(
+            (OSError("database unavailable"), deferred_snapshot)
+        )
+    membership_results.append(due_snapshot)
+
+    context = _context()
+    store = _ScriptedMembershipStore(
+        due_snapshot,
+        *membership_results,
+    )
+    calls_provider = _Provider(
+        [provider.CallsPageEnvelope({}, (), _NOW.timestamp())],
+        context,
+    )
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        calls_provider,
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert store.membership_calls == 21
+    assert calls_provider.positions == [due.last_bookmark_time]
+
+
+@pytest.mark.asyncio
+async def test_membership_success_does_not_reset_metadata_failure_streak() -> (
+    None
+):
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+
+    class FailingProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_sid_page(
+            self,
+            sid: str,
+            pos: datetime.datetime | None,
+            *,
+            shutdown_event: asyncio.Event,
+        ) -> provider.CallsPageEnvelope:
+            assert sid == grant.lease_key
+            assert pos == member.last_bookmark_time
+            assert shutdown_event is context.stop_requested
+            self.calls += 1
+            if self.calls > 10:
+                raise provider.TokenLoadStopped
+            raise models.FeedFailure(
+                feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                "calls_api_http_401",
+            )
+
+    calls_provider = FailingProvider()
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        calls_provider,
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert outcome == grant_control.RunFailed(
+        feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        "calls_api_http_401",
+    )
+    assert calls_provider.calls == 10
+
+
+@pytest.mark.asyncio
 async def test_unknown_membership_failure_propagates() -> None:
     grant = _grant()
     snapshot = _snapshot(grant)

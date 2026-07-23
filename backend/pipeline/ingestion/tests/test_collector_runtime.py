@@ -411,7 +411,7 @@ class TestStartupCleanup(unittest.IsolatedAsyncioTestCase):
                         RuntimeError("heartbeat pool unavailable"),
                     )
                 ),
-            ),
+            ) as create_pool,
             mock.patch.object(
                 collector_runtime,
                 "close_pool",
@@ -424,6 +424,10 @@ class TestStartupCleanup(unittest.IsolatedAsyncioTestCase):
         ):
             await runtime._main()
 
+        heartbeat_settings = create_pool.await_args_list[1].args[0]
+        self.assertEqual(heartbeat_settings.pool_min_size, 1)
+        self.assertEqual(heartbeat_settings.pool_max_size, 1)
+        self.assertEqual(heartbeat_settings.command_timeout_sec, 18.0)
         close_pool.assert_awaited_once_with(data_pool)
         runtime._pubsub_client.close.assert_awaited_once_with()
         runtime._gcs_client.close.assert_awaited_once_with()

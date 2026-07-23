@@ -368,7 +368,8 @@ class BcfyCallsSidRunner:
         """
         del payload
         states: dict[uuid.UUID, _FeedState] = {}
-        consecutive_failures = 0
+        consecutive_membership_failures = 0
+        consecutive_metadata_failures = 0
 
         while True:
             if context.grant_lost.is_set():
@@ -385,14 +386,15 @@ class BcfyCallsSidRunner:
                     status="membership_failed",
                     error=type(error).__name__,
                 )
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                consecutive_membership_failures += 1
+                if consecutive_membership_failures >= _MAX_CONSECUTIVE_FAILURES:
                     return grant_control.RunFailed(
                         feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                         _MEMBERSHIP_REFRESH_FAILED,
                     )
                 await self._finish_poll_wait(poll_started, context)
                 continue
+            consecutive_membership_failures = 0
             if isinstance(membership, ingestion_lease_store.GrantRejected):
                 return grant_control.RunLost()
             if isinstance(
@@ -449,8 +451,8 @@ class BcfyCallsSidRunner:
                         error.status_reason,
                         error.reason,
                     )
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                consecutive_metadata_failures += 1
+                if consecutive_metadata_failures >= _MAX_CONSECUTIVE_FAILURES:
                     return grant_control.RunFailed(
                         error.status_reason,
                         error.reason,
@@ -473,7 +475,7 @@ class BcfyCallsSidRunner:
                 raise
             response_received_at = self._clock()
 
-            consecutive_failures = 0
+            consecutive_metadata_failures = 0
             poll_status = "integrity_failed"
             poll_error: str | None = None
             try:
