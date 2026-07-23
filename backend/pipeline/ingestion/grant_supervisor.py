@@ -343,6 +343,32 @@ class GrantSupervisor:
                 the exact-grant contract.
             asyncio.CancelledError: The admission cycle is cancelled.
         """
+        admission_snapshot: dict[
+            grant_control.DomainId,
+            tuple[int, int, int],
+        ] = {}
+        for domain in self._domains:
+            domain_id = domain.domain_id
+            allocation = domain.allocation
+            active = self._owned_by_domain[domain_id]
+            slack = allocation.owned_cap - active
+            admission_budget = (
+                min(
+                    max(0, slack - self._reserved_by_domain[domain_id]),
+                    allocation.claims_per_cycle,
+                )
+                if (
+                    self._admission_enabled
+                    and allocation.claims_enabled
+                    and not memory_paused
+                )
+                else 0
+            )
+            admission_snapshot[domain_id] = (
+                active,
+                slack,
+                admission_budget,
+            )
         acquired = {
             (domain.domain_id, mode): 0
             for domain in self._domains
@@ -352,6 +378,7 @@ class GrantSupervisor:
             self._log_admission_cycle(
                 owner_worker_id,
                 acquired,
+                admission_snapshot,
                 memory_paused=memory_paused,
                 error=None,
             )
@@ -365,6 +392,7 @@ class GrantSupervisor:
             self._log_admission_cycle(
                 owner_worker_id,
                 acquired,
+                admission_snapshot,
                 memory_paused=False,
                 error=None,
             )
@@ -424,6 +452,7 @@ class GrantSupervisor:
                 self._log_admission_cycle(
                     owner_worker_id,
                     acquired,
+                    admission_snapshot,
                     memory_paused=False,
                     error=first_failure,
                 )
@@ -432,6 +461,7 @@ class GrantSupervisor:
         self._log_admission_cycle(
             owner_worker_id,
             acquired,
+            admission_snapshot,
             memory_paused=False,
             error=None,
         )
@@ -443,24 +473,32 @@ class GrantSupervisor:
             tuple[grant_control.DomainId, grant_control.ClaimMode],
             int,
         ],
+        admission_snapshot: typing.Mapping[
+            grant_control.DomainId,
+            tuple[int, int, int],
+        ],
         *,
         memory_paused: bool,
         error: BaseException | None,
     ) -> None:
-        """Emit one domain-aware operational summary for this cadence."""
+        """Emit one domain-aware operational summary for this cadence.
+
+        Args:
+            owner_worker_id: Worker that attempted this admission cycle.
+            acquired: Per-domain primary and recovery acquisition totals.
+            admission_snapshot: Per-domain active units, raw slack, and bounded
+                claim budget captured before claims began.
+            memory_paused: Whether memory pressure suppressed this cycle.
+            error: First claim failure surfaced by this cycle, if any.
+
+        Returns:
+            None.
+        """
         for domain in self._domains:
             allocation = domain.allocation
-            active = self._owned_by_domain[domain.domain_id]
-            slack = allocation.owned_cap - active
-            admission_budget = (
-                min(max(0, slack), allocation.claims_per_cycle)
-                if (
-                    self._admission_enabled
-                    and allocation.claims_enabled
-                    and not memory_paused
-                )
-                else 0
-            )
+            active, slack, admission_budget = admission_snapshot[
+                domain.domain_id
+            ]
             primary = acquired[
                 (domain.domain_id, grant_control.ClaimMode.PRIMARY)
             ]

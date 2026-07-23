@@ -511,8 +511,21 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_control.ClaimMode.RECOVERY,
             grant_control.ClaimedGrant(grant, _feed_payload(grant)),
         )
+        profile = worker_profiles.validate_worker_profile(
+            worker_profiles.WorkerProfile(
+                name="feed-only-telemetry",
+                allocations=(
+                    worker_profiles.DomainAllocation(
+                        domain_id=grant_control.DomainId.FEED,
+                        owned_cap=1,
+                        claims_per_cycle=1,
+                        claims_enabled=True,
+                    ),
+                ),
+            )
+        )
         supervisor = self._supervisor(
-            worker_profiles.LEGACY_PROFILE,
+            profile,
             _feed_registration(control, runner),
         )
 
@@ -526,10 +539,10 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fields["event_type"], "lease_admission_cycle")
         self.assertEqual(fields["worker_id"], str(_OWNER))
         self.assertEqual(fields["domain_id"], "feed")
-        self.assertEqual(fields["active_units"], 1)
-        self.assertEqual(fields["max_units"], 800)
-        self.assertEqual(fields["slack"], 799)
-        self.assertEqual(fields["admission_budget"], 20)
+        self.assertEqual(fields["active_units"], 0)
+        self.assertEqual(fields["max_units"], 1)
+        self.assertEqual(fields["slack"], 1)
+        self.assertEqual(fields["admission_budget"], 1)
         self.assertEqual(fields["primary_acquired"], 0)
         self.assertEqual(fields["recovery_acquired"], 1)
         self.assertEqual(fields["total_acquired"], 1)
