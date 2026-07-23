@@ -98,6 +98,7 @@ class TestLogging(TestCase):
         handler = logging.StreamHandler(stream)
         handler.setFormatter(TaskJsonFormatter())
         logger.addHandler(handler)
+        self.addCleanup(logger.removeHandler, handler)
         logger.setLevel(logging.INFO)
 
         record_pipeline_stage("transcription_status", "fallback")

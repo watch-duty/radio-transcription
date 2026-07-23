@@ -11,7 +11,10 @@ from google.genai import types
 from backend.pipeline.common.exceptions import (
     PartialTranscriptionError,
 )
-from backend.pipeline.transcription.enums import TranscriberType
+from backend.pipeline.transcription.enums import (
+    TranscriberType,
+    TranscriptionStatus,
+)
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     ChirpConfig,
@@ -1085,6 +1088,126 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
+            )
+
+    async def test_gemini_transcriber_fallback_records_fallback_status(
+        self,
+    ) -> None:
+        """Verifies that a genuine fallback attempt (a distinct fallback
+        model is called) records TranscriptionStatus.FALLBACK before the
+        fallback model call is made.
+        """
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+            ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.log_helper.record_pipeline_stage"
+            ) as mock_record_pipeline_stage,
+        ):
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response_1 = MagicMock()
+            mock_candidate_1 = MagicMock()
+            mock_candidate_1.finish_reason = None
+            mock_candidate_1.content = None
+            mock_response_1.candidates = [mock_candidate_1]
+            mock_response_1.response_id = "tuned-failed-id"
+
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            mock_part = MagicMock()
+            mock_part.text = "Fallback succeeded text"
+            mock_candidate_2.content.parts = [mock_part]
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-success-id"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                ]
+            )
+
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(result, "Fallback succeeded text")
+            mock_record_pipeline_stage.assert_called_once_with(
+                "transcription_status", TranscriptionStatus.FALLBACK
+            )
+
+    async def test_gemini_transcriber_fallback_unavailable_when_model_is_fallback(
+        self,
+    ) -> None:
+        """Verifies that when the primary model is already the fallback
+        model (no distinct fallback available), we record
+        TranscriptionStatus.FALLBACK_UNAVAILABLE, return empty immediately,
+        and never attempt a second (fallback) model call.
+        """
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+            ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.log_helper.record_pipeline_stage"
+            ) as mock_record_pipeline_stage,
+        ):
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Foundation model response with zero candidates (fallback
+            # eligible), which is also the default fallback model, so there
+            # is nowhere left to fall back to.
+            mock_response = MagicMock()
+            mock_response.candidates = []
+            mock_response.prompt_feedback = None
+            mock_response.response_id = "foundation-no-candidates-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            # No model/fallback_model override: both default to
+            # DEFAULT_GEMINI_MODEL, so self.config.model == fallback_model.
+            config_json = "{}"
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(result, "")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 1
+            )
+            mock_record_pipeline_stage.assert_called_once_with(
+                "transcription_status",
+                TranscriptionStatus.FALLBACK_UNAVAILABLE,
             )
 
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string(
