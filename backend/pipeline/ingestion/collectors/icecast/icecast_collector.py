@@ -779,16 +779,19 @@ class IcecastTimelineManager:
                 duration = chunk.chunk_end_time - chunk.chunk_start_time
                 new_start = self._last_yielded_end_time
                 new_end = new_start + duration
+                shift = new_start - chunk.chunk_start_time
+                self.stream_anchor_time += shift
                 logger.warning(
                     "Feed %s (%s): Non-monotonic chunk start time detected "
                     "(start=%s < last_end=%s). Clamping chunk start to last end: "
-                    "new_start=%s, new_end=%s",
+                    "new_start=%s, new_end=%s, anchor_shift=%.3fs",
                     self.feed_id,
                     self.feed_name,
                     chunk.chunk_start_time.isoformat(),
                     self._last_yielded_end_time.isoformat(),
                     new_start.isoformat(),
                     new_end.isoformat(),
+                    shift.total_seconds(),
                 )
                 chunk = dataclasses.replace(
                     chunk,
