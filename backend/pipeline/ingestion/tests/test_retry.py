@@ -7,7 +7,109 @@ from unittest import mock
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
+    settle_issued_operation,
 )
+
+
+class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
+    """Issued work settles to one definitive outcome."""
+
+    async def test_returns_successful_result(self) -> None:
+        async def succeed() -> str:
+            return "settled"
+
+        settlement = await settle_issued_operation(succeed())
+
+        self.assertEqual(settlement.result, "settled")
+        self.assertIsNone(settlement.failure)
+        self.assertIsNone(settlement.cancellation)
+
+    async def test_returns_operation_failure(self) -> None:
+        failure = RuntimeError("operation failed")
+
+        async def fail() -> None:
+            raise failure
+
+        settlement = await settle_issued_operation(fail())
+
+        self.assertIsNone(settlement.result)
+        self.assertIs(settlement.failure, failure)
+        self.assertIsNone(settlement.cancellation)
+
+    async def test_inner_cancellation_is_operation_failure(self) -> None:
+        failure = asyncio.CancelledError("inner cancellation")
+
+        async def cancel_operation() -> None:
+            raise failure
+
+        settlement = await settle_issued_operation(cancel_operation())
+
+        self.assertIsNone(settlement.result)
+        self.assertIs(settlement.failure, failure)
+        self.assertIsNone(settlement.cancellation)
+
+    async def test_repeated_cancellation_does_not_starve_child(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        progress = 0
+
+        async def settle_after_progress() -> str:
+            nonlocal progress
+            started.set()
+            for _ in range(3):
+                await asyncio.sleep(0)
+                progress += 1
+            await release.wait()
+            return "settled"
+
+        task = asyncio.create_task(
+            settle_issued_operation(settle_after_progress())
+        )
+        await started.wait()
+        first_marker = object()
+        task.cancel(first_marker)
+        await asyncio.sleep(0)
+
+        for _ in range(5):
+            task.cancel(object())
+            await asyncio.sleep(0)
+
+        self.assertEqual(progress, 3)
+        self.assertFalse(task.done())
+
+        release.set()
+        settlement = await task
+
+        self.assertEqual(settlement.result, "settled")
+        self.assertIsNone(settlement.failure)
+        self.assertIsNotNone(settlement.cancellation)
+        assert settlement.cancellation is not None
+        self.assertIs(settlement.cancellation.args[0], first_marker)
+
+    async def test_inner_and_caller_cancellation_remain_distinct(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        failure = asyncio.CancelledError("inner cancellation")
+
+        async def cancel_operation() -> None:
+            started.set()
+            await release.wait()
+            raise failure
+
+        task = asyncio.create_task(settle_issued_operation(cancel_operation()))
+        await started.wait()
+        caller_marker = object()
+        task.cancel(caller_marker)
+        await asyncio.sleep(0)
+        release.set()
+
+        settlement = await task
+
+        self.assertIsNone(settlement.result)
+        self.assertIs(settlement.failure, failure)
+        self.assertIsNotNone(settlement.cancellation)
+        assert settlement.cancellation is not None
+        self.assertIs(settlement.cancellation.args[0], caller_marker)
 
 
 class TestRetrySuccessFirstAttempt(unittest.IsolatedAsyncioTestCase):

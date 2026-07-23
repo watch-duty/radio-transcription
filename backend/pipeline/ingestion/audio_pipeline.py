@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc  # noqa: TC003 - public hints resolve at runtime.
 import datetime
+import logging  # noqa: TC003 - public hints resolve at runtime.
 import typing
+import uuid  # noqa: TC003 - public hints resolve at runtime.
 
 import aiohttp
 from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
-from backend.pipeline.ingestion import models, retry, slo_contract
-
-if typing.TYPE_CHECKING:
-    import collections.abc
-    import logging
-    import uuid
-
-    from backend.pipeline.common.clients import gcs_client, pubsub_client
-    from backend.pipeline.ingestion.settings import CollectorSettings
-    from backend.pipeline.storage import feed_store
-
+from backend.pipeline.common.clients import (  # noqa: TC001
+    gcs_client,
+    pubsub_client,
+)
+from backend.pipeline.ingestion import models, retry, settings, slo_contract
+from backend.pipeline.storage import feed_store  # noqa: TC001
 
 _GCS_RETRYABLE = (
     aiohttp.ClientError,
@@ -37,6 +35,10 @@ _PUBSUB_RETRYABLE = (
     google_exceptions.Cancelled,
     pubsub_exceptions.PublishToPausedOrderingKeyException,
 )
+
+
+def _raise_error(error: BaseException) -> typing.NoReturn:
+    raise error
 
 
 def staging_parameters(
@@ -84,35 +86,22 @@ async def settle_post_bookmark_publish[ResultT](
             received, the publication failure remains primary and is chained
             from that cancellation.
     """
-    task = asyncio.create_task(operation)
-    cancellation: asyncio.CancelledError | None = None
-
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            owner = asyncio.current_task()
-            if owner is None or owner.cancelling() == 0:
-                raise
-            if cancellation is None:
-                cancellation = error
-            if task.done():
-                break
-        except Exception:
-            break
-
-    try:
-        result = task.result()
-    except BaseException as error:
+    settlement = await retry.settle_issued_operation(operation)
+    failure = settlement.failure
+    cancellation = settlement.cancellation
+    if failure is not None:
         if cancellation is not None:
-            event_logger.exception(
-                "Post-bookmark publication failed during cancellation"
-            )
-            raise error from cancellation
-        raise
+            try:
+                _raise_error(failure)
+            except BaseException as error:
+                event_logger.exception(
+                    "Post-bookmark publication failed during cancellation"
+                )
+                raise error from cancellation
+        raise failure
     if cancellation is not None:
         raise cancellation
-    return result
+    return typing.cast("ResultT", settlement.result)
 
 
 async def upload_staged_audio_with_retry(
@@ -121,7 +110,7 @@ async def upload_staged_audio_with_retry(
     gcs_client: gcs_client.GcsClient,
     chunk: models.CapturedChunk,
     feed: feed_store.LeasedFeed,
-    settings: CollectorSettings,
+    settings: settings.CollectorSettings,
     sequence: int,
     fencing_token: int,
     extension: str,
@@ -178,7 +167,7 @@ async def publish_audio_chunk_after_bookmark(
     source_type: feed_store.SourceType,
     gcs_uri: str,
     chunk: models.CapturedChunk,
-    settings: CollectorSettings,
+    settings: settings.CollectorSettings,
     lease_lost: asyncio.Event,
     shutdown: asyncio.Event,
     event_logger: logging.Logger,

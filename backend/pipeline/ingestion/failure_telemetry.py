@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import typing
+import logging  # noqa: TC003 - public hints resolve at runtime.
+import uuid  # noqa: TC003 - public hints resolve at runtime.
 
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.storage import feed_store
-
-if typing.TYPE_CHECKING:
-    import logging
-    import uuid
 
 
 def emit_failure_policy_decision(
@@ -60,8 +57,40 @@ def emit_failure_policy_decision(
         extra={"json_fields": fields},
     )
 
-    if not known_gap:
-        return
+    if known_gap:
+        emit_post_bookmark_publish_failure(
+            event_logger,
+            feed_id=feed_id,
+            source_type=source_type,
+            reason=reason,
+        )
+
+
+def emit_post_bookmark_publish_failure(
+    event_logger: logging.Logger,
+    *,
+    feed_id: uuid.UUID,
+    source_type: feed_store.SourceType,
+    reason: str,
+) -> None:
+    """Emit one known data-gap event without claiming a child transition.
+
+    SID-level failure promotion deliberately preserves child failure budgets.
+    A post-bookmark publication gap remains true even when no Feed failure
+    transition is written, so that path emits only this narrower event.
+
+    Args:
+        event_logger: Logger associated with the owning ingestion path.
+        feed_id: Permanent Feed UUID whose publication failed.
+        source_type: Feed source family.
+        reason: Bounded diagnostic detail for the failed publication.
+
+    Returns:
+        None.
+    """
+    status_reason = (
+        feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+    )
     gap_fields: dict[str, object] = {
         "event_type": "post_bookmark_publish_failure",
         "feed_id": str(feed_id),

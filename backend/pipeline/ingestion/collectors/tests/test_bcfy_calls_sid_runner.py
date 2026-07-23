@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import typing
 import uuid
 from unittest import mock
 
@@ -16,8 +17,12 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
     pipeline,
     provider,
     sid_runner,
+    work_pool,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 _NOW = datetime.datetime(2026, 7, 19, 12, tzinfo=datetime.UTC)
 
@@ -147,14 +152,21 @@ class _Pool:
         self.batches: list[pipeline.FeedBatch] = []
         self.result_factory = result_factory or mock.Mock(side_effect=_result)
 
-    async def submit(
+    async def settle_batches(
         self,
-        batch: pipeline.FeedBatch,
-    ) -> asyncio.Future[pipeline.FeedBatchResult]:
-        self.batches.append(batch)
-        future = asyncio.get_running_loop().create_future()
-        future.set_result(self.result_factory(batch))
-        return future
+        batches: collections.abc.Sequence[pipeline.FeedBatch],
+    ) -> work_pool.SettledBatches[
+        pipeline.FeedBatch,
+        pipeline.FeedBatchResult,
+    ]:
+        self.batches.extend(batches)
+        return work_pool.SettledBatches(
+            results=tuple(
+                (batch, self.result_factory(batch)) for batch in batches
+            ),
+            failure=None,
+            cancellation=None,
+        )
 
 
 def _failure_planner(
@@ -206,58 +218,6 @@ def test_page_boundary_uses_the_integer_position_sent_to_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_accepted_batches_settle_before_an_error_surfaces() -> None:
-    first = asyncio.get_running_loop().create_future()
-    second = asyncio.get_running_loop().create_future()
-    first.set_exception(RuntimeError("first batch failed"))
-
-    settlement = asyncio.create_task(
-        sid_runner._settle_accepted((first, second))
-    )
-    await asyncio.sleep(0)
-    assert not settlement.done()
-
-    second.set_result(pipeline.FeedBatchResult(0, 0, 0, (), None))
-    with pytest.raises(RuntimeError, match="first batch failed"):
-        await settlement
-
-
-@pytest.mark.asyncio
-async def test_cancellation_wins_after_accepted_batch_failure() -> None:
-    first = asyncio.get_running_loop().create_future()
-    second = asyncio.get_running_loop().create_future()
-    first.set_exception(RuntimeError("first batch failed"))
-
-    settlement = asyncio.create_task(
-        sid_runner._settle_accepted((first, second))
-    )
-    await asyncio.sleep(0)
-    settlement.cancel()
-    await asyncio.sleep(0)
-    second.set_result(pipeline.FeedBatchResult(0, 0, 0, (), None))
-
-    with pytest.raises(asyncio.CancelledError) as context:
-        await settlement
-    assert isinstance(context.value.__cause__, RuntimeError)
-
-
-@pytest.mark.asyncio
-async def test_cancellation_returns_settled_batch_result_for_commit() -> None:
-    completion = asyncio.get_running_loop().create_future()
-    result = pipeline.FeedBatchResult(1, 0, 1, (), None)
-    settlement = asyncio.create_task(sid_runner._settle_accepted((completion,)))
-    await asyncio.sleep(0)
-
-    settlement.cancel()
-    await asyncio.sleep(0)
-    completion.set_result(result)
-
-    results, cancellation = await settlement
-    assert results == (result,)
-    assert isinstance(cancellation, asyncio.CancelledError)
-
-
-@pytest.mark.asyncio
 async def test_forced_cancellation_persists_settled_publish_gap(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -286,13 +246,29 @@ async def test_forced_cancellation_persists_settled_publish_gap(
             self.submitted = asyncio.Event()
             self.completion = asyncio.get_running_loop().create_future()
 
-        async def submit(
+        async def settle_batches(
             self,
-            batch: pipeline.FeedBatch,
-        ) -> asyncio.Future[pipeline.FeedBatchResult]:
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            assert len(batches) == 1
+            batch = batches[0]
             self.batch = batch
             self.submitted.set()
-            return self.completion
+            cancellation: asyncio.CancelledError | None = None
+            while not self.completion.done():
+                try:
+                    await asyncio.wait((self.completion,))
+                except asyncio.CancelledError as error:
+                    if cancellation is None:
+                        cancellation = error
+            return work_pool.SettledBatches(
+                results=((batch, self.completion.result()),),
+                failure=None,
+                cancellation=cancellation,
+            )
 
     store = _Store(_snapshot(grant, member))
     pool = DelayedPool()
@@ -358,19 +334,25 @@ async def test_admission_error_drains_already_accepted_batch() -> None:
             self.batches: list[pipeline.FeedBatch] = []
             self.completion = asyncio.get_running_loop().create_future()
 
-        async def submit(
+        async def settle_batches(
             self,
-            batch: pipeline.FeedBatch,
-        ) -> asyncio.Future[pipeline.FeedBatchResult]:
-            self.batches.append(batch)
-            if len(self.batches) == 1:
-                return self.completion
-            message = "admission closed"
-            raise RuntimeError(message)
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            self.batches.extend(batches)
+            result = await self.completion
+            return work_pool.SettledBatches(
+                results=((batches[0], result),),
+                failure=RuntimeError("admission closed"),
+                cancellation=None,
+            )
 
     pool = PartiallyRejectingPool()
+    store = _Store(_snapshot(grant, first, second))
     runner = sid_runner.BcfyCallsSidRunner(
-        _Store(_snapshot(grant, first, second)),
+        store,
         _Provider([page], context),
         pool,
         _failure_planner,
@@ -392,6 +374,218 @@ async def test_admission_error_drains_already_accepted_batch() -> None:
 
     with pytest.raises(RuntimeError, match="admission closed"):
         await run
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(first.identity, _NOW),
+    )
+    assert isinstance(
+        store.batches[0].lease_effect,
+        ingestion_lease_store.NoLeaseEffect,
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_cancellation_commits_only_proven_feed_evidence() -> None:
+    grant = _grant()
+    settled_member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+    )
+    unresolved_member = _member(
+        "200",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+    )
+    quiet_member = _member(
+        "300",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+    )
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-200",
+                "url": "https://audio/2",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    cancellation = asyncio.CancelledError("stop after first admission")
+
+    class PartiallyCancelledPool:
+        async def settle_batches(
+            self,
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            return work_pool.SettledBatches(
+                results=((batches[0], _result(batches[0])),),
+                failure=None,
+                cancellation=cancellation,
+            )
+
+    store = _Store(
+        _snapshot(
+            grant,
+            settled_member,
+            unresolved_member,
+            quiet_member,
+        )
+    )
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        PartiallyCancelledPool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert raised.value is cancellation
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(
+            settled_member.identity,
+            _NOW,
+        ),
+        ingestion_lease_store.SourceObservation(
+            quiet_member.identity,
+            _NOW,
+        ),
+    )
+    assert isinstance(
+        store.batches[0].lease_effect,
+        ingestion_lease_store.NoLeaseEffect,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancellation_before_acceptance_starts_no_page_commit() -> None:
+    grant = _grant()
+    routed = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    quiet = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    cancellation = asyncio.CancelledError("cancel before admission")
+
+    class CancelledPool:
+        async def settle_batches(
+            self,
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            assert len(batches) == 1
+            return work_pool.SettledBatches(
+                results=(),
+                failure=None,
+                cancellation=cancellation,
+            )
+
+    store = _Store(_snapshot(grant, routed, quiet))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        CancelledPool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert raised.value is cancellation
+    assert store.batches == []
+
+
+@pytest.mark.asyncio
+async def test_accepted_child_cancellation_retains_caller_cancellation() -> (
+    None
+):
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    child_failure = asyncio.CancelledError("executor cancellation")
+    caller_cancellation = asyncio.CancelledError("runner cancellation")
+
+    class CancelledPool:
+        async def settle_batches(
+            self,
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            assert len(batches) == 1
+            return work_pool.SettledBatches(
+                results=(),
+                failure=child_failure,
+                cancellation=caller_cancellation,
+            )
+
+    store = _Store(_snapshot(grant, member))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        CancelledPool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(grant_control.GrantControlIntegrityError) as raised:
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert raised.value.__cause__ is caller_cancellation
+    assert raised.value.__context__ is child_failure
+    assert store.batches == []
 
 
 @pytest.mark.asyncio
@@ -750,6 +944,35 @@ async def test_authentication_failure_retries_the_owned_sid() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backoff_poll_wait_stops_without_waiting_full_interval() -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(minutes=1),
+        retry_after=_NOW + datetime.timedelta(minutes=1),
+    )
+    context = _context()
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        mock.MagicMock(),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=60,
+        clock=lambda: _NOW,
+    )
+    run = asyncio.create_task(
+        runner.run(grant, grant_control.ClaimMode.PRIMARY, context)
+    )
+    await asyncio.sleep(0)
+
+    context.stop_requested.set()
+
+    outcome = await asyncio.wait_for(run, timeout=1)
+    assert isinstance(outcome, grant_control.RunCompleted)
+
+
+@pytest.mark.asyncio
 async def test_invalid_boundary_replays_bookmark_and_deduplicates_url() -> None:
     grant = _grant()
     bookmark = _NOW - datetime.timedelta(seconds=30)
@@ -943,7 +1166,7 @@ async def test_batch_grant_rejection_stops_sid_without_page_commit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_feed_batches_stay_child_local() -> None:
+async def test_unanimous_multi_feed_failure_promotes_only_to_sid() -> None:
     grant = _grant()
     first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
     second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
@@ -1006,30 +1229,243 @@ async def test_failed_feed_batches_stay_child_local() -> None:
         context,
     )
 
-    assert isinstance(outcome, grant_control.RunCompleted)
+    assert outcome == grant_control.RunFailed(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "first",
+    )
     assert store.batches[0].mutations == (
-        ingestion_lease_store.FeedFailureTransition(
-            member=first.identity,
-            action=ingestion_lease_store.NonBudgetedFailure(
-                _NOW + datetime.timedelta(minutes=5)
-            ),
-            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-            reason="first",
-            completion_cursor=None,
-        ),
-        ingestion_lease_store.FeedFailureTransition(
-            member=second.identity,
-            action=ingestion_lease_store.NonBudgetedFailure(
-                _NOW + datetime.timedelta(minutes=5)
-            ),
-            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-            reason="second",
-            completion_cursor=None,
-        ),
         ingestion_lease_store.SourceObservation(
             quiet.identity,
             _NOW,
         ),
+    )
+    assert isinstance(
+        store.batches[0].lease_effect,
+        ingestion_lease_store.NoLeaseEffect,
+    )
+
+
+@pytest.mark.asyncio
+async def test_mixed_multi_feed_failures_promote_generic_sid_failure() -> None:
+    grant = _grant()
+    first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-200",
+                "url": "https://audio/2",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    failures = iter(
+        (
+            failure_classification.ItemFailure(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                "source unavailable",
+            ),
+            failure_classification.ItemFailure(
+                feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                "upload failed",
+            ),
+        )
+    )
+
+    def failed_result(batch: pipeline.FeedBatch) -> pipeline.FeedBatchResult:
+        return _result(batch, published=0, terminal=next(failures))
+
+    store = _Store(_snapshot(grant, first, second))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(mock.Mock(side_effect=failed_result)),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert outcome == grant_control.RunFailed(
+        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        "mixed_feed_failures",
+    )
+    assert store.batches == []
+
+
+@pytest.mark.asyncio
+async def test_promoted_sid_failure_outranks_cancellation_and_logs_gap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    quiet = _member("300", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-200",
+                "url": "https://audio/2",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    publish_gap = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+        "publish failed",
+    )
+    source_failure = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source unavailable",
+    )
+    cancellation = asyncio.CancelledError("shutdown")
+
+    class PromotedPool:
+        async def settle_batches(
+            self,
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            return work_pool.SettledBatches(
+                results=(
+                    (
+                        batches[0],
+                        _result(
+                            batches[0],
+                            published=0,
+                            terminal=publish_gap,
+                        ),
+                    ),
+                    (
+                        batches[1],
+                        _result(
+                            batches[1],
+                            published=0,
+                            terminal=source_failure,
+                        ),
+                    ),
+                ),
+                failure=None,
+                cancellation=cancellation,
+            )
+
+    store = _Store(_snapshot(grant, first, second, quiet))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        PromotedPool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with caplog.at_level(logging.INFO, logger=sid_runner.logger.name):
+        outcome = await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert outcome == grant_control.RunFailed(
+        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        "mixed_feed_failures",
+    )
+    assert store.batches[0].mutations == (
+        ingestion_lease_store.SourceObservation(quiet.identity, _NOW),
+    )
+    assert isinstance(
+        store.batches[0].lease_effect,
+        ingestion_lease_store.NoLeaseEffect,
+    )
+    events = [
+        record.__dict__.get("json_fields", {}).get("event_type")
+        for record in caplog.records
+    ]
+    assert events.count("post_bookmark_publish_failure") == 1
+    assert "feed_failure_policy_decision" not in events
+
+
+@pytest.mark.asyncio
+async def test_successful_participant_suppresses_sid_promotion() -> None:
+    grant = _grant()
+    failed = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    succeeded = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-200",
+                "url": "https://audio/2",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    failure = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source unavailable",
+    )
+
+    def mixed_result(batch: pipeline.FeedBatch) -> pipeline.FeedBatchResult:
+        if batch.member.identity.feed_id == failed.identity.feed_id:
+            return _result(batch, published=0, terminal=failure)
+        return _result(batch)
+
+    store = _Store(_snapshot(grant, failed, succeeded))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(mock.Mock(side_effect=mixed_result)),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    outcome = await runner.run(
+        grant,
+        grant_control.ClaimMode.PRIMARY,
+        context,
+    )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    assert isinstance(
+        store.batches[0].mutations[0],
+        ingestion_lease_store.FeedFailureTransition,
+    )
+    assert store.batches[0].mutations[1] == (
+        ingestion_lease_store.SourceObservation(succeeded.identity, _NOW)
     )
     assert isinstance(
         store.batches[0].lease_effect,
@@ -1126,15 +1562,19 @@ async def test_committed_publish_gap_emits_runtime_telemetry(
     )
 
     with caplog.at_level(logging.INFO, logger=sid_runner.logger.name):
-        committed = await runner._commit_page(
+        committed, cancellation = await runner._commit_page(
             grant,
             (member,),
+            frozenset((member.identity.feed_id,)),
             {member.identity.feed_id: result},
             _NOW,
             _NOW,
+            complete=True,
+            promoted=None,
         )
 
     assert isinstance(committed, ingestion_lease_store.BatchCommitted)
+    assert cancellation is None
     records = [
         record.__dict__["json_fields"]
         for record in caplog.records
@@ -1153,3 +1593,147 @@ async def test_committed_publish_gap_emits_runtime_telemetry(
         assert record["source_type"] == feed_store.SourceType.BCFY_CALLS.value
         assert record["replay_missing"] is True
         assert record["data_gap_known"] is True
+
+
+@pytest.mark.asyncio
+async def test_page_commit_settles_before_cancellation_propagates() -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
+
+    class DelayedStore(_Store):
+        def __init__(self) -> None:
+            super().__init__(_snapshot(grant, member))
+            self.commit_started = asyncio.Event()
+            self.release_commit = asyncio.Event()
+
+        async def commit_child_mutations(
+            self,
+            grant: ingestion_lease_store.LeaseGrant,
+            batch: ingestion_lease_store.ChildMutationBatch,
+            *,
+            actor_id: str,
+        ) -> ingestion_lease_store.BatchCommitted:
+            self.commit_started.set()
+            await self.release_commit.wait()
+            return await super().commit_child_mutations(
+                grant,
+                batch,
+                actor_id=actor_id,
+            )
+
+    store = DelayedStore()
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+    run = asyncio.create_task(
+        runner.run(grant, grant_control.ClaimMode.PRIMARY, context)
+    )
+    await store.commit_started.wait()
+
+    run.cancel("cancel during issued commit")
+    await asyncio.sleep(0)
+    assert not run.done()
+    store.release_commit.set()
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        await run
+    assert raised.value.args == ("cancel during issued commit",)
+    assert len(store.batches) == 1
+
+
+@pytest.mark.asyncio
+async def test_inner_page_commit_cancellation_is_outcome_unknown() -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
+
+    class InternallyCancelledStore(_Store):
+        async def commit_child_mutations(
+            self,
+            grant: ingestion_lease_store.LeaseGrant,
+            batch: ingestion_lease_store.ChildMutationBatch,
+            *,
+            actor_id: str,
+        ) -> ingestion_lease_store.BatchCommitted:
+            del grant, batch, actor_id
+            message = "database operation cancelled"
+            raise asyncio.CancelledError(message)
+
+    store = InternallyCancelledStore(_snapshot(grant, member))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(
+        grant_control.GrantControlIntegrityError,
+        match="outcome unknown",
+    ):
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+
+@pytest.mark.asyncio
+async def test_page_commit_failure_retains_concurrent_cancellation() -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
+    commit_started = asyncio.Event()
+    release_commit = asyncio.Event()
+    child_failure = asyncio.CancelledError("inner commit cancellation")
+
+    class FailingStore(_Store):
+        async def commit_child_mutations(
+            self,
+            grant: ingestion_lease_store.LeaseGrant,
+            batch: ingestion_lease_store.ChildMutationBatch,
+            *,
+            actor_id: str,
+        ) -> ingestion_lease_store.BatchCommitted:
+            del grant, batch, actor_id
+            commit_started.set()
+            await release_commit.wait()
+            raise child_failure
+
+    runner = sid_runner.BcfyCallsSidRunner(
+        FailingStore(_snapshot(grant, member)),
+        _Provider([page], context),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+    run = asyncio.create_task(
+        runner.run(grant, grant_control.ClaimMode.PRIMARY, context)
+    )
+    await commit_started.wait()
+    outer_marker = object()
+    run.cancel(outer_marker)
+    await asyncio.sleep(0)
+    release_commit.set()
+
+    with pytest.raises(grant_control.GrantControlIntegrityError) as raised:
+        await run
+
+    cause = typing.cast("asyncio.CancelledError", raised.value.__cause__)
+    assert cause.args[0] is outer_marker
+    assert raised.value.__context__ is child_failure

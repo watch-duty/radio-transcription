@@ -1190,6 +1190,13 @@ class CollectorRuntime:
                 error.reason,
             )
         except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is None or task.cancelling() > 0:
+                raise
+            if context.grant_lost.is_set():
+                return grant_control.RunLost()
+            if context.stop_requested.is_set():
+                return grant_control.RunCompleted()
             raise
         except Exception as error:
             reason = status_reason_detail.exception_text(error)

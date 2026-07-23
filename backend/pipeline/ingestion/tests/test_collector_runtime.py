@@ -519,6 +519,154 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, grant_control.RunCompleted)
 
+    async def test_cooperative_collector_stop_returns_completion(self) -> None:
+        async def cooperative_stop(_feed, stop, _resources):
+            if False:
+                yield SourceObservation()
+            stop.set()
+            raise asyncio.CancelledError
+
+        runtime = collector_runtime.CollectorRuntime(
+            cooperative_stop,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+
+        result = await runtime._process_feed(
+            _grant(),
+            _feed(),
+            _context(),
+        )
+
+        self.assertIsInstance(result, grant_control.RunCompleted)
+
+    async def test_cooperative_collector_loss_returns_run_lost(self) -> None:
+        context = _context()
+
+        async def cooperative_loss(_feed, _stop, _resources):
+            if False:
+                yield SourceObservation()
+            context.grant_lost.set()
+            raise asyncio.CancelledError
+
+        runtime = collector_runtime.CollectorRuntime(
+            cooperative_loss,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+
+        result = await runtime._process_feed(
+            _grant(),
+            _feed(),
+            context,
+        )
+
+        self.assertIsInstance(result, grant_control.RunLost)
+
+    async def test_structural_cancellation_propagates_after_stop(self) -> None:
+        started = asyncio.Event()
+        blocker = asyncio.Event()
+
+        async def blocking_capture(_feed, stop, _resources):
+            if False:
+                yield SourceObservation()
+            started.set()
+            try:
+                await blocker.wait()
+            except asyncio.CancelledError:
+                stop.set()
+                raise
+
+        runtime = collector_runtime.CollectorRuntime(
+            blocking_capture,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+        processing = asyncio.create_task(
+            runtime._process_feed(
+                _grant(),
+                _feed(),
+                _context(),
+            )
+        )
+        await started.wait()
+
+        processing.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await processing
+
+    async def test_unexplained_collector_cancellation_propagates(self) -> None:
+        async def unexplained_cancellation(_feed, _stop, _resources):
+            if False:
+                yield SourceObservation()
+            raise asyncio.CancelledError
+
+        runtime = collector_runtime.CollectorRuntime(
+            unexplained_cancellation,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+
+        with self.assertRaises(asyncio.CancelledError):
+            await runtime._process_feed(
+                _grant(),
+                _feed(),
+                _context(),
+            )
+
+    async def test_cleanup_error_wins_over_cooperative_stop(self) -> None:
+        context = _context()
+        cleanup_called = asyncio.Event()
+
+        class CleanupFailureIterator:
+            def __aiter__(self) -> CleanupFailureIterator:
+                return self
+
+            async def __anext__(self) -> SourceObservation:
+                context.stop_requested.set()
+                raise asyncio.CancelledError
+
+            async def aclose(self) -> None:
+                cleanup_called.set()
+                msg = "cleanup failed"
+                raise RuntimeError(msg)
+
+        capture_iterator = CleanupFailureIterator()
+
+        def cancelling_capture(_feed, _stop, _resources):
+            return capture_iterator
+
+        runtime = collector_runtime.CollectorRuntime(
+            cancelling_capture,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+            await runtime._process_feed(
+                _grant(),
+                _feed(),
+                context,
+            )
+
+        self.assertTrue(cleanup_called.is_set())
+
     async def test_collector_failure_returns_failure_evidence(self) -> None:
         async def failing_capture(_feed, _stop, _resources):
             if False:
