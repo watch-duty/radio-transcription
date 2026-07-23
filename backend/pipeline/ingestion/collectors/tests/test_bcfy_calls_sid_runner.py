@@ -105,7 +105,10 @@ class _Store:
         batch: ingestion_lease_store.ChildMutationBatch,
         *,
         actor_id: str,
-    ) -> ingestion_lease_store.BatchCommitted:
+    ) -> (
+        ingestion_lease_store.BatchCommitted
+        | ingestion_lease_store.GrantRejected
+    ):
         assert grant == self.snapshot.grant
         assert actor_id == "test"
         self.batches.append(batch)
@@ -669,12 +672,12 @@ async def test_page_commit_grant_loss_does_not_hide_batch_failure() -> None:
     class RejectingStore(_Store):
         async def commit_child_mutations(
             self,
-            committed_grant: ingestion_lease_store.LeaseGrant,
+            grant: ingestion_lease_store.LeaseGrant,
             batch: ingestion_lease_store.ChildMutationBatch,
             *,
             actor_id: str,
         ) -> ingestion_lease_store.GrantRejected:
-            assert committed_grant == self.snapshot.grant
+            assert grant == self.snapshot.grant
             assert actor_id == "test"
             self.batches.append(batch)
             return rejection
@@ -1932,7 +1935,10 @@ async def test_page_commit_settles_before_cancellation_propagates() -> None:
             batch: ingestion_lease_store.ChildMutationBatch,
             *,
             actor_id: str,
-        ) -> ingestion_lease_store.BatchCommitted:
+        ) -> (
+            ingestion_lease_store.BatchCommitted
+            | ingestion_lease_store.GrantRejected
+        ):
             self.commit_started.set()
             await self.release_commit.wait()
             return await super().commit_child_mutations(
