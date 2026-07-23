@@ -307,6 +307,7 @@ def _build_audio_chunk_payload(
     duration_ms: int,
     source_type: str | None = None,
     external_audio_segment_id: str | None = None,
+    receipt_time: datetime.datetime | None = None,
 ) -> tuple[bytes, dict[str, str]]:
     if "segmented" in topic_path or (
         source_type and "bcfy_feeds" not in source_type.lower()
@@ -329,6 +330,8 @@ def _build_audio_chunk_payload(
         s_msg.end_timestamp.FromDatetime(end_ts)
         if external_audio_segment_id is not None:
             s_msg.external_audio_segment_id = external_audio_segment_id
+        if receipt_time is not None:
+            s_msg.receipt_timestamp.FromDatetime(receipt_time)
         serialized_data = s_msg.SerializeToString()
     else:
         c_msg = ContinuousAudio(
@@ -340,6 +343,8 @@ def _build_audio_chunk_payload(
         if session_id is not None:
             c_msg.session_id = session_id
         c_msg.start_timestamp.FromDatetime(start_timestamp)
+        if receipt_time is not None:
+            c_msg.receipt_timestamp.FromDatetime(receipt_time)
         serialized_data = c_msg.SerializeToString()
 
     attrs: dict[str, str] = {
@@ -367,6 +372,7 @@ def publish_audio_chunk_sync(
     duration_ms: int,
     source_type: str | None = None,
     external_audio_segment_id: str | None = None,
+    receipt_time: datetime.datetime | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -386,6 +392,7 @@ def publish_audio_chunk_sync(
             duration_ms,
             source_type,
             external_audio_segment_id,
+            receipt_time,
         )
 
         max_retries = 1
@@ -428,6 +435,7 @@ async def publish_audio_chunk(
     duration_ms: int,
     source_type: str | None = None,
     external_audio_segment_id: str | None = None,
+    receipt_time: datetime.datetime | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -448,6 +456,7 @@ async def publish_audio_chunk(
             duration_ms,
             source_type,
             external_audio_segment_id,
+            receipt_time,
         )
 
         max_retries = 1

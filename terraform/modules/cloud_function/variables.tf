@@ -25,3 +25,9 @@ variable "trigger_topic_id" {
   type        = string
   default     = null
 }
+
+variable "min_instance_count" {
+  description = "Minimum number of pre-warmed instance count for Gen 2 Cloud Function"
+  type        = number
+  default     = 1
+}
