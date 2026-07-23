@@ -153,19 +153,20 @@ def _advance_heartbeat_tick(
     return advanced
 
 
-def _heartbeat_command_timeout_sec(settings: CollectorSettings) -> float:
+def _heartbeat_io_timeout_sec(settings: CollectorSettings) -> float:
     """Fit serial domain heartbeats inside the process stall watchdog.
 
     The dedicated heartbeat pool has one connection, so selected ownership
     domains renew serially. Reserve part of the watchdog for event-loop
-    scheduling, result validation, and timeout cleanup, then divide the
-    remaining database budget equally across domains.
+    scheduling and result validation, then divide the remaining database
+    budget equally across domains. Each domain spends one shared deadline
+    across pool checkout or reconnect, query execution, and pool release.
 
     Args:
         settings: Validated collector and database configuration.
 
     Returns:
-        A positive per-command timeout bounded by the configured database
+        A positive per-domain timeout bounded by the configured database
         timeout.
     """
     domain_count = len(settings.worker_profile.allocations)
@@ -489,6 +490,7 @@ class CollectorRuntime:
         abandonment = datetime.timedelta(
             seconds=settings.abandonment_window_sec
         )
+        heartbeat_timeout_sec = _heartbeat_io_timeout_sec(settings)
         registrations: list[object] = []
         for allocation in settings.worker_profile.allocations:
             if allocation.domain_id is grant_control.DomainId.FEED:
@@ -499,6 +501,7 @@ class CollectorRuntime:
                 self._heartbeat_store = FeedStore(
                     heartbeat_pool,
                     claim_types=list(settings.feed_claim_caps.keys()),
+                    heartbeat_timeout_sec=heartbeat_timeout_sec,
                 )
                 control = feed_grant_control.FeedGrantControl(
                     self._store,
@@ -524,7 +527,10 @@ class CollectorRuntime:
                 data_pool
             )
             self._sid_heartbeat_store = (
-                ingestion_lease_store.IngestionLeaseStore(heartbeat_pool)
+                ingestion_lease_store.IngestionLeaseStore(
+                    heartbeat_pool,
+                    heartbeat_timeout_sec=heartbeat_timeout_sec,
+                )
             )
             self._sid_calls_provider = bcfy_calls_provider.CallsProviderClient(
                 http_session,
@@ -646,7 +652,7 @@ class CollectorRuntime:
             heartbeat_settings = settings.db.replace(
                 pool_min_size=1,
                 pool_max_size=1,
-                command_timeout_sec=_heartbeat_command_timeout_sec(settings),
+                command_timeout_sec=_heartbeat_io_timeout_sec(settings),
             )
             self._heartbeat_pool = await create_pool_with_retry(
                 heartbeat_settings

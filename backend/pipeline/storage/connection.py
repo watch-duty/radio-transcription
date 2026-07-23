@@ -1,4 +1,7 @@
+import collections.abc
 import logging
+import time
+import typing
 
 import asyncpg
 from tenacity import (
@@ -102,6 +105,53 @@ async def create_pool(
 async def close_pool(pool: asyncpg.Pool) -> None:
     """Close an asyncpg connection pool."""
     await pool.close()
+
+
+async def fetch_with_timeout_budget(
+    pool: asyncpg.Pool,
+    query: str,
+    *args: object,
+    timeout_sec: float | None = None,
+) -> list[collections.abc.Mapping[str, object]]:
+    """Fetch while bounding checkout, execution, and release together.
+
+    Args:
+        pool: Managed asyncpg connection pool.
+        query: SQL query to execute.
+        args: Positional query arguments.
+        timeout_sec: Optional total timeout for the complete pool lifecycle.
+
+    Returns:
+        Records returned by the query.
+    """
+    if timeout_sec is None:
+        rows = await pool.fetch(query, *args)
+        return typing.cast(
+            "list[collections.abc.Mapping[str, object]]",
+            rows,
+        )
+
+    deadline = time.monotonic() + timeout_sec
+
+    def remaining_timeout() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    db_connection = await pool.acquire(timeout=remaining_timeout())
+    try:
+        rows = await db_connection.fetch(
+            query,
+            *args,
+            timeout=remaining_timeout(),
+        )
+    finally:
+        await pool.release(
+            db_connection,
+            timeout=remaining_timeout(),
+        )
+    return typing.cast(
+        "list[collections.abc.Mapping[str, object]]",
+        rows,
+    )
 
 
 async def create_pool_from_settings(

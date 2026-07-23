@@ -258,6 +258,18 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(runtime._supervisor, supervisor_constructor.return_value)
         self.assertIs(runtime._work_pool, pool)
+        self.assertEqual(
+            getattr(runtime._heartbeat_store, "_heartbeat_timeout_sec", None),
+            18.0,
+        )
+        self.assertEqual(
+            getattr(
+                runtime._sid_heartbeat_store,
+                "_heartbeat_timeout_sec",
+                None,
+            ),
+            18.0,
+        )
 
     async def test_failed_work_pool_start_is_not_published_for_shutdown(
         self,

@@ -9,6 +9,7 @@ import uuid
 
 from backend.pipeline.storage import (
     _ingestion_lease_child_commit,
+    connection,
     feed_change_notifications,
     feed_store,
     ingestion_lease_contracts,
@@ -357,13 +358,21 @@ def _member_from_row(
 class IngestionLeaseStore:
     """Storage facade for complete-grant Lease control operations."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        *,
+        heartbeat_timeout_sec: float | None = None,
+    ) -> None:
         """Initialize the store over a managed asyncpg pool.
 
         Args:
             pool: Database pool used for one-shot Lease operations.
+            heartbeat_timeout_sec: Optional total timeout for heartbeat pool
+                checkout, query execution, and connection release.
         """
         self._pool = pool
+        self._heartbeat_timeout_sec = heartbeat_timeout_sec
 
     def _grant_rejection(
         self,
@@ -520,13 +529,15 @@ class IngestionLeaseStore:
                 item[1].lease_key,
             ),
         )
-        rows = await self._pool.fetch(
+        rows = await connection.fetch_with_timeout_budget(
+            self._pool,
             ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
             [grant.source_type.value for _, grant in ordered],
             [grant.lease_key for _, grant in ordered],
             [grant.owner_worker_id for _, grant in ordered],
             [grant.fencing_token for _, grant in ordered],
             [ordinal for ordinal, _ in ordered],
+            timeout_sec=self._heartbeat_timeout_sec,
         )
         rows_by_ordinal = {row["caller_ordinal"]: row for row in rows}
         return tuple(

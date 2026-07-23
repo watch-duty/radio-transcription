@@ -1349,6 +1349,36 @@ class TestFeedGrantHeartbeatSql(unittest.TestCase):
 class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
     """Tests for exact, caller-correlated Feed grant heartbeats."""
 
+    async def test_timeout_budget_covers_checkout_query_and_release(
+        self,
+    ) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+        rows = [_grant_heartbeat_row(grant)]
+        connection = mock.AsyncMock()
+        connection.fetch.return_value = rows
+        pool = mock.MagicMock()
+        pool.acquire = mock.AsyncMock(return_value=connection)
+        pool.release = mock.AsyncMock()
+        store = FeedStore(pool, heartbeat_timeout_sec=18.0)
+
+        with mock.patch(
+            "backend.pipeline.storage.connection.time.monotonic",
+            side_effect=(100.0, 101.0, 105.0, 109.0),
+        ):
+            result = await store.renew_grant_heartbeats((grant,))
+
+        self.assertEqual(result[0].grant, grant)
+        pool.acquire.assert_awaited_once_with(timeout=17.0)
+        connection.fetch.assert_awaited_once_with(
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
+            [_FEED_ID],
+            [_WORKER_ID],
+            [7],
+            [0],
+            timeout=13.0,
+        )
+        pool.release.assert_awaited_once_with(connection, timeout=9.0)
+
     async def test_empty_input_returns_before_pool_checkout(self) -> None:
         pool = make_mock_pool()
         store = FeedStore(pool)
