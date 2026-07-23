@@ -365,11 +365,15 @@ class GeminiTranscriber(base.Transcriber):
         fallback call also fails with a transient empty response, returns an
         empty string ("") to prevent infinite retries.
         """
+        log_helper.record_pipeline_stage(
+            "transcription_status", enums.TranscriptionStatus.FALLBACK
+        )
+
         if not self._clients:
             msg = "Client not initialized"
             raise RuntimeError(msg)
 
-        fallback_model = self.config.fallback_model
+        fallback_model = self.config.fallback_model or DEFAULT_GEMINI_MODEL
         if not fallback_model or self.config.model == fallback_model:
             logger.info(
                 "Model %s returned incomplete/empty response: %s. "
@@ -380,10 +384,6 @@ class GeminiTranscriber(base.Transcriber):
                 reason,
             )
             return ""
-
-        log_helper.record_pipeline_stage(
-            "transcription_status", enums.TranscriptionStatus.FALLBACK
-        )
 
         fallback_location = self._resolve_location(
             fallback_model, self.fallback_location
