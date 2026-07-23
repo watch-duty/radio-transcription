@@ -172,7 +172,7 @@ async def publish_audio_chunk_after_bookmark(
     shutdown: asyncio.Event,
     event_logger: logging.Logger,
 ) -> str:
-    """Publish committed audio through the shared retry and settlement policy.
+    """Publish committed audio and emit success evidence before cancellation.
 
     Args:
         operation: Physical Pub/Sub publication callable.
@@ -187,7 +187,8 @@ async def publish_audio_chunk_after_bookmark(
         lease_lost: Event that interrupts retries after confirmed authority
             loss.
         shutdown: Event that interrupts retries during cooperative shutdown.
-        event_logger: Logger that owns post-commit failure evidence.
+        event_logger: Logger that owns post-commit success and failure
+            evidence.
 
     Returns:
         The downstream Pub/Sub message identifier.
@@ -195,29 +196,44 @@ async def publish_audio_chunk_after_bookmark(
     duration_ms = int(
         (chunk.chunk_end_time - chunk.chunk_start_time).total_seconds() * 1000
     )
-    publication = retry.retry_with_lease_check(
-        operation,
-        pubsub_client,
-        topic_path,
-        str(feed_id),
-        feed_name,
-        gcs_uri,
-        chunk.session_id,
-        chunk.chunk_start_time,
-        duration_ms,
-        source_type,
-        chunk.external_audio_segment_id,
-        chunk.receipt_time,
-        lease_lost=lease_lost,
-        shutdown=shutdown,
-        max_retries=settings.pubsub_publish_max_retries,
-        base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
-        max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-        retryable=_PUBSUB_RETRYABLE,
-        operation_name="Pub/Sub publish",
-    )
+
+    async def publish_and_observe() -> str:
+        message_id = await retry.retry_with_lease_check(
+            operation,
+            pubsub_client,
+            topic_path,
+            str(feed_id),
+            feed_name,
+            gcs_uri,
+            chunk.session_id,
+            chunk.chunk_start_time,
+            duration_ms,
+            source_type,
+            chunk.external_audio_segment_id,
+            chunk.receipt_time,
+            lease_lost=lease_lost,
+            shutdown=shutdown,
+            max_retries=settings.pubsub_publish_max_retries,
+            base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+            max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+            retryable=_PUBSUB_RETRYABLE,
+            operation_name="Pub/Sub publish",
+        )
+        event_logger.info(
+            "Published message %s for feed %s",
+            message_id,
+            feed_name,
+        )
+        log_chunk_ingested(
+            event_logger,
+            feed_id=feed_id,
+            source_type=source_type,
+            chunk=chunk,
+        )
+        return message_id
+
     return await settle_post_bookmark_publish(
-        publication,
+        publish_and_observe(),
         event_logger=event_logger,
     )
 

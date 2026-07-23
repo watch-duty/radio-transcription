@@ -102,8 +102,17 @@ class HealthzHandlerTests(AioHTTPTestCase):
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 503)
-        self.assertEqual(body["status"], "unhealthy")
-        self.assertEqual(body["reason"], "no_heartbeat")
+        self.assertEqual(
+            body,
+            {
+                "status": "unhealthy",
+                "reason": "no_heartbeat",
+                "active_feeds": 0,
+                "active_sids": 0,
+                "bcfy_calls_authority_mode": "legacy_feed",
+                "last_heartbeat_age_sec": None,
+            },
+        )
 
     async def test_post_grace_stale_heartbeat_returns_unhealthy(self) -> None:
         """Post-grace, tick age > 2x interval → 503 heartbeat_stale."""
@@ -115,7 +124,12 @@ class HealthzHandlerTests(AioHTTPTestCase):
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 503)
+        self.assertEqual(body["status"], "unhealthy")
         self.assertEqual(body["reason"], "heartbeat_stale")
+        self.assertEqual(body["active_feeds"], 0)
+        self.assertEqual(body["active_sids"], 0)
+        self.assertEqual(body["bcfy_calls_authority_mode"], "legacy_feed")
+        self.assertIsInstance(body["last_heartbeat_age_sec"], (int, float))
 
     async def test_post_grace_zero_feeds_is_still_healthy(self) -> None:
         """

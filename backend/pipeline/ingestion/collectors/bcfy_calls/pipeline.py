@@ -236,7 +236,7 @@ class BcfyCallsFeedBatchExecutor:
 
             committed_urls.append(call.audio_url)
             try:
-                message_id = await self._publish(
+                await self._publish(
                     batch.member,
                     chunk,
                     gcs_uri,
@@ -261,19 +261,8 @@ class BcfyCallsFeedBatchExecutor:
                     ),
                 )
 
-            logger.info(
-                "Published message %s for feed %s",
-                message_id,
-                batch.member.name,
-            )
             published_count += 1
             outcome.record_chunk_produced()
-            audio_pipeline.log_chunk_ingested(
-                logger,
-                feed_id=batch.member.identity.feed_id,
-                source_type=batch.member.identity.source_type,
-                chunk=chunk,
-            )
 
         return self._result(
             outcome,

@@ -487,10 +487,16 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
             publish_settled.set()
             return "message-id"
 
-        with mock.patch.object(
-            pipeline.gcp_helper,
-            "publish_audio_chunk",
-            side_effect=publish,
+        with (
+            mock.patch.object(
+                pipeline.gcp_helper,
+                "publish_audio_chunk",
+                side_effect=publish,
+            ),
+            mock.patch.object(
+                audio_pipeline,
+                "log_chunk_ingested",
+            ) as log_chunk_ingested,
         ):
             task = asyncio.create_task(
                 _executor(_Store(_committed())).execute(_batch(_work(0)))
@@ -507,6 +513,12 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 await task
 
         self.assertTrue(publish_settled.is_set())
+        log_chunk_ingested.assert_called_once_with(
+            pipeline.logger,
+            feed_id=_FEED_ID,
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            chunk=_chunk(0),
+        )
 
     async def test_publish_completion_race_still_propagates_cancellation(
         self,

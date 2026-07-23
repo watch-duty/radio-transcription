@@ -916,21 +916,19 @@ class CollectorRuntime:
             raise LeaseExpiredError(msg)
 
         try:
-            message_id = (
-                await audio_pipeline.publish_audio_chunk_after_bookmark(
-                    gcp_helper.publish_audio_chunk,
-                    pubsub_client=self._pubsub_client,
-                    topic_path=topic_path,
-                    feed_id=feed["id"],
-                    feed_name=feed["name"],
-                    source_type=feed["source_type"],
-                    gcs_uri=gcs_uri,
-                    chunk=captured_chunk,
-                    settings=settings,
-                    lease_lost=no_cooperative_stop,
-                    shutdown=no_cooperative_stop,
-                    event_logger=logger,
-                )
+            await audio_pipeline.publish_audio_chunk_after_bookmark(
+                gcp_helper.publish_audio_chunk,
+                pubsub_client=self._pubsub_client,
+                topic_path=topic_path,
+                feed_id=feed["id"],
+                feed_name=feed["name"],
+                source_type=feed["source_type"],
+                gcs_uri=gcs_uri,
+                chunk=captured_chunk,
+                settings=settings,
+                lease_lost=no_cooperative_stop,
+                shutdown=no_cooperative_stop,
+                event_logger=logger,
             )
         except asyncio.CancelledError:
             raise
@@ -941,18 +939,6 @@ class CollectorRuntime:
                     FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
                 ),
             ) from error
-
-        logger.info(
-            "Published message %s for feed %s",
-            message_id,
-            feed["name"],
-        )
-        audio_pipeline.log_chunk_ingested(
-            logger,
-            feed_id=feed["id"],
-            source_type=feed["source_type"],
-            chunk=captured_chunk,
-        )
 
     async def _process_source_observation(
         self,

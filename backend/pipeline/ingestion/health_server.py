@@ -7,9 +7,7 @@ import time
 
 from aiohttp import web
 
-from backend.pipeline.ingestion.settings import (  # noqa: TC001
-    CollectorSettings,
-)
+from backend.pipeline.ingestion import settings  # noqa: TC001
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +70,7 @@ def _response_payload(
 
 # Typed aiohttp app keys (the recommended pattern since aiohttp 3.9).
 _STATE_KEY: web.AppKey[HealthState] = web.AppKey("state", HealthState)
-_SETTINGS_KEY: web.AppKey[CollectorSettings] = web.AppKey("settings")
+_SETTINGS_KEY: web.AppKey[settings.CollectorSettings] = web.AppKey("settings")
 
 
 async def _healthz(request: web.Request) -> web.Response:
@@ -117,14 +115,26 @@ async def _healthz(request: web.Request) -> web.Response:
     # (Docker daemon wedged), where autohealing needs to replace the VM.
     heartbeat_max_age_sec = 2.0 * settings.heartbeat_interval_sec
     if hb is None:
+        payload = _response_payload(
+            state,
+            status="unhealthy",
+            heartbeat_age_sec=None,
+        )
+        payload["reason"] = "no_heartbeat"
         return web.json_response(
-            {"status": "unhealthy", "reason": "no_heartbeat"},
+            payload,
             status=503,
         )
     hb_age = now - hb
     if hb_age > heartbeat_max_age_sec:
+        payload = _response_payload(
+            state,
+            status="unhealthy",
+            heartbeat_age_sec=hb_age,
+        )
+        payload["reason"] = "heartbeat_stale"
         return web.json_response(
-            {"status": "unhealthy", "reason": "heartbeat_stale"},
+            payload,
             status=503,
         )
 
@@ -146,7 +156,7 @@ async def _healthz(request: web.Request) -> web.Response:
 
 
 def build_app(
-    settings: CollectorSettings, state: HealthState
+    settings: settings.CollectorSettings, state: HealthState
 ) -> web.Application:
     """Build the health-server application.
 
@@ -165,7 +175,7 @@ def build_app(
 
 
 async def start(
-    settings: CollectorSettings,
+    settings: settings.CollectorSettings,
     state: HealthState,
 ) -> web.AppRunner:
     """Start the health server on the current event loop.
