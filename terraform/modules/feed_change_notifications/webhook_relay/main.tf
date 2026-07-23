@@ -32,22 +32,14 @@ resource "google_service_account" "feed_change_webhook" {
   description  = "Runs the Feed Change Notifications relay Cloud Run service."
 }
 
-locals {
-  deployer_service_account_email = (
-    var.deployer_service_account_email == null
-    ? null
-    : trimspace(var.deployer_service_account_email)
-  )
-}
-
 # Allow the Terraform deployer to attach the relay runtime service account to
 # the Cloud Run service.
 resource "google_service_account_iam_member" "deployer_feed_change_webhook_user" {
-  count = local.deployer_service_account_email != null && local.deployer_service_account_email != "" ? 1 : 0
+  count = var.deployer_service_account_email != null && var.deployer_service_account_email != "" ? 1 : 0
 
   service_account_id = google_service_account.feed_change_webhook.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${local.deployer_service_account_email}"
+  member             = "serviceAccount:${var.deployer_service_account_email}"
 }
 
 resource "google_cloud_run_v2_service" "feed_change_webhook" {

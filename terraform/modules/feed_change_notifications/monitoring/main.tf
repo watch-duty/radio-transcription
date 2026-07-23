@@ -1,5 +1,11 @@
+data "google_project" "project" {}
+
+locals {
+  project_id = data.google_project.project.project_id
+}
+
 # =============================================================================
-# FEED CHANGE NOTIFICATIONS MONITORING
+# FEED CHANGE NOTIFICATIONS MONITORING METRICS
 # =============================================================================
 
 resource "google_logging_metric" "webhook_retryable_failures" {
@@ -8,7 +14,7 @@ resource "google_logging_metric" "webhook_retryable_failures" {
   description = "Retryable Feed Change Notifications relay delivery failures."
   filter      = <<-EOT
     resource.type="cloud_run_revision"
-    AND resource.labels.service_name="${module.webhook_relay.feed_change_webhook_service_name}"
+    AND resource.labels.service_name="${var.relay_service_name}"
     AND jsonPayload.relay_event="feed_change_webhook_delivery"
     AND jsonPayload.retryable=true
   EOT
@@ -30,7 +36,7 @@ resource "google_logging_metric" "webhook_permanent_failures" {
   description = "Permanent or configuration Feed Change Notifications relay failures."
   filter      = <<-EOT
     resource.type="cloud_run_revision"
-    AND resource.labels.service_name="${module.webhook_relay.feed_change_webhook_service_name}"
+    AND resource.labels.service_name="${var.relay_service_name}"
     AND (
       (jsonPayload.relay_event="feed_change_webhook_delivery" AND jsonPayload.retryable=false)
       OR jsonPayload.relay_event="feed_change_webhook_invalid_pubsub_message"
@@ -50,20 +56,20 @@ resource "google_logging_metric" "webhook_permanent_failures" {
   }
 }
 
+# =============================================================================
+# ALERT POLICY
+# =============================================================================
+
 resource "time_sleep" "wait_for_webhook_metrics" {
-  count = var.enabled ? 1 : 0
-
-  depends_on = [
-    google_logging_metric.webhook_retryable_failures,
-    google_logging_metric.webhook_permanent_failures,
-  ]
-
   create_duration = "120s"
+
+  triggers = {
+    retryable_metric = google_logging_metric.webhook_retryable_failures.name
+    permanent_metric = google_logging_metric.webhook_permanent_failures.name
+  }
 }
 
 resource "google_monitoring_alert_policy" "delivery_health" {
-  count = var.enabled ? 1 : 0
-
   project      = local.project_id
   display_name = "Feed Change Notifications Delivery Health (${var.environment})"
   combiner     = "OR"
@@ -75,7 +81,7 @@ resource "google_monitoring_alert_policy" "delivery_health" {
 
   documentation {
     mime_type = "text/markdown"
-    content   = "Feed Change Notifications delivery needs operator attention. Inspect `${module.webhook_relay.feed_change_webhook_service_name}` relay logs, Pub/Sub subscription health, and destination webhook responses for retryable or permanent delivery failures."
+    content   = "Feed Change Notifications delivery needs operator attention. Inspect `${var.relay_service_name}` relay logs, Pub/Sub subscription health, and destination webhook responses for retryable or permanent delivery failures."
   }
 
   conditions {
@@ -130,7 +136,7 @@ resource "google_monitoring_alert_policy" "delivery_health" {
       duration        = "0s"
       threshold_value = 0
 
-      filter = "resource.type=\"pubsub_subscription\" AND metric.type=\"pubsub.googleapis.com/subscription/dead_letter_message_count\" AND resource.labels.subscription_id=\"${google_pubsub_subscription.feed_change_notifications_push[0].name}\""
+      filter = "resource.type=\"pubsub_subscription\" AND metric.type=\"pubsub.googleapis.com/subscription/dead_letter_message_count\" AND resource.labels.subscription_id=\"${var.push_subscription_name}\""
 
       aggregations {
         alignment_period     = "60s"
@@ -152,7 +158,7 @@ resource "google_monitoring_alert_policy" "delivery_health" {
       duration        = "0s"
       threshold_value = 0
 
-      filter = "resource.type=\"pubsub_subscription\" AND metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" AND resource.labels.subscription_id=\"${google_pubsub_subscription.feed_change_notifications_dlq[0].name}\""
+      filter = "resource.type=\"pubsub_subscription\" AND metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" AND resource.labels.subscription_id=\"${var.dlq_subscription_name}\""
 
       aggregations {
         alignment_period     = "60s"

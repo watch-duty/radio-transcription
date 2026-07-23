@@ -34,16 +34,4 @@ variable "deployer_service_account_email" {
   type        = string
   default     = null
   nullable    = true
-
-  validation {
-    condition = (
-      var.deployer_service_account_email == null
-      || trimspace(var.deployer_service_account_email) == ""
-      || (
-        !can(regex("[[:space:]]", var.deployer_service_account_email))
-        && can(regex("^[^:@]+@[^@]+$", var.deployer_service_account_email))
-      )
-    )
-    error_message = "deployer_service_account_email must be null, empty, or a bare service-account email without whitespace."
-  }
 }
