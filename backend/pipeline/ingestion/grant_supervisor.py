@@ -790,19 +790,26 @@ class GrantSupervisor:
             if not self._is_current(managed):
                 return
             managed.discard_without_finalize = True
-            failure = (
-                exc
-                if isinstance(
-                    exc,
-                    grant_control.GrantControlIntegrityError,
+            if isinstance(
+                exc,
+                grant_control.GrantControlIntegrityError,
+            ):
+                self._surface_integrity_failure(exc)
+            else:
+                # A closed runner has no remaining side effects to protect.
+                # Whether this fenced finalization committed or not, dropping
+                # the local generation is safe: storage already released it,
+                # or the abandonment sweep will make it recoverable.
+                logger.exception(
+                    "Grant finalization backend failed; "
+                    "abandonment safety net will recover",
+                    extra={
+                        "json_fields": {
+                            "domain_id": managed.domain.domain_id.value,
+                            "unit_key": str(managed.claim.grant.unit_key),
+                        }
+                    },
                 )
-                else grant_control.GrantControlIntegrityError(
-                    "finalization outcome is unknown"
-                )
-            )
-            if failure is not exc:
-                failure.__cause__ = exc
-            self._surface_integrity_failure(failure)
             self._discard_current(managed)
             return
 

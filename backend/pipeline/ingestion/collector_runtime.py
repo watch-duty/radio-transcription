@@ -847,7 +847,11 @@ class CollectorRuntime:
             asyncio.CancelledError: The owning runner is cancelled.
         """
         settings = self._collector_settings
-        no_stop = asyncio.Event()
+        # A yielded chunk may finish during cooperative stop/deactivation, but
+        # confirmed authority loss must still interrupt pre-bookmark retries.
+        # After the bookmark commits, publication is an unconditional
+        # obligation.
+        no_cooperative_stop = asyncio.Event()
         try:
             gcs_uri = await audio_pipeline.upload_staged_audio_with_retry(
                 gcp_helper.upload_staged_audio,
@@ -859,8 +863,8 @@ class CollectorRuntime:
                 fencing_token=grant.fencing_token,
                 extension=extension,
                 content_type=content_type,
-                lease_lost=no_stop,
-                shutdown=no_stop,
+                lease_lost=context.grant_lost,
+                shutdown=no_cooperative_stop,
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
@@ -891,8 +895,8 @@ class CollectorRuntime:
         try:
             applied = await retry_with_lease_check(
                 update_progress,
-                lease_lost=no_stop,
-                shutdown=no_stop,
+                lease_lost=context.grant_lost,
+                shutdown=no_cooperative_stop,
                 max_retries=settings.bookmark_max_retries,
                 base_delay_sec=settings.bookmark_retry_base_delay_sec,
                 max_delay_sec=settings.bookmark_retry_max_delay_sec,
@@ -927,8 +931,8 @@ class CollectorRuntime:
                     gcs_uri=gcs_uri,
                     chunk=captured_chunk,
                     settings=settings,
-                    lease_lost=no_stop,
-                    shutdown=no_stop,
+                    lease_lost=no_cooperative_stop,
+                    shutdown=no_cooperative_stop,
                     event_logger=logger,
                 )
             )
@@ -1280,18 +1284,15 @@ class CollectorRuntime:
 
         Returns:
             None once the thread has stopped or was never started.
-
-        Raises:
-            RuntimeError: The heartbeat thread does not stop within timeout.
         """
         self._thread_stop.set()
         thread = self._heartbeat_thread
         if thread is None or not thread.is_alive():
             return
-        await asyncio.to_thread(thread.join, timeout=5)
-        if thread.is_alive():
-            msg = "heartbeat thread did not stop"
-            raise RuntimeError(msg)
+        # GrantSupervisor owns the one external shutdown deadline around this
+        # callback. Do not impose a shorter timeout while an in-flight heartbeat
+        # is still bounded by the watchdog's stall timeout.
+        await asyncio.to_thread(thread.join)
 
     async def _shutdown_sequence(self) -> None:
         """Drain grants before closing the queue and shared resources.
@@ -1347,7 +1348,16 @@ class CollectorRuntime:
             await self._http_session.close()
             await asyncio.sleep(0.25)
         if self._heartbeat_pool is not None:
-            await close_pool(self._heartbeat_pool)
+            try:
+                await close_pool(self._heartbeat_pool)
+            except Exception:
+                # The heartbeat thread is already proven stopped, so this pool
+                # cannot still protect work. Continue closing the independent
+                # data pool, matching the legacy shutdown safety net.
+                logger.warning(
+                    "Failed to close heartbeat database pool",
+                    exc_info=True,
+                )
         if self._data_pool is not None:
             await close_pool(self._data_pool)
         logger.info("Shutdown complete")

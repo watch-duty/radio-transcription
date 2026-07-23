@@ -834,6 +834,55 @@ class TestFeedRunner(unittest.IsolatedAsyncioTestCase):
         runtime._store.update_feed_progress.assert_not_awaited()
         publish.assert_not_awaited()
 
+    async def test_precommit_upload_stops_on_confirmed_grant_loss(self) -> None:
+        context = _context()
+        now = datetime.datetime.now(datetime.UTC)
+
+        async def one_chunk(_feed, _stop, _resources):
+            yield CapturedChunk(
+                audio_bytes=b"audio",
+                chunk_start_time=now,
+                chunk_end_time=now + datetime.timedelta(seconds=15),
+            )
+
+        runtime = collector_runtime.CollectorRuntime(
+            one_chunk,
+            _settings(),
+            runtime_actor_id=_ACTOR_ID,
+        )
+        runtime._capture_resources = CaptureResources(
+            http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        )
+        runtime._store = mock.AsyncMock()
+
+        async def lose_grant(*_args, **_kwargs) -> str:
+            context.grant_lost.set()
+            message = "upload interrupted by authority loss"
+            raise OSError(message)
+
+        with (
+            mock.patch.object(
+                collector_runtime.gcp_helper,
+                "upload_staged_audio",
+                side_effect=lose_grant,
+            ) as upload,
+            mock.patch.object(
+                collector_runtime.gcp_helper,
+                "publish_audio_chunk",
+                new_callable=mock.AsyncMock,
+            ) as publish,
+        ):
+            outcome = await runtime._process_feed(
+                _grant(),
+                _feed(),
+                context,
+            )
+
+        self.assertIsInstance(outcome, grant_control.RunLost)
+        self.assertEqual(upload.await_count, 1)
+        runtime._store.update_feed_progress.assert_not_awaited()
+        publish.assert_not_awaited()
+
     async def test_rejected_observation_sets_grant_lost(self) -> None:
         runtime = _runtime()
         runtime._store = mock.AsyncMock()
@@ -1024,6 +1073,49 @@ class TestShutdown(unittest.IsolatedAsyncioTestCase):
         runtime._work_pool.close.assert_not_awaited()
         runtime._pubsub_client.close.assert_not_awaited()
         runtime._gcs_client.close.assert_not_awaited()
+
+    async def test_heartbeat_thread_join_uses_supervisor_deadline(self) -> None:
+        runtime = _runtime()
+        thread = mock.MagicMock()
+        thread.is_alive.return_value = True
+        runtime._heartbeat_thread = thread
+
+        with mock.patch.object(
+            collector_runtime.asyncio,
+            "to_thread",
+            new_callable=mock.AsyncMock,
+        ) as to_thread:
+            await runtime._stop_heartbeat_supervision()
+
+        to_thread.assert_awaited_once_with(thread.join)
+
+    async def test_heartbeat_pool_failure_does_not_leak_data_pool(self) -> None:
+        runtime = _runtime()
+        runtime._memory_watchdog = mock.MagicMock()
+        runtime._memory_watchdog.join = mock.AsyncMock()
+        runtime._pubsub_client = mock.AsyncMock()
+        runtime._gcs_client = mock.AsyncMock()
+        runtime._heartbeat_pool = mock.MagicMock()
+        runtime._data_pool = mock.MagicMock()
+        closed: list[object] = []
+
+        async def close_test_pool(pool) -> None:
+            closed.append(pool)
+            if pool is runtime._heartbeat_pool:
+                message = "heartbeat pool close failed"
+                raise RuntimeError(message)
+
+        with mock.patch.object(
+            collector_runtime,
+            "close_pool",
+            side_effect=close_test_pool,
+        ):
+            await runtime._shutdown_sequence()
+
+        self.assertEqual(
+            closed,
+            [runtime._heartbeat_pool, runtime._data_pool],
+        )
 
 
 if __name__ == "__main__":

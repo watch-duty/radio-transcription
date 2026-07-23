@@ -949,7 +949,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(runner.contexts[grant].grant_lost.is_set())
 
-    async def test_finalize_uncertainty_is_not_retried(
+    async def test_finalize_backend_failure_uses_abandonment_recovery(
         self,
     ) -> None:
         control: _Control[
@@ -980,7 +980,47 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await _wait(runner.finished_event(grant))
 
         self.assertEqual(len(control.finalize_calls), 1)
-        self.assertFalse(supervisor.admission_enabled)
+        self.assertTrue(supervisor.admission_enabled)
+        self.assertIsNone(supervisor.integrity_failure)
+        self.assertFalse(supervisor.integrity_failure_event.is_set())
+        self.assertEqual(
+            supervisor.active_count(grant_control.DomainId.SID),
+            0,
+        )
+
+    async def test_finalize_integrity_failure_still_fails_closed(self) -> None:
+        control: _Control[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Control()
+        runner: _Runner[
+            ingestion_lease_store.LeaseGrant,
+            grant_control.ClaimMode,
+        ] = _Runner()
+        grant = _sid_grant("123", 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(
+                grant,
+                grant_control.ClaimMode.PRIMARY,
+            ),
+        )
+        failure = grant_control.GrantControlIntegrityError(
+            "malformed finalization result"
+        )
+        control.finalize_error = failure
+        supervisor = self._supervisor(
+            _sid_profile(),
+            _sid_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+
+        runner.release.set()
+        await _wait(control.finalize_started)
+        await _wait(runner.finished_event(grant))
+
+        self.assertIs(supervisor.integrity_failure, failure)
         self.assertTrue(supervisor.integrity_failure_event.is_set())
 
     async def test_task_isolation_callbacks_fail_supervisor_closed(
