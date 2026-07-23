@@ -178,7 +178,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to(
                     [
                         (
-                            "test-feed#mock-session-id",
+                            "feacbd1b#test-feed#mock-session-id",
                             ChunkMetadata(
                                 gcs_uri="gs://test-bucket/path/to/test.flac",
                                 session_id="mock-session-id",
@@ -239,7 +239,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to(
                     [
                         (
-                            "test-feed#mock-session-id",
+                            "feacbd1b#test-feed#mock-session-id",
                             ChunkMetadata(
                                 gcs_uri="gs://test-bucket/path/to/test.flac",
                                 session_id="mock-session-id",
@@ -309,7 +309,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to(
                     [
                         (
-                            "test-feed#mock-session-id",
+                            "feacbd1b#test-feed#mock-session-id",
                             ChunkMetadata(
                                 gcs_uri="gs://test-bucket/path/to/test.flac",
                                 session_id="mock-session-id",
@@ -376,7 +376,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to(
                     [
                         (
-                            "test-feed#mock-session-id",
+                            "feacbd1b#test-feed#mock-session-id",
                             ChunkMetadata(
                                 gcs_uri="gs://test-bucket/path/to/test.flac",
                                 session_id="mock-session-id",

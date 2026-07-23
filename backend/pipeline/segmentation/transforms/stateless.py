@@ -26,6 +26,7 @@ segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
 
 import concurrent.futures
 import datetime
+import hashlib
 import io
 import time
 import urllib.parse
@@ -237,7 +238,8 @@ class ParseAndKeyFn(beam.DoFn):
                     chunk_proto.gcs_uri,
                     chunk_proto.duration_ms,
                 )
-                combined_key = f"{feed_id}#{metadata.session_id}"
+                feed_hash = hashlib.md5(feed_id.encode("utf-8")).hexdigest()[:8]
+                combined_key = f"{feed_hash}#{feed_id}#{metadata.session_id}"
                 outputs.append((combined_key, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
