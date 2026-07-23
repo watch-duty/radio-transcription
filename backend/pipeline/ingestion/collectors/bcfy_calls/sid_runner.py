@@ -291,16 +291,19 @@ def _raise_integrity_with_evidence(
     if cancellation is None:
         raise grant_control.GrantControlIntegrityError(message) from failure
     try:
-        _raise_deferred_failure(failure)
-    except BaseException:
+        _raise_deferred_failure(failure, cancellation)
+    except BaseException as chained_failure:
         raise grant_control.GrantControlIntegrityError(
             message
-        ) from cancellation
+        ) from chained_failure
 
 
-def _raise_deferred_failure(failure: BaseException) -> typing.NoReturn:
-    """Raise one retained child failure to establish exception context."""
-    raise failure
+def _raise_deferred_failure(
+    failure: BaseException,
+    cancellation: asyncio.CancelledError,
+) -> typing.NoReturn:
+    """Raise a retained child failure from secondary caller cancellation."""
+    raise failure from cancellation
 
 
 def _raise_deferred_cancellation(

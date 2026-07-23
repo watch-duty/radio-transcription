@@ -583,8 +583,8 @@ async def test_accepted_child_cancellation_retains_caller_cancellation() -> (
             context,
         )
 
-    assert raised.value.__cause__ is caller_cancellation
-    assert raised.value.__context__ is child_failure
+    assert raised.value.__cause__ is child_failure
+    assert child_failure.__cause__ is caller_cancellation
     assert store.batches == []
 
 
@@ -1734,6 +1734,9 @@ async def test_page_commit_failure_retains_concurrent_cancellation() -> None:
     with pytest.raises(grant_control.GrantControlIntegrityError) as raised:
         await run
 
-    cause = typing.cast("asyncio.CancelledError", raised.value.__cause__)
-    assert cause.args[0] is outer_marker
-    assert raised.value.__context__ is child_failure
+    assert raised.value.__cause__ is child_failure
+    outer_cancellation = typing.cast(
+        "asyncio.CancelledError",
+        child_failure.__cause__,
+    )
+    assert outer_cancellation.args[0] is outer_marker
