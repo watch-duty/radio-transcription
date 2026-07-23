@@ -172,7 +172,7 @@ class TaskJsonFormatter(logging.Formatter):
             exc_text = self.formatException(record.exc_info)
             message = f"{message}\n{exc_text}"
 
-        log_record = {
+        log_record: dict[str, Any] = {
             "message": message,
             "severity": record.levelname,
             "logger": record.name,
@@ -195,6 +195,11 @@ class TaskJsonFormatter(logging.Formatter):
                 if key not in RESERVED_ATTRS and not key.startswith("_")
             }
         )
+        if "json_fields" in log_record and isinstance(
+            log_record["json_fields"], dict
+        ):
+            json_fields = log_record.pop("json_fields")
+            log_record.update(json_fields)
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
@@ -227,7 +232,7 @@ class StructuredMessageFilter(logging.Filter):
             record.exc_info = None
             record.exc_text = None
 
-        log_record = {
+        log_record: dict[str, Any] = {
             "message": message,
             "severity": record.levelname,
             "logger": record.name,
@@ -250,6 +255,11 @@ class StructuredMessageFilter(logging.Filter):
                 if key not in RESERVED_ATTRS and not key.startswith("_")
             }
         )
+        if "json_fields" in log_record and isinstance(
+            log_record["json_fields"], dict
+        ):
+            json_fields = log_record.pop("json_fields")
+            log_record.update(json_fields)
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
