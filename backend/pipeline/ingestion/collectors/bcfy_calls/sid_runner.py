@@ -49,6 +49,9 @@ _TRANSIENT_METADATA_FAILURES = frozenset(
 _TRANSIENT_MEMBERSHIP_FAILURES = (
     asyncpg.PostgresConnectionError,
     asyncpg.InterfaceError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
     OSError,
 )
 
@@ -564,18 +567,18 @@ class BcfyCallsSidRunner:
                     )
 
                 cancellation = settlement.cancellation or commit_cancellation
+                if settlement.failure is not None:
+                    _raise_settlement_failure(
+                        settlement.failure,
+                        cancellation,
+                    )
+
                 if isinstance(
                     mutation_result,
                     ingestion_lease_store.GrantRejected,
                 ):
                     poll_status = "grant_lost"
                     return grant_control.RunLost()
-
-                if settlement.failure is not None:
-                    _raise_settlement_failure(
-                        settlement.failure,
-                        cancellation,
-                    )
 
                 if promoted is not None:
                     poll_status = "sid_failed"

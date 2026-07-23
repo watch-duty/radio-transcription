@@ -9,6 +9,7 @@ import typing
 import uuid
 from unittest import mock
 
+import asyncpg
 import pytest
 
 from backend.pipeline.ingestion import failure_policy, grant_control, models
@@ -241,15 +242,26 @@ def test_page_boundary_uses_the_integer_position_sent_to_provider() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "failure_type",
+    [
+        OSError,
+        asyncpg.TooManyConnectionsError,
+        asyncpg.CannotConnectNowError,
+        asyncpg.QueryCanceledError,
+    ],
+)
 @pytest.mark.asyncio
-async def test_transient_membership_failure_retries_before_fetch() -> None:
+async def test_transient_membership_failure_retries_before_fetch(
+    failure_type: type[Exception],
+) -> None:
     grant = _grant()
     member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
     snapshot = _snapshot(grant, member)
     context = _context()
     store = _ScriptedMembershipStore(
         snapshot,
-        OSError("connection reset"),
+        failure_type("backend temporarily unavailable"),
         snapshot,
     )
     page = provider.CallsPageEnvelope({}, (), _NOW.timestamp())
@@ -611,6 +623,82 @@ async def test_admission_error_drains_already_accepted_batch() -> None:
         store.batches[0].lease_effect,
         ingestion_lease_store.NoLeaseEffect,
     )
+
+
+@pytest.mark.asyncio
+async def test_page_commit_grant_loss_does_not_hide_batch_failure() -> None:
+    grant = _grant()
+    first = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+    second = _member("200", bookmark=_NOW - datetime.timedelta(minutes=1))
+    context = _context()
+    page = provider.CallsPageEnvelope(
+        {},
+        (
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-200",
+                "url": "https://audio/2",
+                "ts": _NOW.timestamp(),
+            },
+        ),
+        _NOW.timestamp(),
+    )
+    batch_failure = RuntimeError("batch execution failed")
+    rejection = ingestion_lease_store.GrantRejected(
+        ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
+    )
+
+    class PartiallyFailingPool:
+        async def settle_batches(
+            self,
+            batches: collections.abc.Sequence[pipeline.FeedBatch],
+        ) -> work_pool.SettledBatches[
+            pipeline.FeedBatch,
+            pipeline.FeedBatchResult,
+        ]:
+            return work_pool.SettledBatches(
+                results=((batches[0], _result(batches[0])),),
+                failure=batch_failure,
+                cancellation=None,
+            )
+
+    class RejectingStore(_Store):
+        async def commit_child_mutations(
+            self,
+            committed_grant: ingestion_lease_store.LeaseGrant,
+            batch: ingestion_lease_store.ChildMutationBatch,
+            *,
+            actor_id: str,
+        ) -> ingestion_lease_store.GrantRejected:
+            assert committed_grant == self.snapshot.grant
+            assert actor_id == "test"
+            self.batches.append(batch)
+            return rejection
+
+    store = RejectingStore(_snapshot(grant, first, second))
+    runner = sid_runner.BcfyCallsSidRunner(
+        store,
+        _Provider([page], context),
+        PartiallyFailingPool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="batch execution failed") as raised:
+        await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert raised.value is batch_failure
+    assert len(store.batches) == 1
 
 
 @pytest.mark.asyncio

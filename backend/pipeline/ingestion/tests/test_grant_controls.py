@@ -12,6 +12,8 @@ import unittest
 import uuid
 from unittest import mock
 
+import asyncpg
+
 from backend.pipeline.ingestion import (
     failure_policy,
     feed_grant_control,
@@ -27,6 +29,11 @@ _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _NOW = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
 _ABANDONMENT = datetime.timedelta(seconds=60)
 _ACTOR_ID = "service_account:gcp:grant-control-tests"
+_TRANSIENT_POSTGRES_ERRORS = (
+    asyncpg.TooManyConnectionsError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
+)
 
 
 def _leased_feed(
@@ -476,6 +483,24 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
                     await operation
                 self.assertIs(raised.exception.__cause__, failure)
                 store_call.side_effect = None
+
+    async def test_transient_postgres_errors_are_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _feed_grant()
+
+        for failure_type in _TRANSIENT_POSTGRES_ERRORS:
+            with self.subTest(failure_type=failure_type.__name__):
+                failure = failure_type("backend temporarily unavailable")
+                self.heartbeat_store.renew_grant_heartbeats.side_effect = (
+                    failure
+                )
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await self.control.heartbeat((grant,))
+                self.assertIs(raised.exception.__cause__, failure)
+                self.heartbeat_store.renew_grant_heartbeats.side_effect = None
 
     async def test_neutral_release_uses_exact_feed_release(self) -> None:
         grant = _feed_grant()
@@ -1137,6 +1162,22 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                     await operation
                 self.assertIs(raised.exception.__cause__, failure)
                 store_call.side_effect = None
+
+    async def test_transient_postgres_errors_are_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _lease_grant()
+
+        for failure_type in _TRANSIENT_POSTGRES_ERRORS:
+            with self.subTest(failure_type=failure_type.__name__):
+                failure = failure_type("backend temporarily unavailable")
+                self.heartbeat_store.renew_heartbeats.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await self.control.heartbeat((grant,))
+                self.assertIs(raised.exception.__cause__, failure)
+                self.heartbeat_store.renew_heartbeats.side_effect = None
 
     async def test_neutral_release_maps_to_exact_lease_release(
         self,

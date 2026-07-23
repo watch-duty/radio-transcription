@@ -19,6 +19,9 @@ _STATUS_INELIGIBLE = (
 _TRANSIENT_BACKEND_ERRORS = (
     asyncpg.PostgresConnectionError,
     asyncpg.InterfaceError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
     OSError,
 )
 

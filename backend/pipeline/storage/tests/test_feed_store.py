@@ -1368,14 +1368,14 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
             result = await store.renew_grant_heartbeats((grant,))
 
         self.assertEqual(result[0].grant, grant)
-        pool.acquire.assert_awaited_once_with(timeout=17.0)
+        pool.acquire.assert_awaited_once_with(timeout=16.0)
         connection.fetch.assert_awaited_once_with(
             feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             [_FEED_ID],
             [_WORKER_ID],
             [7],
             [0],
-            timeout=13.0,
+            timeout=12.0,
         )
         pool.release.assert_awaited_once_with(connection, timeout=9.0)
 

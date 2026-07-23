@@ -391,7 +391,7 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
             result = await store.renew_heartbeats((grant,))
 
         self.assertEqual(result[0].grant, grant)
-        pool.acquire.assert_awaited_once_with(timeout=17.0)
+        pool.acquire.assert_awaited_once_with(timeout=16.0)
         connection.fetch.assert_awaited_once_with(
             ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
             ["bcfy_calls"],
@@ -399,7 +399,7 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
             [_OWNER_ID],
             [7],
             [0],
-            timeout=13.0,
+            timeout=12.0,
         )
         pool.release.assert_awaited_once_with(connection, timeout=9.0)
 

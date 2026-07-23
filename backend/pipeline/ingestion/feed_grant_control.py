@@ -26,6 +26,9 @@ _QUARANTINE_OBSERVER_TIMEOUT_SEC = 2.0
 _TRANSIENT_BACKEND_ERRORS = (
     asyncpg.PostgresConnectionError,
     asyncpg.InterfaceError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
     OSError,
 )
 

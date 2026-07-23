@@ -1,3 +1,4 @@
+import asyncio
 import collections.abc
 import logging
 import time
@@ -15,6 +16,7 @@ from tenacity import (
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 _logger = logging.getLogger(__name__)
+_POOL_RELEASE_TIMEOUT_RESERVE_SEC = 1.0
 
 
 async def create_pool(
@@ -132,22 +134,42 @@ async def fetch_with_timeout_budget(
         )
 
     deadline = time.monotonic() + timeout_sec
+    release_reserve_sec = min(
+        _POOL_RELEASE_TIMEOUT_RESERVE_SEC,
+        timeout_sec * 0.1,
+    )
+    operation_deadline = deadline - release_reserve_sec
 
-    def remaining_timeout() -> float:
+    def remaining_operation_timeout() -> float:
+        return max(0.0, operation_deadline - time.monotonic())
+
+    def remaining_release_timeout() -> float:
         return max(0.0, deadline - time.monotonic())
 
-    db_connection = await pool.acquire(timeout=remaining_timeout())
+    db_connection = await pool.acquire(timeout=remaining_operation_timeout())
+    operation_failed = False
     try:
         rows = await db_connection.fetch(
             query,
             *args,
-            timeout=remaining_timeout(),
+            timeout=remaining_operation_timeout(),
         )
+    except BaseException:
+        operation_failed = True
+        raise
     finally:
-        await pool.release(
-            db_connection,
-            timeout=remaining_timeout(),
-        )
+        try:
+            await pool.release(
+                db_connection,
+                timeout=remaining_release_timeout(),
+            )
+        except (Exception, asyncio.CancelledError):
+            if not operation_failed:
+                raise
+            _logger.warning(
+                "Failed to release database connection after query failure",
+                exc_info=True,
+            )
     return typing.cast(
         "list[collections.abc.Mapping[str, object]]",
         rows,

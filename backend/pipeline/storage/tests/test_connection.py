@@ -169,6 +169,36 @@ class TestClosePool(unittest.IsolatedAsyncioTestCase):
         mock_pool.close.assert_awaited_once()
 
 
+class TestFetchWithTimeoutBudget(unittest.IsolatedAsyncioTestCase):
+    """Tests for one bounded pool checkout, query, and release lifecycle."""
+
+    async def test_release_failure_does_not_mask_query_failure(self) -> None:
+        query_failure = RuntimeError("query failed")
+        db_connection = mock.AsyncMock()
+        db_connection.fetch.side_effect = query_failure
+        pool = mock.MagicMock()
+        pool.acquire = mock.AsyncMock(return_value=db_connection)
+        pool.release = mock.AsyncMock(
+            side_effect=TimeoutError("release timed out")
+        )
+
+        with (
+            mock.patch.object(
+                connection.time,
+                "monotonic",
+                side_effect=(100.0, 101.0, 105.0, 118.0),
+            ),
+            self.assertRaisesRegex(RuntimeError, "query failed") as raised,
+        ):
+            await connection.fetch_with_timeout_budget(
+                pool,
+                "SELECT 1",
+                timeout_sec=18.0,
+            )
+
+        self.assertIs(raised.exception, query_failure)
+
+
 class TestCreatePoolWithRetry(unittest.IsolatedAsyncioTestCase):
     """Tests for create_pool_with_retry."""
 
