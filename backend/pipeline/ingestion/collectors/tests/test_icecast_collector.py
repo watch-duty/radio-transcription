@@ -2077,13 +2077,13 @@ class TestIcecastTimelineManager(unittest.TestCase):
         self.assertIn("Negative chunk duration", str(ctx.exception))
 
     def test_non_monotonic_start_time_clamps_to_last_end(self) -> None:
-        """Verify that non-monotonic chunk start times are clamped to last end time."""
+        """Verify that non-monotonic chunk start times are clamped to last end time and stream anchor is shifted."""
+        now = datetime.datetime.now(datetime.UTC)
         manager = icecast_collector.IcecastTimelineManager(
-            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            stream_anchor_time=now,
             feed_id=uuid.uuid4(),
             feed_name="test-feed",
         )
-        now = datetime.datetime.now(datetime.UTC)
         chunk1 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now,
@@ -2108,6 +2108,11 @@ class TestIcecastTimelineManager(unittest.TestCase):
         self.assertEqual(
             res_clamped[0].chunk_start_time,
             now + datetime.timedelta(seconds=15),
+        )
+        # Verify stream_anchor_time was shifted forward by 5s to prevent perpetual clamping
+        self.assertEqual(
+            manager.stream_anchor_time,
+            now + datetime.timedelta(seconds=5),
         )
 
     def test_microsecond_rounding_coalesced(self) -> None:

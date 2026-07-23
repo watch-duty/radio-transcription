@@ -36,6 +36,7 @@ from .echo_client import EchoClient
 from .models import (
     Feed,
     FeedCreate,
+    FeedSearchOptionsResponse,
     FeedUpdate,
     ListFeedHistoryResponse,
     ListFeedsResponse,
@@ -125,6 +126,19 @@ async def create_feed(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
+
+
+@app.get(
+    "/v1/feeds/search-options",
+    response_model=FeedSearchOptionsResponse,
+    tags=["feeds"],
+)
+async def get_feed_search_options(
+    request: Request,
+) -> FeedSearchOptionsResponse:
+    """Get precomputed search filter options for feeds."""
+    service: FeedService = request.app.state.feed_service
+    return await service.get_feed_search_options()
 
 
 @app.get(
