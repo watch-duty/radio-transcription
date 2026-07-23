@@ -27,6 +27,8 @@ _TRANSIENT_BACKEND_ERRORS = (
     asyncpg.PostgresConnectionError,
     asyncpg.InterfaceError,
     asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
     asyncpg.CannotConnectNowError,
     asyncpg.QueryCanceledError,
     OSError,
@@ -46,7 +48,20 @@ async def _store_call[ResultT](
     awaitable: typing.Awaitable[ResultT],
     operation: str,
 ) -> ResultT:
-    """Translate only retryable transport I/O at the adapter boundary."""
+    """Translate only retryable transport I/O at the adapter boundary.
+
+    Args:
+        awaitable: Issued storage operation.
+        operation: Human-readable operation name for failure context.
+
+    Returns:
+        The storage operation result.
+
+    Raises:
+        grant_control.GrantControlBackendUnavailable: The operation encounters
+            a classified transient backend failure.
+        BaseException: Any unclassified operation failure.
+    """
     try:
         return await awaitable
     except _TRANSIENT_BACKEND_ERRORS as error:

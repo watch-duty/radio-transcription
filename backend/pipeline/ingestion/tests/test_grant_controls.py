@@ -31,6 +31,8 @@ _ABANDONMENT = datetime.timedelta(seconds=60)
 _ACTOR_ID = "service_account:gcp:grant-control-tests"
 _TRANSIENT_POSTGRES_ERRORS = (
     asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
     asyncpg.CannotConnectNowError,
     asyncpg.QueryCanceledError,
 )

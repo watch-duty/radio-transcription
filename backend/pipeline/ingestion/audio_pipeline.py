@@ -136,6 +136,11 @@ async def upload_staged_audio_with_retry(
 
     Returns:
         The uploaded ``gs://`` object URI.
+
+    Raises:
+        retry.LeaseExpiredError: Confirmed authority loss interrupts retry.
+        asyncio.CancelledError: Cooperative shutdown interrupts retry.
+        Exception: The upload operation reaches a terminal failure.
     """
     return await retry.retry_with_lease_check(
         operation,
@@ -192,12 +197,28 @@ async def publish_audio_chunk_after_bookmark(
 
     Returns:
         The downstream Pub/Sub message identifier.
+
+    Raises:
+        retry.LeaseExpiredError: Confirmed authority loss interrupts retry.
+        asyncio.CancelledError: Cooperative shutdown or deferred caller
+            cancellation interrupts publication settlement.
+        BaseException: Publication reaches a terminal failure.
     """
     duration_ms = int(
         (chunk.chunk_end_time - chunk.chunk_start_time).total_seconds() * 1000
     )
 
     async def publish_and_observe() -> str:
+        """Publish once under retry policy and emit durable success evidence.
+
+        Returns:
+            The downstream Pub/Sub message identifier.
+
+        Raises:
+            retry.LeaseExpiredError: Confirmed authority loss interrupts retry.
+            asyncio.CancelledError: Cooperative shutdown interrupts retry.
+            Exception: Publication reaches a terminal failure.
+        """
         message_id = await retry.retry_with_lease_check(
             operation,
             pubsub_client,

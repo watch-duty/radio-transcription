@@ -250,6 +250,8 @@ def test_page_boundary_uses_the_integer_position_sent_to_provider() -> None:
     [
         OSError,
         asyncpg.TooManyConnectionsError,
+        asyncpg.AdminShutdownError,
+        asyncpg.CrashShutdownError,
         asyncpg.CannotConnectNowError,
         asyncpg.QueryCanceledError,
     ],

@@ -43,7 +43,14 @@ class _QueuedBatch[BatchT, ResultT]:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _BatchAdmission[ResultT]:
-    """Resolved outcome of one queue admission attempt."""
+    """Resolved outcome of one queue admission attempt.
+
+    Attributes:
+        completion: Accepted batch completion, or ``None`` before acceptance.
+        failure: Unexpected admission failure, if one occurred.
+        cancellation: First exact caller cancellation deferred during
+            admission settlement.
+    """
 
     completion: asyncio.Future[ResultT] | None
     failure: BaseException | None

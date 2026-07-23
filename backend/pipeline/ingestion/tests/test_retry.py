@@ -5,11 +5,7 @@ import typing
 import unittest
 from unittest import mock
 
-from backend.pipeline.ingestion.retry import (
-    LeaseExpiredError,
-    retry_with_lease_check,
-    settle_issued_operation,
-)
+from backend.pipeline.ingestion import retry
 
 
 class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
@@ -19,7 +15,7 @@ class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
         async def succeed() -> str:
             return "settled"
 
-        settlement = await settle_issued_operation(succeed())
+        settlement = await retry.settle_issued_operation(succeed())
 
         self.assertEqual(settlement.result, "settled")
         self.assertIsNone(settlement.failure)
@@ -31,7 +27,7 @@ class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
         async def fail() -> None:
             raise failure
 
-        settlement = await settle_issued_operation(fail())
+        settlement = await retry.settle_issued_operation(fail())
 
         self.assertIsNone(settlement.result)
         self.assertIs(settlement.failure, failure)
@@ -43,7 +39,7 @@ class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
         async def cancel_operation() -> None:
             raise failure
 
-        settlement = await settle_issued_operation(cancel_operation())
+        settlement = await retry.settle_issued_operation(cancel_operation())
 
         self.assertIsNone(settlement.result)
         self.assertIs(settlement.failure, failure)
@@ -64,7 +60,7 @@ class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
             return "settled"
 
         task = asyncio.create_task(
-            settle_issued_operation(settle_after_progress())
+            retry.settle_issued_operation(settle_after_progress())
         )
         await started.wait()
         first_marker = object()
@@ -97,7 +93,9 @@ class TestIssuedOperationSettlement(unittest.IsolatedAsyncioTestCase):
             await release.wait()
             raise failure
 
-        task = asyncio.create_task(settle_issued_operation(cancel_operation()))
+        task = asyncio.create_task(
+            retry.settle_issued_operation(cancel_operation())
+        )
         await started.wait()
         caller_marker = object()
         task.cancel(caller_marker)
@@ -118,7 +116,7 @@ class TestRetrySuccessFirstAttempt(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_result_on_first_attempt(self) -> None:
         fn = mock.AsyncMock(return_value="ok")
-        result = await retry_with_lease_check(
+        result = await retry.retry_with_lease_check(
             fn,
             lease_lost=asyncio.Event(),
             shutdown=asyncio.Event(),
@@ -128,7 +126,7 @@ class TestRetrySuccessFirstAttempt(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_args_to_fn(self) -> None:
         fn = mock.AsyncMock(return_value=42)
-        await retry_with_lease_check(
+        await retry.retry_with_lease_check(
             fn,
             "a",
             "b",
@@ -143,7 +141,7 @@ class TestRetryOnRetryable(unittest.IsolatedAsyncioTestCase):
 
     async def test_retries_on_retryable_then_succeeds(self) -> None:
         fn = mock.AsyncMock(side_effect=[OSError("fail"), "ok"])
-        result = await retry_with_lease_check(
+        result = await retry.retry_with_lease_check(
             fn,
             lease_lost=asyncio.Event(),
             shutdown=asyncio.Event(),
@@ -157,7 +155,7 @@ class TestRetryOnRetryable(unittest.IsolatedAsyncioTestCase):
     async def test_exhausts_max_retries_and_raises(self) -> None:
         fn = mock.AsyncMock(side_effect=OSError("fail"))
         with self.assertRaises(OSError):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=asyncio.Event(),
@@ -175,7 +173,7 @@ class TestRetryNonRetryable(unittest.IsolatedAsyncioTestCase):
     async def test_non_retryable_raises_immediately(self) -> None:
         fn = mock.AsyncMock(side_effect=ValueError("bad"))
         with self.assertRaises(ValueError):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=asyncio.Event(),
@@ -192,8 +190,8 @@ class TestRetryLeaseLost(unittest.IsolatedAsyncioTestCase):
         fn = mock.AsyncMock(return_value="ok")
         lease_lost = asyncio.Event()
         lease_lost.set()
-        with self.assertRaises(LeaseExpiredError):
-            await retry_with_lease_check(
+        with self.assertRaises(retry.LeaseExpiredError):
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=lease_lost,
                 shutdown=asyncio.Event(),
@@ -209,8 +207,8 @@ class TestRetryLeaseLost(unittest.IsolatedAsyncioTestCase):
             lease_lost.set()
 
         task = asyncio.create_task(_set_lease_lost_soon())
-        with self.assertRaises(LeaseExpiredError):
-            await retry_with_lease_check(
+        with self.assertRaises(retry.LeaseExpiredError):
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=lease_lost,
                 shutdown=asyncio.Event(),
@@ -231,7 +229,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
         shutdown.set()
 
         with self.assertRaises(asyncio.CancelledError):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=shutdown,
@@ -252,7 +250,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
         fn = mock.AsyncMock(side_effect=_fail_then_signal)
 
         with self.assertRaises(asyncio.CancelledError):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=shutdown,
@@ -273,7 +271,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(_set_shutdown_soon())
         with self.assertRaises(asyncio.CancelledError):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=shutdown,
@@ -312,7 +310,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
             return_value=0.01,
         ):
             retry_task = asyncio.create_task(
-                retry_with_lease_check(
+                retry.retry_with_lease_check(
                     fail_once,
                     lease_lost=CancelParentWhenCleanedUp(),
                     shutdown=asyncio.Event(),
@@ -346,7 +344,7 @@ class TestRetryJitterBounds(unittest.IsolatedAsyncioTestCase):
         fn = mock.AsyncMock(side_effect=[OSError("fail")] * 3 + ["ok"])
 
         with mock.patch("asyncio.wait", side_effect=_capture_wait):
-            await retry_with_lease_check(
+            await retry.retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
                 shutdown=asyncio.Event(),

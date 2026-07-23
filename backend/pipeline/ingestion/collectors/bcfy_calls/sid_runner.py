@@ -50,6 +50,8 @@ _TRANSIENT_MEMBERSHIP_FAILURES = (
     asyncpg.PostgresConnectionError,
     asyncpg.InterfaceError,
     asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
     asyncpg.CannotConnectNowError,
     asyncpg.QueryCanceledError,
     OSError,
@@ -284,7 +286,17 @@ def _raise_settlement_failure(
     failure: BaseException,
     cancellation: asyncio.CancelledError | None,
 ) -> typing.NoReturn:
-    """Raise failed accepted work without misclassifying child cancellation."""
+    """Raise failed accepted work without misclassifying child cancellation.
+
+    Args:
+        failure: Definitive accepted-work failure.
+        cancellation: Deferred caller cancellation, if one was also observed.
+
+    Raises:
+        grant_control.GrantControlIntegrityError: Accepted work was cancelled
+            internally.
+        BaseException: The exact accepted-work failure otherwise.
+    """
     if isinstance(failure, asyncio.CancelledError):
         message = "accepted SID Feed batch was cancelled unexpectedly"
         _raise_integrity_with_evidence(message, failure, cancellation)
@@ -298,7 +310,17 @@ def _raise_integrity_with_evidence(
     failure: BaseException,
     cancellation: asyncio.CancelledError | None,
 ) -> typing.NoReturn:
-    """Raise integrity failure while retaining child and caller evidence."""
+    """Raise integrity failure while retaining child and caller evidence.
+
+    Args:
+        message: Integrity failure summary.
+        failure: Definitive child-operation failure.
+        cancellation: Deferred caller cancellation, if one was also observed.
+
+    Raises:
+        grant_control.GrantControlIntegrityError: Always, chained from the
+            available child and caller evidence.
+    """
     if cancellation is None:
         raise grant_control.GrantControlIntegrityError(message) from failure
     try:
@@ -313,14 +335,29 @@ def _raise_deferred_failure(
     failure: BaseException,
     cancellation: asyncio.CancelledError,
 ) -> typing.NoReturn:
-    """Raise a retained child failure from secondary caller cancellation."""
+    """Raise a retained child failure from secondary caller cancellation.
+
+    Args:
+        failure: Definitive child-operation failure to preserve as primary.
+        cancellation: Deferred caller cancellation to retain as its cause.
+
+    Raises:
+        BaseException: Always raises the exact ``failure``.
+    """
     raise failure from cancellation
 
 
 def _raise_deferred_cancellation(
     cancellation: asyncio.CancelledError,
 ) -> typing.NoReturn:
-    """Propagate the exact cancellation retained during settlement."""
+    """Propagate the exact cancellation retained during settlement.
+
+    Args:
+        cancellation: Exact deferred caller cancellation.
+
+    Raises:
+        asyncio.CancelledError: Always raises ``cancellation``.
+    """
     raise cancellation
 
 

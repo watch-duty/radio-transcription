@@ -125,6 +125,12 @@ async def fetch_with_timeout_budget(
 
     Returns:
         Records returned by the query.
+
+    Raises:
+        TimeoutError: The bounded pool lifecycle exhausts ``timeout_sec``.
+        asyncio.CancelledError: The caller cancels checkout, execution, or
+            release.
+        Exception: The pool or query operation fails.
     """
     if timeout_sec is None:
         rows = await pool.fetch(query, *args)
