@@ -56,6 +56,9 @@ resource "google_cloud_run_v2_service" "audio_segments_api" {
   ]
 
   template {
+    scaling {
+      min_instance_count = 1
+    }
     max_instance_request_concurrency = 40
     service_account                  = google_service_account.audio_segments_api_sa.email
 

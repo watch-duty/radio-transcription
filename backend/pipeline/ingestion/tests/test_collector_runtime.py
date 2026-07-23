@@ -106,6 +106,7 @@ _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
 _PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
+_PUBLISH_RECEIPT_TIME_ARG_INDEX = 10
 _LEASE_ADMISSION_EVENT_TYPE = "lease_admission_cycle"
 _LEASE_ADMISSION_FIELDS = {
     "event_type",
@@ -1198,7 +1199,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             mock_publish.assert_called_once()
             _, args, _kwargs = mock_publish.mock_calls[0]
 
-            self.assertEqual(len(args), 10)
+            self.assertEqual(len(args), 11)
             self.assertEqual(
                 args[1], rt._collector_settings.continuous_pubsub_topic_path
             )

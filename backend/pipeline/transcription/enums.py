@@ -24,3 +24,4 @@ class TranscriptionStatus(StrEnum):
     TRANSIENT_ERROR = "transient_error"
     PERMANENT_ERROR = "permanent_error"
     FALLBACK = "fallback"
+    FALLBACK_UNAVAILABLE = "fallback_unavailable"
