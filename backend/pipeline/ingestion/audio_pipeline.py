@@ -207,6 +207,7 @@ async def publish_audio_chunk_after_bookmark(
         duration_ms,
         source_type,
         chunk.external_audio_segment_id,
+        chunk.receipt_time,
         lease_lost=lease_lost,
         shutdown=shutdown,
         max_retries=settings.pubsub_publish_max_retries,

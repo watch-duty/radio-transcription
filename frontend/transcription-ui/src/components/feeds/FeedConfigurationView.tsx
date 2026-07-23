@@ -14,6 +14,7 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
@@ -113,34 +114,10 @@ export function FeedConfigurationView({
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = allFeedData.feeds;
-
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
-  const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
-    const seen = new Set<string>();
-    const result: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
-    sourceFeeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          result.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return result.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [allFeeds]);
+  const { data: searchOptionsData } = useFeedSearchOptions(token);
+  const filterTags = searchOptionsData?.tags ?? [];
+  const sourceTypes = searchOptionsData?.sourceTypes;
+  const statuses = searchOptionsData?.statuses;
 
   const resetForm = () => {
     setId('');
@@ -153,6 +130,9 @@ export function FeedConfigurationView({
   const resetFormAndRefresh = () => {
     resetForm();
     queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+    queryClient.invalidateQueries({
+      queryKey: ['getFeedSearchOptions', token],
+    });
   };
 
   const createMutation = useMutation({
@@ -160,6 +140,9 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" registered successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      queryClient.invalidateQueries({
+        queryKey: ['getFeedSearchOptions', token],
+      });
     },
     onError: (error: Error) => {
       onError(error, 'Registering Feed');
@@ -355,7 +338,9 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
-            tags={uniqueTagsForFilter}
+            tags={filterTags}
+            sourceTypes={sourceTypes}
+            statuses={statuses}
             isLoading={feedsLoading}
             feedTotal={feedTotal}
             allowEdit

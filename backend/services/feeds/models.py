@@ -115,3 +115,9 @@ class ListFeedHistoryResponse(BaseModel):
     history_events: list[FeedHistoryEvent]
     next_token: str | None = None
     total: int
+
+
+class FeedSearchOptionsResponse(BaseModel):
+    source_types: list[str]
+    statuses: list[str]
+    tags: list[Tag]

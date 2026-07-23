@@ -199,6 +199,8 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
 
         async def send(*args: object, **kwargs: object) -> str:
             del kwargs
+            self.assertEqual(len(args), 11)
+            self.assertEqual(args[10], _NOW)
             gcs_uri = typing.cast("str", args[4])
             events.append(f"publish-{gcs_uri.rsplit('/', 1)[-1]}")
             return "message-id"
