@@ -47,14 +47,19 @@ class TestSessionHelper(unittest.TestCase):
             self.assertTrue(adapter.max_retries.raise_on_status)
 
     def test_create_resilient_session_with_allowed_methods(self) -> None:
-        # Execute
-        session = create_resilient_session(allowed_methods=None)
+        # Default behavior uses urllib3 default allowed methods
+        default_session = create_resilient_session()
+        default_adapter = default_session.adapters.get("http://")
+        self.assertIsNotNone(default_adapter)
+        if default_adapter is not None:
+            self.assertIsNotNone(default_adapter.max_retries.allowed_methods)
 
-        # Verify
-        adapter = session.adapters.get("http://")
-        self.assertIsNotNone(adapter)
-        if adapter is not None:
-            self.assertIsNone(adapter.max_retries.allowed_methods)
+        # Explicit None allows all methods
+        all_methods_session = create_resilient_session(allowed_methods=None)
+        all_adapter = all_methods_session.adapters.get("http://")
+        self.assertIsNotNone(all_adapter)
+        if all_adapter is not None:
+            self.assertIsNone(all_adapter.max_retries.allowed_methods)
 
 
 if __name__ == "__main__":
