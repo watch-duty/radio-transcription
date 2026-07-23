@@ -369,12 +369,20 @@ class GeminiTranscriber(base.Transcriber):
             msg = "Client not initialized"
             raise RuntimeError(msg)
 
-        fallback_model = self.config.fallback_model
-        if not fallback_model or self.config.model == fallback_model:
+        fallback_model = self.config.fallback_model or DEFAULT_GEMINI_MODEL
+        if self.config.model == fallback_model:
+            # No distinct fallback model is available (the configured model
+            # already is the fallback model). Record this separately from a
+            # genuine fallback attempt so the dashboard doesn't conflate
+            # "fell back to a different model" with "had nothing to fall
+            # back to."
+            log_helper.record_pipeline_stage(
+                "transcription_status",
+                enums.TranscriptionStatus.FALLBACK_UNAVAILABLE,
+            )
             logger.info(
                 "Model %s returned incomplete/empty response: %s. "
-                "No fallback model configured or model is already the "
-                "fallback. "
+                "Model is already the fallback model. "
                 "Treating as empty transcription.",
                 self.config.model,
                 reason,
