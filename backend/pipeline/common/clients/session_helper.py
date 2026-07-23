@@ -23,6 +23,7 @@ def create_resilient_session(
     status_forcelist: list[int] | None = None,
     *,
     raise_on_status: bool = False,
+    allowed_methods: list[str] | None = None,
 ) -> requests.Session:
     """
     Creates a requests.Session configured with exponential backoff retries
@@ -34,6 +35,7 @@ def create_resilient_session(
         status_forcelist: List of HTTP status codes to retry. Defaults to [502, 503, 504].
         raise_on_status: Whether to raise an exception immediately on matched status codes.
             Must be passed as a keyword argument.
+        allowed_methods: List of HTTP methods to retry. Set to None to retry all methods.
 
     Returns:
         A requests.Session instance.
@@ -47,6 +49,7 @@ def create_resilient_session(
             if status_forcelist is not None
             else DEFAULT_STATUS_FORCELIST,
             raise_on_status=raise_on_status,
+            allowed_methods=allowed_methods,
         )
         adapter = HTTPAdapter(max_retries=retries)
         session.mount("http://", adapter)

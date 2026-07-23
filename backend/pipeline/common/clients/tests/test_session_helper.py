@@ -46,6 +46,16 @@ class TestSessionHelper(unittest.TestCase):
             self.assertEqual(adapter.max_retries.status_forcelist, [500, 503])
             self.assertTrue(adapter.max_retries.raise_on_status)
 
+    def test_create_resilient_session_with_allowed_methods(self) -> None:
+        # Execute
+        session = create_resilient_session(allowed_methods=None)
+
+        # Verify
+        adapter = session.adapters.get("http://")
+        self.assertIsNotNone(adapter)
+        if adapter is not None:
+            self.assertIsNone(adapter.max_retries.allowed_methods)
+
 
 if __name__ == "__main__":
     unittest.main()
