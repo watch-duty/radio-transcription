@@ -4,23 +4,23 @@ locals {
   project_id = data.google_project.project.project_id
 
   openapi_content = templatefile("${path.module}/../../../../../frontend/api/openapi.yaml", {
-    radio_transcription_api_url          = google_cloud_run_v2_service.fe_proxy_api.uri
-    radio_transcription_api_service_name = google_api_gateway_api.fe_proxy_api_gw.managed_service
+    radio_transcription_api_url          = google_cloud_run_v2_service.radio_transcription_api.uri
+    radio_transcription_api_service_name = google_api_gateway_api.radio_transcription_api_gw.managed_service
     google_auth_client_id                = var.google_auth_client_id
   })
 }
 
 # =============================================================================
-# FE PROXY API MODULE
+# RADIO TRANSCRIPTION API MODULE
 # =============================================================================
 
-# Cloud Run service for the FE Proxy API
-resource "google_cloud_run_v2_service" "fe_proxy_api" {
-  name     = "fe-proxy-api-${var.environment}"
+# Cloud Run service for the radio transcription API
+resource "google_cloud_run_v2_service" "radio_transcription_api" {
+  name     = "radio-transcription-api-${var.environment}"
   location = var.region
 
   template {
-    service_account = google_service_account.fe_proxy_api_sa.email
+    service_account = google_service_account.radio_transcription_api_sa.email
 
     scaling {
       min_instance_count = 1
@@ -80,17 +80,17 @@ resource "google_cloud_run_v2_service" "fe_proxy_api" {
   }
 }
 
-# API Gateway for the FE Proxy API
-resource "google_api_gateway_api" "fe_proxy_api_gw" {
+# API Gateway for the radio transcription API
+resource "google_api_gateway_api" "radio_transcription_api_gw" {
   provider = google-beta
   project  = local.project_id
-  api_id   = "fe-proxy-api-${var.environment}"
+  api_id   = "radio-transcription-api-${var.environment}"
 }
 
-resource "google_api_gateway_api_config" "fe_proxy_api_gw_config" {
+resource "google_api_gateway_api_config" "radio_transcription_api_gw_config" {
   provider      = google-beta
   project       = local.project_id
-  api           = google_api_gateway_api.fe_proxy_api_gw.api_id
+  api           = google_api_gateway_api.radio_transcription_api_gw.api_id
   api_config_id = "cfg-${var.environment}-${substr(sha256(local.openapi_content), 0, 8)}"
 
   openapi_documents {
@@ -105,18 +105,18 @@ resource "google_api_gateway_api_config" "fe_proxy_api_gw_config" {
   }
 
   depends_on = [
-    google_api_gateway_api.fe_proxy_api_gw
+    google_api_gateway_api.radio_transcription_api_gw
   ]
 }
 
-resource "google_api_gateway_gateway" "fe_proxy_api_gw_gateway" {
+resource "google_api_gateway_gateway" "radio_transcription_api_gw_gateway" {
   provider   = google-beta
   project    = local.project_id
-  api_config = google_api_gateway_api_config.fe_proxy_api_gw_config.id
-  gateway_id = "fe-proxy-api-gateway-${var.environment}"
+  api_config = google_api_gateway_api_config.radio_transcription_api_gw_config.id
+  gateway_id = "radio-transcription-api-gateway-${var.environment}"
 
   depends_on = [
-    google_api_gateway_api_config.fe_proxy_api_gw_config
+    google_api_gateway_api_config.radio_transcription_api_gw_config
   ]
 }
 
@@ -124,41 +124,41 @@ resource "google_api_gateway_gateway" "fe_proxy_api_gw_gateway" {
 # IAM
 # =============================================================================
 
-# Service account for the FE Proxy API
-resource "google_service_account" "fe_proxy_api_sa" {
-  account_id   = "fe-proxy-api-${var.environment}"
-  display_name = "FE Proxy API Service Account"
-  description  = "Service account for the FE Proxy API Cloud Run service"
+# Service account for the radio transcription API
+resource "google_service_account" "radio_transcription_api_sa" {
+  account_id   = "radio-transcription-api-${var.environment}"
+  display_name = "Radio Transcription API Service Account"
+  description  = "Service account for the radio transcription API Cloud Run service"
 }
 
-# Allow FE Proxy API to invoke protected Cloud Run services
-resource "google_project_iam_member" "fe_proxy_api_run_invoker" {
+# Allow radio transcription API to invoke protected Cloud Run services
+resource "google_project_iam_member" "radio_transcription_api_run_invoker" {
   project = local.project_id
   role    = "roles/run.invoker"
-  member  = "serviceAccount:${google_service_account.fe_proxy_api_sa.email}"
+  member  = "serviceAccount:${google_service_account.radio_transcription_api_sa.email}"
 }
 
-resource "google_project_iam_member" "fe_proxy_api_apigateway_viewer" {
+resource "google_project_iam_member" "radio_transcription_api_apigateway_viewer" {
   project = local.project_id
   role    = "roles/apigateway.viewer"
-  member  = "serviceAccount:${google_service_account.fe_proxy_api_sa.email}"
+  member  = "serviceAccount:${google_service_account.radio_transcription_api_sa.email}"
 }
 
 # Standard roles for logging, monitoring, and tracing in Cloud Run
-resource "google_project_iam_member" "fe_proxy_api_cloudtrace_agent" {
+resource "google_project_iam_member" "radio_transcription_api_cloudtrace_agent" {
   project = local.project_id
   role    = "roles/cloudtrace.agent"
-  member  = "serviceAccount:${google_service_account.fe_proxy_api_sa.email}"
+  member  = "serviceAccount:${google_service_account.radio_transcription_api_sa.email}"
 }
 
-resource "google_project_iam_member" "fe_proxy_api_log_writer" {
+resource "google_project_iam_member" "radio_transcription_api_log_writer" {
   project = local.project_id
   role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.fe_proxy_api_sa.email}"
+  member  = "serviceAccount:${google_service_account.radio_transcription_api_sa.email}"
 }
 
-resource "google_project_iam_member" "fe_proxy_api_metric_writer" {
+resource "google_project_iam_member" "radio_transcription_api_metric_writer" {
   project = local.project_id
   role    = "roles/monitoring.metricWriter"
-  member  = "serviceAccount:${google_service_account.fe_proxy_api_sa.email}"
+  member  = "serviceAccount:${google_service_account.radio_transcription_api_sa.email}"
 }
