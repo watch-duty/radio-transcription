@@ -1,6 +1,6 @@
 # Same-Source Overlap and Duplicate Segment Design
 
-Status: Design approved; awaiting written-spec review
+Status: Approved
 
 Date: 2026-07-23
 
