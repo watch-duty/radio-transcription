@@ -585,3 +585,53 @@ class TestVadEngine(unittest.TestCase):
         samples, sr = load_audio(flickering_path)
         segments = self.vad.detect_speech_segments(samples, sample_rate=sr)
         self.assertEqual(segments, [])
+
+    def test_pad_and_merge_segments_midpoint_clamping(self) -> None:
+        """Verifies that close raw speech segments clamp padding to midpoints."""
+        detector = vad.VoiceActivityDetector(pad_sec=0.3)
+        raw_segments = [(1.0, 2.0), (2.4, 3.4)]
+        padded = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+        self.assertEqual(len(padded), 2)
+        # Midpoint of 2.0 to 2.4 gap is 2.2
+        self.assertAlmostEqual(padded[0][0], 0.7)  # 1.0 - 0.3
+        self.assertAlmostEqual(padded[0][1], 2.2)  # 2.0 + 0.2 (clamped)
+        self.assertAlmostEqual(padded[1][0], 2.2)  # 2.4 - 0.2 (clamped)
+        self.assertAlmostEqual(padded[1][1], 3.7)  # 3.4 + 0.3
+        self.assertLessEqual(padded[0][1], padded[1][0])
+
+    def test_pad_and_merge_segments_non_overlapping_raw_gaps(self) -> None:
+        """Verifies that widely separated raw segments get full padding."""
+        detector = vad.VoiceActivityDetector(pad_sec=0.3)
+        raw_segments = [(1.0, 2.0), (4.0, 5.0)]
+        padded = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+        self.assertEqual(len(padded), 2)
+        self.assertAlmostEqual(padded[0][0], 0.7)
+        self.assertAlmostEqual(padded[0][1], 2.3)
+        self.assertAlmostEqual(padded[1][0], 3.7)
+        self.assertAlmostEqual(padded[1][1], 5.3)
+
+    def test_pad_and_merge_segments_raw_overlap_merging(self) -> None:
+        """Verifies overlapping raw segments are merged into a single segment."""
+        detector = vad.VoiceActivityDetector(pad_sec=0.3)
+        raw_segments = [(1.0, 2.5), (2.3, 4.0)]
+        padded = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+        self.assertEqual(len(padded), 1)
+        self.assertAlmostEqual(padded[0][0], 0.7)
+        self.assertAlmostEqual(padded[0][1], 4.3)
+
+    def test_pad_and_merge_segments_edge_cases(self) -> None:
+        """Verifies empty lists and boundary clamping near audio start and end."""
+        detector = vad.VoiceActivityDetector(pad_sec=0.3)
+        self.assertEqual(
+            detector._pad_and_merge_segments([], audio_len_sec=10.0), []
+        )
+        padded = detector._pad_and_merge_segments(
+            [(0.1, 9.9)], audio_len_sec=10.0
+        )
+        self.assertEqual(padded, [(0.0, 10.0)])
