@@ -1,0 +1,152 @@
+run_id = "20260724-production-shaped-reconstruction"
+workspace = "/tmp/next-round-reconstruction/build"
+source_cache = "/tmp/next-round-reconstruction/source-cache"
+proposed_gcs_prefix = "gs://wd-transcription-data/sft/dataset_versions/20260724-production-shaped-reconstruction/"
+
+[[local_inputs]]
+label = "production_duration_target"
+path = "frozen/production_duration_target.json"
+size = 242849
+sha256 = "3226cdde044ca1ff8b65806173fe01eacfe0c89b2af1a5563a5f7e6ccd2ccd88"
+
+[[canonical_inputs]]
+label = "latest_train"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/manifests/canonical/train.jsonl"
+generation = 1783952067425271
+size = 39865312
+sha256 = "1815b74d7a8337a5af6f09e15517f393bf615277c976e28d3612167cb8027c0e"
+
+[[canonical_inputs]]
+label = "latest_eval"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/manifests/canonical/eval.jsonl"
+generation = 1783952070972233
+size = 11740122
+sha256 = "b2c34f39594919eb7fe328436208d394b2aa47e9b2fcbb42e40447ef0167f204"
+
+[[canonical_inputs]]
+label = "latest_validation"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/manifests/canonical/validation.jsonl"
+generation = 1783952068387944
+size = 3740581
+sha256 = "504b84ada3a5e71a31a6fe65e9538996d0e98a24e3f1b2c2c5db3db4da5401a0"
+
+[[canonical_inputs]]
+label = "correction_closure"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/corrections/closure.jsonl"
+generation = 1783952025550452
+size = 736985
+sha256 = "64e55d5fe7d3d40df841285e92f7904ecbebbe6ed7c438cbb25704933d809035"
+
+[[canonical_inputs]]
+label = "composite_selection"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/composites/selected.json"
+generation = 1783952043423261
+size = 14169
+sha256 = "d38be2d309a1586413b322475a24cc0467ac5ef232ca36cbc81ec12ac2ea7974"
+
+[[canonical_inputs]]
+label = "prior_materialization"
+uri = "gs://wd-transcription-data/sft/runs/20260712-gemini31-flash-lite-a16-lr05-e14-r3/audio/materialization.json"
+generation = 1783952059118653
+size = 29425
+sha256 = "e5a8ae39aa332aa350f1c8b501e4c7fd9377e430c2c375722c391197367db840"
+
+[[raw_inputs]]
+label = "bcfy_calls_train"
+family = "bcfy_calls"
+source_split = "train"
+uri = "gs://wd-transcription-data/manifests/broadcastify/calls/training/manifest.json"
+generation = 1781299370630065
+size = 820111
+sha256 = "5fa317533885eaa181a7cbd8b0acd5ac608bf69f4702227a176220a315d67b56"
+
+[[raw_inputs]]
+label = "bcfy_calls_eval"
+family = "bcfy_calls"
+source_split = "eval"
+uri = "gs://wd-transcription-data/manifests/broadcastify/calls/eval/manifest.json"
+generation = 1778274293467735
+size = 422615
+sha256 = "a551a1b4a51a6b8c7c199d70bda29e3c95f248ee7e6670f0dc4937cc556fca13"
+
+[[raw_inputs]]
+label = "bcfy_feeds_train"
+family = "bcfy_feeds"
+source_split = "train"
+uri = "gs://wd-transcription-data/manifests/broadcastify/feeds/training/manifest.json"
+generation = 1782247288440644
+size = 3447297
+sha256 = "5c27663444ec4d87fb208f3fa3c2366c48bda137f0c85b3e9ff46f162f3358b0"
+
+[[raw_inputs]]
+label = "bcfy_feeds_eval"
+family = "bcfy_feeds"
+source_split = "eval"
+uri = "gs://wd-transcription-data/manifests/broadcastify/feeds/eval/manifest.json"
+generation = 1780598612189127
+size = 2088295
+sha256 = "cf351544d0bea56dff6d33505449d758c19a5d58e1759594e72371aaaa6eb59c"
+
+[[raw_inputs]]
+label = "echo_train"
+family = "echo"
+source_split = "train"
+uri = "gs://wd-transcription-data/manifests/echo/training/manifest.json"
+generation = 1783430088431137
+size = 5203103
+sha256 = "4610ae97b8b4ad88edafb2d1dbb92df513c52e74adc0aabd6366dd1a9269c47b"
+
+[[raw_inputs]]
+label = "echo_eval"
+family = "echo"
+source_split = "eval"
+uri = "gs://wd-transcription-data/manifests/echo/eval/manifest.json"
+generation = 1778612139547959
+size = 2817477
+sha256 = "079ea3ec0ab69cc2ed2afc724d799d7a5446fec5f238d609e08ef6b80c291192"
+
+[[raw_inputs]]
+label = "fire_notifications_train"
+family = "fire_notifications"
+source_split = "train"
+uri = "gs://wd-transcription-data/manifests/fire_notifications/training/manifest.json"
+generation = 1781303324270088
+size = 6317122
+sha256 = "dc7373708aa603a422966679a2fe55af9f5f9548bdbc244a0341635c4a61d449"
+
+[[raw_inputs]]
+label = "fire_notifications_eval"
+family = "fire_notifications"
+source_split = "eval"
+uri = "gs://wd-transcription-data/manifests/fire_notifications/eval/manifest.json"
+generation = 1780598263131410
+size = 3323203
+sha256 = "776c44b6d302a1061087ca7477ee93f59380fd43bc73063fb3a47b4862beecf5"
+
+[[masked_inputs]]
+family = "bcfy_calls"
+uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_calls/masked_v2/eval.jsonl"
+generation = 1781644512113018
+size = 43768
+sha256 = "c0d4525b4515c63af3d946ab30e4da4f57d62d8eddc07d07a0d0b9f15dfd2649"
+
+[[masked_inputs]]
+family = "bcfy_feeds"
+uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_feeds/masked_v2/eval.jsonl"
+generation = 1781644514007775
+size = 275303
+sha256 = "ad1ff87834e571f6a3d142e3ba3cd53c1adc1dee3665d8b9bcb9c399acced57b"
+
+[[masked_inputs]]
+family = "echo"
+uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/echo/masked_v2/eval.jsonl"
+generation = 1781629069672070
+size = 359037
+sha256 = "4f9ed0c79d65b71a8cc8994f8d9960936112b27340065e308a9b51f6d3fe6501"
+
+[[masked_inputs]]
+family = "fire_notifications"
+uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/fire_notifications/masked_v2/eval.jsonl"
+generation = 1781708261033394
+size = 441025
+sha256 = "749fe91253a04f492208c82fbcbca42fc95dc0b1b512d25e633072a2163c3c75"

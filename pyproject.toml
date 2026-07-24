@@ -72,6 +72,7 @@ dev = [
 target-version = "py313"
 extend-exclude = [
   "backend/pipeline/schema_types",
+  "model/scripts/sft/runs/20260724-production-shaped-reconstruction",
   "**/*_pb2.py",
   "**/*_pb2.pyi",
   "vulture_whitelist.py",

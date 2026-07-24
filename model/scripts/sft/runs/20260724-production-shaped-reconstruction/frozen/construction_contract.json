@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "latest_source_uri_count": 8709,
+    "training_dataset_count": 1,
+    "provider_validation": "deterministic_subset_of_reconstructed_primary",
+    "provider_validation_cap": 5000,
+    "provider_validation_small_eval_threshold": 1000,
+    "provider_validation_max_train_fraction": 0.3,
+    "primary_eval_retained_in_full": true,
+    "eval_lanes": [
+      "reconstructed_primary",
+      "predicted_prior_context_10",
+      "masked_v2"
+    ],
+    "excluded_eval_lanes": [
+      "atomic_unmasked"
+    ]
+  },
+  "hard_rules": {
+    "outcome_blind_construction": true,
+    "speech_definition": "nonempty_normalized_transcription",
+    "frame_precedence": [
+      "speech",
+      "pii",
+      "targetless"
+    ],
+    "pii_only_frames_excluded": true,
+    "speech_overlapping_pii_retained": true,
+    "protected_speech_exactly_once": true,
+    "standalone_targetless_rows": false,
+    "synthetic_audio": false,
+    "audio_processing": false,
+    "cross_source_merge": false,
+    "frozen_source_validity": "assumed",
+    "source_missing_action": "abort_when_materialization_needs_source",
+    "source_decode_failure_action": "abort_only_when_local_materialization_cannot_open_a_selected_slice",
+    "provider_input_decode_rejection_is_source_invalidity": false,
+    "source_bounds_failure_action": "abort_full_build",
+    "full_source_preflight_decode": false,
+    "concurrent_writer_defenses": false,
+    "manual_transcript_reconciliation": false
+  },
+  "continuous_bcfy_feeds": {
+    "eligible_continuity": [
+      "verified_live_continuous",
+      "source_contiguous_archive"
+    ],
+    "future_annotation_lookahead": "unbounded",
+    "reference_text_used_for_boundaries": false,
+    "word_count_used_for_boundaries": false,
+    "primary_soft_objective": "production_duration_ecdf_wasserstein_1",
+    "duration_bucket_goal": false,
+    "soft_anchors_ms": {
+      "significant_gap": 800,
+      "postroll": 500,
+      "target_duration": 30000,
+      "maximum_transmission": 60000
+    },
+    "soft_anchor_priority": "below_production_request_geometry",
+    "arbitrary_targetless_frame_cut": "only_for_real_request_boundary"
+  },
+  "presegmented_sources": {
+    "families": [
+      "bcfy_calls",
+      "fire_notifications"
+    ],
+    "source_identity": "authoritative_provider_item",
+    "geometry_policy": "authoritative_provider_item_minus_pii",
+    "merge_provider_items": false,
+    "split_on_pii_only_islands": true,
+    "split_on_duration": false,
+    "split_on_non_pii_gap": false,
+    "retain_targetless_within_residual_component": true
+  },
+  "echo_legacy_archive": {
+    "family": "echo",
+    "source_identity": "legacy_hour_archive_not_provider_item",
+    "geometry_policy": "echo_conservative_speech_component",
+    "component_connectivity": "strict_overlap_next_start_lt_current_end",
+    "touching_speech_intervals_merge": false,
+    "positive_targetless_or_unannotated_gap_absorbed": false,
+    "speech_overlapping_pii_retained": true,
+    "protected_speech_owner_exactly_once": true
+  },
+  "ownership": {
+    "corrected_recording_groups": "train",
+    "physical_component_intersecting_latest_train": "train",
+    "algorithm_application": "independent_per_final_split",
+    "training_eval_overlap_allowed": false,
+    "missing_raw_speech_owner_action": "abort_full_build"
+  },
+  "transcripts": {
+    "duplicate_or_contained": "authoritative_corrected_then_longest_once",
+    "clear_suffix_prefix": "merge_overlap_once",
+    "otherwise": "chronological_concat_preserve_both"
+  },
+  "masked_v2": {
+    "resegment": false,
+    "refilter_against_final_training_ownership": true
+  },
+  "materialization_serialization": {
+    "container": "FLAC",
+    "encoder_contract": "frozen/encoder_toolchain.json",
+    "encoder_contract_sha256": "f0d22af2c589c36fdff9dd1da1b4f82cc93207582b72d102030ef059e3feab29",
+    "family_profiles": {
+      "bcfy_feeds": "bcfy_feeds_soundfile_libflac_pcm_preserve_v1",
+      "bcfy_calls": "presegmented_ffmpeg_6_1_1_flac5_pcm_preserve_v1",
+      "echo": "presegmented_ffmpeg_6_1_1_flac5_pcm_preserve_v1",
+      "fire_notifications": "presegmented_ffmpeg_6_1_1_flac5_pcm_preserve_v1"
+    },
+    "feed_encoder_identity": {
+      "actual_loaded_native_object_resolution": "dladdr_sf_version_string",
+      "bundled_libsndfile_binary_sha256": "c872fb84af2afc0e96b603e0000f0f407af86c49ad1126f2785e5722c7bb27d7",
+      "embedded_libflac_version": "1.4.3",
+      "soundfile_cffi_artifact_sha256": "31490aab77c158db180b7a6084256a1d9c6e36c2ff9ea98779494df1161f7474",
+      "soundfile_python_artifact_sha256": "e349c3858d6a0481fe8078d7a0132603261e7bef2b0facfb9596aeb44c51c563"
+    },
+    "sample_rate": "preserve_source",
+    "channels": "preserve_source",
+    "pcm_subtype": "preserve_source",
+    "decoded_pcm_equality_required": true,
+    "short_clip_policy": "preserve_exact_geometry_without_padding",
+    "provider_container_rejection_reproduction_claim": false,
+    "provider_input_decode_rate_interpretation": "measured_under_this_frozen_serialization",
+    "provider_input_decode_rejection": {
+      "attempt_category": "provider_input_decode_rejected",
+      "request_accepted": false,
+      "generation_started": false,
+      "candidate_expected": false,
+      "generated_empty_transcription": false,
+      "source_invalidity": false
+    }
+  },
+  "provider_validation": {
+    "relationship_to_eval": "byte_identical_deterministic_subset_of_reconstructed_primary",
+    "target_count": "min(eval_count,5000,max(1000,floor(0.30*train_count)))",
+    "strata": [
+      "dataset",
+      "exact_duration_bucket",
+      "whitespace_word_count_bucket"
+    ],
+    "quota": "single_global_integer_largest_remainder",
+    "within_stratum": "full_primary_sha256_ranked_source_round_robin",
+    "selection_order": "lexical_stratum_then_source_round_robin",
+    "model_outcomes_used": false,
+    "primary_eval_retained_in_full": true
+  },
+  "predicted_prior_context_10": {
+    "maximum_segments": 10,
+    "source": "predicted_transcriptions_only",
+    "reference_transcriptions_allowed": false,
+    "context_episode_id": {
+      "bcfy_feeds": "continuous_source_uri",
+      "bcfy_calls": "authoritative_provider_item_source_uri",
+      "echo": "reconstructed_request_id",
+      "fire_notifications": "authoritative_provider_item_source_uri"
+    },
+    "reset_at_context_episode_boundary": true
+  },
+  "post_freeze_measurements": [
+    "wer",
+    "operational_wer_with_terminal_nontranscription_as_empty_hypothesis",
+    "effective_empty",
+    "blank_stop",
+    "finish_reason_none",
+    "http_status",
+    "grpc_code",
+    "provider_input_decode_rejected",
+    "error_message_fingerprint",
+    "attempt_outcome_class",
+    "terminal_request_outcome_class",
+    "operational_nontranscription",
+    "retry_outcomes",
+    "retry_recovery",
+    "duration_distribution",
+    "exact_frame_duration_by_outcome",
+    "encoded_audio_geometry_and_size_by_outcome",
+    "targetless_context_topology"
+  ]
+}

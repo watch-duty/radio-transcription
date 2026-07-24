@@ -1,0 +1,116 @@
+mode: orchestrator
+archetype: build-feature
+status: complete
+started_at: 2026-07-24T11:10:00-07:00
+completed_at: 2026-07-24T16:21:25-07:00
+goal: >-
+  Materialize a complete, outcome-blind next-round SFT training/evaluation
+  representation from the original audio behind the latest SFT, with no SFT run.
+current_hypothesis: >-
+  Lossless ownership plus source-specific reconstruction can preserve every
+  eligible target while making continuous-feed request geometry substantially
+  closer to production and removing train/eval leakage.
+success_predicate:
+  - every requested source slice opens and is in bounds during materialization
+  - every protected non-empty target is represented exactly once
+  - no training-owned audio or transcription appears in evaluation
+  - no PII-only interval appears in a reconstructed request
+  - reconstructed primary eval, predicted-prior-context-10, and masked eval are complete
+  - deterministic verifier reports COMPLETE
+prohibited:
+  - submit or start an SFT job
+  - outcome-informed construction
+  - atomic unmasked regression eval
+  - standalone blank-label training examples
+validated_hypotheses:
+  - id: H01
+    statement: >-
+      A complete aggregate-only production duration ECDF can be reconstructed
+      without reading model outcomes or transcript content.
+    evidence:
+      request_count: 485142
+      unique_duration_ms: 15143
+      total_duration_ms: 1797198919
+      receipt_sha256: 3226cdde044ca1ff8b65806173fe01eacfe0c89b2af1a5563a5f7e6ccd2ccd88
+  - id: H02
+    statement: >-
+      Latest-run ownership can be projected exactly onto the raw annotated
+      universe and made split-disjoint by assigning every physical component
+      touching prior training to training.
+    evidence:
+      protected_speech_owner_count: 65324
+      final_train_owner_count: 50586
+      final_eval_owner_count: 14738
+      moved_fire_eval_owner_count: 942
+      final_train_eval_group_overlap_count: 0
+      owner_assignment_sha256: 6f4d04ec0946ba5c2ecc090b51686a0ac374becfa7aa3638ec2edd8fda262ed1
+  - id: H03
+    statement: >-
+      Historical Echo sources are hour archives without authoritative
+      provider-item lineage; strict-overlap Speech components are the maximal
+      merge-safe, outcome-blind requests.
+    evidence:
+      echo_archive_count: 509
+      echo_owner_count: 22399
+      echo_request_count: 22366
+      echo_multi_owner_component_count: 30
+      echo_max_request_seconds: 27.32
+  - id: H04
+    statement: >-
+      Exact split-wide BCFY-feed duration matching can substantially reproduce
+      production request geometry while preserving every Speech owner and using
+      only continuous source slices.
+    evidence:
+      train_source_count: 369
+      train_request_count: 9954
+      train_wasserstein_1_ms: 45.46788700315572
+      train_kolmogorov_smirnov: 0.007961138595343097
+      eval_source_count: 21
+      eval_request_count: 750
+      eval_wasserstein_1_ms: 99.1033130958754
+      eval_kolmogorov_smirnov: 0.008747624406874687
+  - id: H05
+    statement: >-
+      The complete locally materialized representation satisfies ownership,
+      leakage, PII, exact-slice, PCM, manifest, masked-row, validation, and
+      reference-free predicted-context contracts.
+    evidence:
+      source_count: 8709
+      protected_owner_count: 65324
+      train_request_count: 33780
+      primary_eval_request_count: 10208
+      masked_eval_row_count: 2043
+      audio_count: 43988
+      provider_validation_count: 5000
+      prior_context_episode_count: 8582
+      test_count: 282
+      independent_verifier: COMPLETE
+      gemini_sft_preflight_failures: 0
+      completion_marker_sha256: 0391d662b9742e328156ce2eeec1c53482d13c74b479f8a813bf52d2f52d5ee8
+  - id: H06
+    statement: >-
+      The approved local build can be published create-only as one exact remote
+      universe, with the completion marker written only after every other
+      object has been byte-verified.
+    evidence:
+      gcs_prefix: gs://wd-transcription-data/sft/dataset_versions/20260724-production-shaped-reconstruction/
+      object_count: 44027
+      total_bytes: 3230841881
+      publication_aggregate_sha256: a1e8b895aa7620b84488aa07e13e56322d4f4d3a2221d81b88a3efbd2c302f86
+      publication_receipt_sha256: 81c62620b8b4be70b94a2157578d4c56152911b8443ae35569dc96b526c11a90
+      completion_marker_generation: 1784935243692024
+      completion_marker_sha256: 0391d662b9742e328156ce2eeec1c53482d13c74b479f8a813bf52d2f52d5ee8
+      remote_universe_verified: true
+rejected_hypotheses:
+  - id: supplied-frame-zero-collapse
+    reason: >-
+      Lead-in, ZCR, saturation, and frame-zero decoder-collapse claims lack a
+      reproducible frozen sample and causal evidence, so they cannot drive
+      membership or boundaries.
+  - id: universal-short-audio-minimum
+    reason: >-
+      Eight provider-rejected short clips lack a successful-request denominator,
+      while the frozen production population contains 247622 of 485142 requests
+      at or below 2.3 seconds. Provider input rejection is measured after
+      construction and cannot drive membership or boundaries.
+next_experiment: none-construction-and-approved-publication-complete
