@@ -5,6 +5,7 @@ import type {
   Feed,
   FeedCreate,
   FeedHistoryEvent,
+  FeedSearchOptionsResponse,
   FeedUpdate,
   ListFeedHistoryResponse,
   ListFeedsResponse,
@@ -272,6 +273,39 @@ export class FeedsController extends Controller {
     } catch (error: unknown) {
       if (error instanceof HttpError) throw error;
       const { status, message } = handleBackendError(error, 'fetching feeds');
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Get('search-options')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getFeedSearchOptions(): Promise<FeedSearchOptionsResponse> {
+    try {
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
+      const response = await client.request<{
+        source_types: SourceType[];
+        statuses: string[];
+        tags: Tag[];
+      }>({
+        url: `${FEEDS_STORE_API_URL}/search-options`,
+        method: 'GET',
+      });
+      const data = response.data;
+      return {
+        sourceTypes: data.source_types,
+        statuses: data.statuses,
+        tags: data.tags,
+      };
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
+      const { status, message } = handleBackendError(
+        error,
+        'fetching feed search options'
+      );
       throw new HttpError(status, message);
     }
   }

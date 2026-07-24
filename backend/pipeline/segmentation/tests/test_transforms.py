@@ -264,6 +264,134 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         # be greater than 4000ms (accounting for pipeline execution delay)
         self.assertGreater(dist.committed.mean, 4000)
 
+    def test_parse_and_key_freshness_metric_uses_receipt_time(self) -> None:
+        """Verifies data_freshness_ms uses receipt_time attribute over start_timestamp media timeline."""
+        now = datetime.datetime.now(datetime.UTC)
+        start_time = now - datetime.timedelta(
+            seconds=100
+        )  # Media start time (100s ago)
+        receipt_time = now - datetime.timedelta(
+            seconds=2
+        )  # Wall-clock receipt time (2s ago)
+        receipt_time_ms = int(receipt_time.timestamp() * 1000)
+
+        start_timestamp_proto = ProtoTimestamp()
+        start_timestamp_proto.FromDatetime(start_time)
+        chunk = ContinuousAudio(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            start_timestamp=start_timestamp_proto,
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {
+                "feed_id": "test-feed",
+                "timestamp_ms": str(receipt_time_ms),
+            },
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            assert_that(
+                parsed[MAIN_TAG],
+                equal_to(
+                    [
+                        (
+                            "test-feed#mock-session-id",
+                            ChunkMetadata(
+                                gcs_uri="gs://test-bucket/path/to/test.flac",
+                                session_id="mock-session-id",
+                                duration_ms=1000,
+                                feed_metadata=FeedMetadata(
+                                    feed_name="mock-feed-name",
+                                ),
+                                timestamp_ms=int(start_time.timestamp() * 1000),
+                                receipt_time_ms=receipt_time_ms,
+                            ),
+                        )
+                    ]
+                ),
+            )
+
+        metrics = p.result.metrics().query(
+            beam.metrics.metric.MetricsFilter().with_name("data_freshness_ms")
+        )
+        self.assertEqual(len(metrics["distributions"]), 1)
+        dist = metrics["distributions"][0]
+        # Freshness is based on receipt_time (~2000ms), NOT media start_time (~100,000ms)
+        self.assertLess(dist.committed.mean, 10000)
+        self.assertGreater(dist.committed.mean, 1000)
+
+    def test_parse_and_key_uses_proto_receipt_timestamp(self) -> None:
+        """Verifies that receipt_timestamp set on ContinuousAudio proto is unmarshalled into ChunkMetadata."""
+        now = datetime.datetime.now(datetime.UTC)
+        start_time = now - datetime.timedelta(seconds=10)
+        receipt_time = now - datetime.timedelta(seconds=1)
+        receipt_time_ms = int(receipt_time.timestamp() * 1000)
+
+        start_ts_proto = ProtoTimestamp()
+        start_ts_proto.FromDatetime(start_time)
+        receipt_ts_proto = ProtoTimestamp()
+        receipt_ts_proto.FromDatetime(receipt_time)
+
+        chunk = ContinuousAudio(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            start_timestamp=start_ts_proto,
+            receipt_timestamp=receipt_ts_proto,
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            assert_that(
+                parsed[MAIN_TAG],
+                equal_to(
+                    [
+                        (
+                            "test-feed#mock-session-id",
+                            ChunkMetadata(
+                                gcs_uri="gs://test-bucket/path/to/test.flac",
+                                session_id="mock-session-id",
+                                duration_ms=1000,
+                                feed_metadata=FeedMetadata(
+                                    feed_name="mock-feed-name",
+                                ),
+                                timestamp_ms=int(start_time.timestamp() * 1000),
+                                receipt_time_ms=receipt_time_ms,
+                            ),
+                        )
+                    ]
+                ),
+            )
+
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
         chunk = ContinuousAudio(gcs_uri="gs://test-bucket/path/to/test.flac")

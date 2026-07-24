@@ -19,6 +19,7 @@ message BufferedChunkProto {
   string gcs_uri = 2;
   optional string traceparent = 3;
   optional string baggage = 4;
+  optional int64 receipt_time_ms = 5;
 }
 
 // PCollection Elements (Cross-Worker Boundaries)
@@ -32,6 +33,7 @@ message ChunkMetadataProto {
   // True recording event timestamp of the incoming audio chunk in milliseconds since epoch.
   optional int64 timestamp_ms = 7;
   optional string baggage = 8;
+  optional int64 receipt_time_ms = 9;
 }
 
 message FlushRequestProto {
