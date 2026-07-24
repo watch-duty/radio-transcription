@@ -133,24 +133,12 @@ def resolve_target_backend(
         ValueError: If the count is negative or batch is requested with
             predicted history.
     """
-    if isinstance(prior_context_count, bool) or not isinstance(
-        prior_context_count, int
-    ):
-        msg = "prior_context_count must be an integer"
-        raise TypeError(msg)
-    if prior_context_count < 0:
-        msg = "prior_context_count must be non-negative"
-        raise ValueError(msg)
-    if prior_context_count and execution.backend == "batch":
-        msg = (
-            "predicted-history evaluation requires the online backend; "
-            "batch cannot construct causal prior predictions"
-        )
-        raise ValueError(msg)
-    if prior_context_count:
-        return "online"
-    if execution.backend is not None:
-        return execution.backend
+    backend = context.resolve_evaluation_backend_for_context(
+        prior_context_count,
+        execution.backend,
+    )
+    if backend is not None:
+        return backend
     if target.is_endpoint:
         return "online"
     return "batch"

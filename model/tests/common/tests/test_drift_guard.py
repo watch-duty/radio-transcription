@@ -195,6 +195,35 @@ model = "gemini-3.1-flash-lite"
             evaluate_calls,
         )
 
+    def test_eval_backend_rule_uses_shared_context_contract(self) -> None:
+        """Context/backend compatibility must have one source implementation."""
+        config_calls = _python_calls(_SRC_DIR / "gemini_sft" / "config.py")
+        target_calls = _python_calls(
+            _SRC_DIR / "gemini_sft" / "target_execution.py"
+        )
+
+        expected_call = ("context", "resolve_evaluation_backend_for_context")
+        self.assertIn(expected_call, config_calls)
+        self.assertIn(expected_call, target_calls)
+
+        message = (
+            "predicted-history evaluation requires the online backend; "
+            "batch cannot construct causal prior predictions"
+        )
+        owners = []
+        for path in _SRC_DIR.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if any(
+                isinstance(node, ast.Constant) and node.value == message
+                for node in ast.walk(tree)
+            ):
+                owners.append(path.relative_to(_SRC_DIR))
+        owners.sort()
+        self.assertEqual(
+            owners,
+            [pathlib.Path("common/gemini/context.py")],
+        )
+
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:
         """Online target execution must call shared Vertex helpers."""
         calls = _python_calls(_SRC_DIR / "gemini_sft" / "target_execution.py")

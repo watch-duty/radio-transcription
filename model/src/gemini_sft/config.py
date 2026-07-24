@@ -465,14 +465,12 @@ def _validated_evaluation_context(
             prior_context_count,
             prior_context_mode,
         )
+        context.resolve_evaluation_backend_for_context(
+            prior_context_count,
+            eval_execution.backend,
+        )
     except (TypeError, ValueError) as exc:
         raise RunConfigError(str(exc)) from None
-    if prior_context_count and eval_execution.backend == "batch":
-        msg = (
-            "predicted-history evaluation requires the online backend; "
-            "batch cannot construct causal prior predictions"
-        )
-        raise RunConfigError(msg)
     return mode
 
 
