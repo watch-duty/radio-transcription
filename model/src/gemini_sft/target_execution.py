@@ -668,12 +668,8 @@ async def _run_predicted_history_target_inference(
         Successful predictions plus rolling index and audit artifact URIs.
 
     Raises:
-        ValueError: If no history is requested or the segment schedule is
-            invalid.
+        ValueError: If the segment schedule is invalid.
     """
-    if prior_context_count <= 0:
-        msg = "rolling predicted-history inference requires positive context"
-        raise ValueError(msg)
     schedule = context.build_strict_causal_schedule(
         segments,
         max_turns=prior_context_count,
