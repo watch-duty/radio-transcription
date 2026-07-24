@@ -1491,6 +1491,59 @@ class TestPredictedHistoryOnlineTargetInference(unittest.TestCase):
             attempt_rows_by_audio_uri=attempt_rows,
         )
 
+    def test_rejects_contained_segments_before_starting_online_wave(
+        self,
+    ) -> None:
+        segments = (
+            context.EvaluationSegment(
+                audio_uri="gs://audio/outer.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=0.0,
+                end_seconds=10.0,
+                manifest_index=0,
+            ),
+            context.EvaluationSegment(
+                audio_uri="gs://audio/inner.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=2.0,
+                end_seconds=4.0,
+                manifest_index=1,
+            ),
+        )
+
+        with unittest.mock.patch.object(
+            target_execution,
+            "_run_online_wave",
+            unittest.mock.AsyncMock(),
+        ) as run_wave:
+            with self.assertRaisesRegex(
+                ValueError,
+                "same-source duplicate spans",
+            ):
+                asyncio.run(
+                    target_execution.run_online_target_inference(
+                        storage_client=self.storage,
+                        run_gcs_prefix="gs://bucket/run",
+                        project="project",
+                        target_label="base",
+                        target_model="gemini-3.1-flash-lite",
+                        segments=segments,
+                        system_prompt="system",
+                        user_prompt="user",
+                        prior_context_count=2,
+                        prior_context_mode="text_turns",
+                        eval_manifest_uri="gs://data/eval.jsonl",
+                        local_dir=self.local_dir,
+                        concurrency=2,
+                        max_retries=1,
+                    )
+                )
+
+        run_wave.assert_not_awaited()
+        self.assertEqual(self.storage.uploads, [])
+
     def test_uses_only_usable_immediate_dependency_predictions(self) -> None:
         segments = (
             context.EvaluationSegment(
