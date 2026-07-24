@@ -18,12 +18,12 @@ variable "subnet_name" {
   type        = string
 }
 
-variable "wd_backend_endpoint" {
+variable "external_endpoint" {
   description = "The endpoint URL for the external backend."
   type        = string
 }
 
-variable "wd_backend_endpoint_api_key" {
+variable "external_endpoint_api_key" {
   description = "The API key for the external backend endpoint."
   type        = string
   sensitive   = true

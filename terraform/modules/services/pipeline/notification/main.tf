@@ -26,7 +26,7 @@ resource "google_secret_manager_secret" "external_endpoint_api_key" {
 # Store the user-provided API key as a secret version
 resource "google_secret_manager_secret_version" "external_endpoint_api_key" {
   secret      = google_secret_manager_secret.external_endpoint_api_key.id
-  secret_data = var.wd_backend_endpoint_api_key
+  secret_data = var.external_endpoint_api_key
 }
 
 # Cloud Run service that pushes alerts to external backend endpoints
@@ -61,7 +61,7 @@ resource "google_cloud_run_v2_service" "notification_pipeline" {
 
       env {
         name  = "NOTIFICATION_ENDPOINT"
-        value = var.wd_backend_endpoint
+        value = var.external_endpoint
       }
       env {
         name = "NOTIFICATION_ENDPOINT_API_KEY"
