@@ -95,6 +95,119 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
             ),
         )
 
+    def test_causal_segments_normalize_training_and_eval_identically(
+        self,
+    ) -> None:
+        source_rows_by_split = {
+            split: [
+                {
+                    **_eval_row(
+                        f"gs://bucket/audio/{split}.flac",
+                        "reference",
+                        example_id=f"{split}-example",
+                        segment_id="001",
+                        offset=0.0,
+                    ),
+                    "split": split,
+                    "original_audio_uri": ("gs://bucket/source/original.wav"),
+                    "original_offset": 12.5,
+                }
+            ]
+            for split in ("train", "eval")
+        }
+        segments: dict[str, context.EvaluationSegment] = {}
+        for split, source_rows in source_rows_by_split.items():
+            _, canonical_rows = sft_artifacts.canonical_rows_from_entries(
+                source_rows,
+                split=split,
+                source="test",
+            )
+            (segments[split],) = sft_artifacts.causal_segments_from_rows(
+                source_rows,
+                canonical_rows,
+                split=split,
+            )
+
+        self.assertEqual(segments["train"].split, "train")
+        self.assertEqual(segments["eval"].split, "eval")
+        self.assertEqual(
+            (
+                segments["train"].source_key,
+                segments["train"].start_seconds,
+                segments["train"].end_seconds,
+                segments["train"].manifest_index,
+            ),
+            (
+                segments["eval"].source_key,
+                segments["eval"].start_seconds,
+                segments["eval"].end_seconds,
+                segments["eval"].manifest_index,
+            ),
+        )
+        self.assertEqual(
+            segments["train"].source_key,
+            "gs://bucket/source/original.wav",
+        )
+        self.assertEqual(segments["train"].start_seconds, 12.5)
+        self.assertEqual(segments["train"].end_seconds, 13.5)
+        self.assertEqual(segments["train"].manifest_index, 0)
+        for segment in segments.values():
+            self.assertNotIn("text", dataclasses.asdict(segment))
+
+    def test_causal_segments_reject_alignment_drift(self) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/001.flac",
+                "reference",
+                example_id="example",
+                segment_id="001",
+                offset=0.0,
+            ),
+            "original_audio_uri": "gs://bucket/source/original.wav",
+            "original_offset": 0.0,
+        }
+        _, canonical_rows = sft_artifacts.canonical_rows_from_entries(
+            [row],
+            split="eval",
+            source="test",
+        )
+
+        with self.assertRaisesRegex(ValueError, "equal lengths"):
+            sft_artifacts.causal_segments_from_rows(
+                [],
+                canonical_rows,
+                split="eval",
+            )
+
+    def test_training_causal_segment_uses_contextual_diagnostic(self) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/train.flac",
+                "reference",
+                example_id="train-example",
+                segment_id="001",
+                offset=0.0,
+            ),
+            "split": "train",
+            "original_audio_uri": "gs://bucket/source/original.wav",
+            "original_offset": True,
+        }
+        _, canonical_rows = sft_artifacts.canonical_rows_from_entries(
+            [row],
+            split="train",
+            source="test",
+        )
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "contextual row original_offset",
+        ):
+            sft_artifacts.causal_segments_from_rows(
+                [row],
+                canonical_rows,
+                split="train",
+            )
+
     def test_eval_provider_segments_use_complete_original_provenance(
         self,
     ) -> None:

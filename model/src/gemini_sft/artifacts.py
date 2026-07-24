@@ -15,6 +15,8 @@ from common.gemini import context
 from gemini_sft import records
 
 if typing.TYPE_CHECKING:
+    import collections.abc
+
     from google.cloud import storage
 
     from gemini_sft import config
@@ -239,6 +241,46 @@ def canonical_rows_from_entries(
     )
 
 
+def causal_segments_from_rows(
+    source_rows: collections.abc.Sequence[dict[str, typing.Any]],
+    canonical_rows: collections.abc.Sequence[manifest.CanonicalRow],
+    *,
+    split: str,
+) -> list[context.EvaluationSegment]:
+    """Normalize aligned contextual rows into transcript-free segments.
+
+    Args:
+        source_rows: Raw manifest rows carrying source-level provenance.
+        canonical_rows: Strict canonical rows aligned with ``source_rows``.
+        split: Expected contextual split for rows without an explicit split.
+
+    Returns:
+        Transcript-free segments aligned in authoritative manifest order.
+
+    Raises:
+        ValueError: If alignment, split, source identity, or timing is invalid.
+    """
+    source_values = tuple(source_rows)
+    canonical_values = tuple(canonical_rows)
+    if len(source_values) != len(canonical_values):
+        msg = "source and canonical rows must have equal lengths"
+        raise ValueError(msg)
+    if not isinstance(split, str) or not split.strip():
+        msg = "causal segment split must be a non-empty string"
+        raise ValueError(msg)
+    return [
+        _causal_segment(
+            source_row,
+            canonical_row,
+            manifest_index,
+            split=split.strip(),
+        )
+        for manifest_index, (source_row, canonical_row) in enumerate(
+            zip(source_values, canonical_values, strict=True)
+        )
+    ]
+
+
 def eval_rows_for_inference_from_entries(
     entries: list[dict[str, typing.Any]],
     *,
@@ -296,12 +338,11 @@ def eval_rows_for_inference_from_entries(
         msg = "prior_context_count must be a non-negative integer"
         raise ValueError(msg)
     if prior_context_count > 0:
-        segments = [
-            _causal_evaluation_segment(source_row, eval_row, manifest_index)
-            for manifest_index, (source_row, eval_row) in enumerate(
-                zip(source_rows, eval_rows, strict=True)
-            )
-        ]
+        segments = causal_segments_from_rows(
+            source_rows,
+            eval_rows,
+            split="eval",
+        )
     else:
         segments = [
             _stateless_evaluation_segment(eval_row, manifest_index)
@@ -338,17 +379,20 @@ def _stateless_evaluation_segment(
     )
 
 
-def _causal_evaluation_segment(
+def _causal_segment(
     source_row: dict[str, typing.Any],
-    eval_row: manifest.CanonicalRow,
+    canonical_row: manifest.CanonicalRow,
     manifest_index: int,
+    *,
+    split: str,
 ) -> context.EvaluationSegment:
     """Build a transcript-free segment with strict causal metadata.
 
     Args:
         source_row: Raw manifest row containing optional source-level timing.
-        eval_row: Validated canonical row supplying current-audio identity.
-        manifest_index: Authoritative position after any evaluation limit.
+        canonical_row: Validated row supplying current-audio identity.
+        manifest_index: Authoritative position in the contextual manifest.
+        split: Expected split when the canonical row omits one.
 
     Returns:
         A descriptor suitable for strict-causal rolling scheduling.
@@ -357,20 +401,20 @@ def _causal_evaluation_segment(
         TypeError: If preferred source or timing metadata has an invalid type.
         ValueError: If source identity or derived timing is invalid.
     """
-    source_key, start_seconds, duration_seconds = _evaluation_provenance(
+    source_key, start_seconds, duration_seconds = _causal_provenance(
         source_row,
-        eval_row,
+        canonical_row,
     )
     end_seconds = start_seconds + duration_seconds
     if not math.isfinite(end_seconds) or end_seconds <= start_seconds:
         msg = (
-            "eval row has invalid derived end time at manifest index "
+            "contextual row has invalid derived end time at manifest index "
             f"{manifest_index}"
         )
         raise ValueError(msg)
     return context.EvaluationSegment(
-        audio_uri=eval_row.audio_filepath,
-        split=eval_row.split or "eval",
+        audio_uri=canonical_row.audio_filepath,
+        split=canonical_row.split or split,
         source_key=source_key,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
@@ -378,15 +422,15 @@ def _causal_evaluation_segment(
     )
 
 
-def _evaluation_provenance(
+def _causal_provenance(
     source_row: dict[str, typing.Any],
-    eval_row: manifest.CanonicalRow,
+    canonical_row: manifest.CanonicalRow,
 ) -> tuple[str, float, float]:
     """Return one atomic source, offset, and duration provenance tuple.
 
     Args:
         source_row: Raw manifest row with optional original-audio identity.
-        eval_row: Validated row with optional canonical source-audio metadata.
+        canonical_row: Validated row with optional source-audio metadata.
 
     Returns:
         Source URI, start seconds, and duration seconds from one complete
@@ -403,27 +447,27 @@ def _evaluation_provenance(
         if not isinstance(original_audio_uri, str) or not (
             source_key := original_audio_uri.strip()
         ):
-            msg = "eval row original_audio_uri must be a non-empty string"
+            msg = "contextual row original_audio_uri must be a non-empty string"
             raise ValueError(msg)
         if original_offset is None:
             msg = (
-                "contextual eval row requires complete original provenance: "
+                "contextual row requires complete original provenance: "
                 "original_audio_uri and original_offset"
             )
             raise ValueError(msg)
         return (
             source_key,
             _finite_nonnegative_number(original_offset, "original_offset"),
-            _finite_positive_number(eval_row.duration, "duration"),
+            _finite_positive_number(canonical_row.duration, "duration"),
         )
     if original_offset is not None:
         msg = (
-            "contextual eval row requires complete original provenance: "
+            "contextual row requires complete original provenance: "
             "original_audio_uri and original_offset"
         )
         raise ValueError(msg)
 
-    source_audio = eval_row.source_audio
+    source_audio = canonical_row.source_audio
     if source_audio is not None:
         source_audio_uri = source_audio.get("audio_filepath")
         source_audio_offset = source_audio.get("offset")
@@ -434,7 +478,7 @@ def _evaluation_provenance(
             or source_audio_duration is None
         ):
             msg = (
-                "contextual eval row requires complete source_audio "
+                "contextual row requires complete source_audio "
                 "provenance: audio_filepath, offset, and duration"
             )
             raise ValueError(msg)
@@ -442,7 +486,7 @@ def _evaluation_provenance(
             source_key := source_audio_uri.strip()
         ):
             msg = (
-                "eval row source_audio.audio_filepath must be a "
+                "contextual row source_audio.audio_filepath must be a "
                 "non-empty string"
             )
             raise ValueError(msg)
@@ -458,7 +502,7 @@ def _evaluation_provenance(
             ),
         )
     msg = (
-        "contextual eval row requires a complete durable source identity and "
+        "contextual row requires a complete durable source identity and "
         "timing provenance tuple via original or source_audio metadata; "
         "example_id is not a conversation key"
     )
@@ -468,7 +512,7 @@ def _evaluation_provenance(
 def _finite_nonnegative_number(value: typing.Any, field: str) -> float:
     number = _finite_number(value, field)
     if number < 0:
-        msg = f"eval row {field} must be non-negative"
+        msg = f"contextual row {field} must be non-negative"
         raise ValueError(msg)
     return number
 
@@ -476,7 +520,7 @@ def _finite_nonnegative_number(value: typing.Any, field: str) -> float:
 def _finite_positive_number(value: typing.Any, field: str) -> float:
     number = _finite_number(value, field)
     if number <= 0:
-        msg = f"eval row {field} must be greater than zero"
+        msg = f"contextual row {field} must be greater than zero"
         raise ValueError(msg)
     return number
 
@@ -496,15 +540,15 @@ def _finite_number(value: typing.Any, field: str) -> float:
         ValueError: If ``value`` cannot be converted or is not finite.
     """
     if isinstance(value, bool):
-        msg = f"eval row {field} must be a finite number"
+        msg = f"contextual row {field} must be a finite number"
         raise TypeError(msg)
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        msg = f"eval row {field} must be a finite number"
+        msg = f"contextual row {field} must be a finite number"
         raise ValueError(msg) from exc
     if not math.isfinite(number):
-        msg = f"eval row {field} must be a finite number"
+        msg = f"contextual row {field} must be a finite number"
         raise ValueError(msg)
     return number
 
