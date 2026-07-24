@@ -734,6 +734,11 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
+        self.assertIsNone(publish_kwargs["retry"])
+        self.assertEqual(
+            publish_kwargs["timeout"],
+            gcp_helper._ORDERED_PUBLISH_ATTEMPT_TIMEOUT_SEC,
+        )
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
         """PublishToPausedOrderingKeyException triggers resume_publish and retries publish once."""

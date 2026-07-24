@@ -11,9 +11,21 @@ import math
 import typing
 import uuid
 
-from backend.pipeline.ingestion import failure_policy, grant_control, models
+import asyncpg
+
+from backend.pipeline.ingestion import (
+    failure_policy,
+    failure_telemetry,
+    grant_control,
+    models,
+    retry,
+)
 from backend.pipeline.ingestion.collectors import failure_classification
-from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline, provider
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline,
+    provider,
+    work_pool,
+)
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 logger = logging.getLogger(__name__)
@@ -21,7 +33,13 @@ logger = logging.getLogger(__name__)
 _POLL_INTERVAL_SEC = 10.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _RECENT_URL_LIMIT = 1_000
+_QUARANTINE_OBSERVER_TIMEOUT_SEC = 2.0
 _MEMBERSHIP_INVALID = "bcfy_calls_sid_membership_invalid"
+_MEMBERSHIP_REFRESH_FAILED = "bcfy_calls_sid_membership_refresh_failed"
+_MIXED_FEED_FAILURES = "mixed_feed_failures"
+_POST_BOOKMARK_FAILURE = (
+    feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+)
 _TRANSIENT_METADATA_FAILURES = frozenset(
     {
         feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
@@ -29,11 +47,32 @@ _TRANSIENT_METADATA_FAILURES = frozenset(
         feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
     }
 )
+_TRANSIENT_MEMBERSHIP_FAILURES = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
+    OSError,
+)
 
 type FailurePlanner = collections.abc.Callable[
     [feed_store.FeedStatusReason, str | None],
     failure_policy.FailurePersistencePlan,
 ]
+type QuarantineObserver = collections.abc.Callable[
+    [
+        ingestion_lease_store.LeaseGrant,
+        ingestion_lease_store.LeaseMember,
+        failure_policy.FailurePersistencePlan,
+    ],
+    collections.abc.Awaitable[None],
+]
+type _CommitResult = (
+    ingestion_lease_store.BatchCommitted | ingestion_lease_store.GrantRejected
+)
 
 
 class _LeaseStore(typing.Protocol):
@@ -75,11 +114,22 @@ class _CallsProvider(typing.Protocol):
 
 
 class _BatchPool(typing.Protocol):
-    async def submit(
+    async def settle_batches(
         self,
-        batch: pipeline.FeedBatch,
-    ) -> asyncio.Future[pipeline.FeedBatchResult]:
-        """Admit one Feed batch to the process-wide bounded pool."""
+        batches: collections.abc.Sequence[pipeline.FeedBatch],
+    ) -> work_pool.SettledBatches[
+        pipeline.FeedBatch,
+        pipeline.FeedBatchResult,
+    ]:
+        """Admit and settle one caller-ordered group of Feed batches.
+
+        Args:
+            batches: Complete per-Feed batches for one SID page.
+
+        Returns:
+            Settled batch evidence, unexpected failure, and deferred caller
+            cancellation.
+        """
         ...
 
 
@@ -205,45 +255,119 @@ def _log_poll_settled(
     )
 
 
-async def _settle_accepted(
-    futures: collections.abc.Sequence[asyncio.Future[pipeline.FeedBatchResult]],
-) -> tuple[pipeline.FeedBatchResult, ...]:
-    """Settle every accepted batch before surfacing failure or cancellation."""
-    if not futures:
-        return ()
+def _promoted_sid_failure(
+    results: collections.abc.Sequence[pipeline.FeedBatchResult],
+) -> failure_classification.ItemFailure | None:
+    """Select a parent failure for one unanimously failed multi-Feed page.
 
-    settlement = asyncio.gather(*futures, return_exceptions=True)
-    cancellation: asyncio.CancelledError | None = None
-    while not settlement.done():
-        try:
-            await asyncio.shield(settlement)
-        except asyncio.CancelledError as error:
-            if cancellation is None:
-                cancellation = error
+    Args:
+        results: Definitive results for every call-bearing Feed on a complete
+            SID page.
 
-    settled = settlement.result()
-    first_error = next(
-        (result for result in settled if isinstance(result, BaseException)),
-        None,
+    Returns:
+        The shared failure, a generic failure for mixed classifications, or
+        ``None`` when the page retains Feed-local outcomes.
+    """
+    if len(results) < 2:
+        return None
+
+    failures: list[failure_classification.ItemFailure] = []
+    for result in results:
+        if result.published_count:
+            return None
+        terminal = result.terminal
+        if not isinstance(terminal, failure_classification.ItemFailure):
+            return None
+        failures.append(terminal)
+
+    first = failures[0]
+    if all(
+        failure.status_reason is first.status_reason for failure in failures
+    ):
+        return first
+    return failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        _MIXED_FEED_FAILURES,
     )
+
+
+def _raise_settlement_failure(
+    failure: BaseException,
+    cancellation: asyncio.CancelledError | None,
+) -> typing.NoReturn:
+    """Raise failed accepted work without misclassifying child cancellation.
+
+    Args:
+        failure: Definitive accepted-work failure.
+        cancellation: Deferred caller cancellation, if one was also observed.
+
+    Raises:
+        grant_control.GrantControlIntegrityError: Accepted work was cancelled
+            internally.
+        BaseException: The exact accepted-work failure otherwise.
+    """
+    if isinstance(failure, asyncio.CancelledError):
+        message = "accepted SID Feed batch was cancelled unexpectedly"
+        _raise_integrity_with_evidence(message, failure, cancellation)
     if cancellation is not None:
-        if first_error is not None:
-            logger.error(
-                "Accepted SID Feed batch failed during cancellation",
-                exc_info=(
-                    type(first_error),
-                    first_error,
-                    first_error.__traceback__,
-                ),
-            )
-            raise cancellation from first_error
-        raise cancellation
-    if first_error is not None:
-        raise first_error
-    return typing.cast(
-        "tuple[pipeline.FeedBatchResult, ...]",
-        tuple(settled),
-    )
+        raise failure from cancellation
+    raise failure
+
+
+def _raise_integrity_with_evidence(
+    message: str,
+    failure: BaseException,
+    cancellation: asyncio.CancelledError | None,
+) -> typing.NoReturn:
+    """Raise integrity failure while retaining child and caller evidence.
+
+    Args:
+        message: Integrity failure summary.
+        failure: Definitive child-operation failure.
+        cancellation: Deferred caller cancellation, if one was also observed.
+
+    Raises:
+        grant_control.GrantControlIntegrityError: Always, chained from the
+            available child and caller evidence.
+    """
+    if cancellation is None:
+        raise grant_control.GrantControlIntegrityError(message) from failure
+    try:
+        _raise_deferred_failure(failure, cancellation)
+    except BaseException as chained_failure:
+        raise grant_control.GrantControlIntegrityError(
+            message
+        ) from chained_failure
+
+
+def _raise_deferred_failure(
+    failure: BaseException,
+    cancellation: asyncio.CancelledError,
+) -> typing.NoReturn:
+    """Raise a retained child failure from secondary caller cancellation.
+
+    Args:
+        failure: Definitive child-operation failure to preserve as primary.
+        cancellation: Deferred caller cancellation to retain as its cause.
+
+    Raises:
+        BaseException: Always raises the exact ``failure``.
+    """
+    raise failure from cancellation
+
+
+def _raise_deferred_cancellation(
+    cancellation: asyncio.CancelledError,
+) -> typing.NoReturn:
+    """Propagate the exact cancellation retained during settlement.
+
+    Args:
+        cancellation: Exact deferred caller cancellation.
+
+    Raises:
+        asyncio.CancelledError: Always raises ``cancellation``.
+    """
+    raise cancellation
 
 
 class BcfyCallsSidRunner:
@@ -259,6 +383,7 @@ class BcfyCallsSidRunner:
         actor_id: str,
         poll_interval_sec: float = _POLL_INTERVAL_SEC,
         clock: collections.abc.Callable[[], datetime.datetime] | None = None,
+        on_quarantined: QuarantineObserver | None = None,
     ) -> None:
         if poll_interval_sec < 0:
             msg = "poll_interval_sec must be nonnegative"
@@ -270,6 +395,48 @@ class BcfyCallsSidRunner:
         self._actor_id = actor_id
         self._poll_interval_sec = poll_interval_sec
         self._clock = clock or (lambda: datetime.datetime.now(datetime.UTC))
+        self._on_quarantined = on_quarantined
+
+    async def _observe_quarantines(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        quarantined: collections.abc.Sequence[
+            tuple[
+                ingestion_lease_store.LeaseMember,
+                failure_policy.FailurePersistencePlan,
+            ]
+        ],
+    ) -> None:
+        """Bound all non-authoritative telemetry after durable quarantine."""
+        observer = self._on_quarantined
+        if observer is None or not quarantined:
+            return
+
+        async def observe_all() -> None:
+            for member, plan in quarantined:
+                try:
+                    await observer(grant, member, plan)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Quarantine observer failed after SID child "
+                        "finalization"
+                    )
+
+        try:
+            await asyncio.wait_for(
+                observe_all(),
+                timeout=_QUARANTINE_OBSERVER_TIMEOUT_SEC,
+            )
+        except asyncio.CancelledError:
+            logger.warning(
+                "Quarantine observer cancelled after SID child finalization"
+            )
+        except TimeoutError:
+            logger.warning(
+                "Quarantine observer timed out after SID child finalization"
+            )
 
     async def run(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -293,7 +460,8 @@ class BcfyCallsSidRunner:
         """
         del payload
         states: dict[uuid.UUID, _FeedState] = {}
-        consecutive_failures = 0
+        consecutive_membership_failures = 0
+        consecutive_metadata_failures = 0
 
         while True:
             if context.grant_lost.is_set():
@@ -302,7 +470,23 @@ class BcfyCallsSidRunner:
                 return grant_control.RunCompleted()
 
             poll_started = self._clock()
-            membership = await self._store.load_membership(grant)
+            try:
+                membership = await self._store.load_membership(grant)
+            except _TRANSIENT_MEMBERSHIP_FAILURES as error:
+                _log_poll_settled(
+                    grant,
+                    status="membership_failed",
+                    error=type(error).__name__,
+                )
+                consecutive_membership_failures += 1
+                if consecutive_membership_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    return grant_control.RunFailed(
+                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        _MEMBERSHIP_REFRESH_FAILED,
+                    )
+                await self._finish_poll_wait(poll_started, context)
+                continue
+            consecutive_membership_failures = 0
             if isinstance(membership, ingestion_lease_store.GrantRejected):
                 return grant_control.RunLost()
             if isinstance(
@@ -323,7 +507,7 @@ class BcfyCallsSidRunner:
                 or member.retry_after <= poll_started
             )
             if not due_members:
-                await asyncio.sleep(self._poll_interval_sec)
+                await self._finish_poll_wait(poll_started, context)
                 continue
 
             requested_position = min(
@@ -342,6 +526,13 @@ class BcfyCallsSidRunner:
                     shutdown_event=context.stop_requested,
                 )
             except provider.TokenLoadStopped:
+                if context.grant_lost.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="grant_lost",
+                        error=None,
+                    )
+                    return grant_control.RunLost()
                 _log_poll_settled(
                     grant,
                     status="stopped",
@@ -359,15 +550,37 @@ class BcfyCallsSidRunner:
                         error.status_reason,
                         error.reason,
                     )
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                consecutive_metadata_failures += 1
+                if consecutive_metadata_failures >= _MAX_CONSECUTIVE_FAILURES:
                     return grant_control.RunFailed(
                         error.status_reason,
                         error.reason,
                     )
-                await self._finish_poll_wait(poll_started)
+                await self._finish_poll_wait(poll_started, context)
                 continue
             except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if task is None or task.cancelling() > 0:
+                    _log_poll_settled(
+                        grant,
+                        status="cancelled",
+                        error=None,
+                    )
+                    raise
+                if context.grant_lost.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="grant_lost",
+                        error=None,
+                    )
+                    return grant_control.RunLost()
+                if context.stop_requested.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="stopped",
+                        error=None,
+                    )
+                    return grant_control.RunCompleted()
                 _log_poll_settled(
                     grant,
                     status="cancelled",
@@ -383,7 +596,7 @@ class BcfyCallsSidRunner:
                 raise
             response_received_at = self._clock()
 
-            consecutive_failures = 0
+            consecutive_metadata_failures = 0
             poll_status = "integrity_failed"
             poll_error: str | None = None
             try:
@@ -392,55 +605,45 @@ class BcfyCallsSidRunner:
                     due_members,
                     page.calls,
                     states,
+                    grant_lost=context.grant_lost,
                 )
-                futures: list[asyncio.Future[pipeline.FeedBatchResult]] = []
-                settlement_started = False
-                try:
-                    for batch in batches:
-                        futures.append(await self._work_pool.submit(batch))
-                    settlement_started = True
-                    results = await _settle_accepted(futures)
-                except asyncio.CancelledError as cancellation:
-                    if not settlement_started and futures:
-                        try:
-                            await _settle_accepted(futures)
-                        except asyncio.CancelledError:
-                            pass
-                        except BaseException as error:
-                            logger.exception(
-                                "Accepted SID Feed batch failed during "
-                                "cancellation",
-                            )
-                            raise cancellation from error
-                    raise
-                except BaseException as admission_error:
-                    if not settlement_started and futures:
-                        try:
-                            await _settle_accepted(futures)
-                        except asyncio.CancelledError as cancellation:
-                            raise cancellation from admission_error
-                        except BaseException as error:
-                            logger.exception(
-                                "Accepted SID Feed batch failed after "
-                                "admission stopped",
-                            )
-                            raise admission_error from error
-                    raise
-
+                settlement = await self._work_pool.settle_batches(batches)
                 result_by_feed = {
                     batch.member.identity.feed_id: result
-                    for batch, result in zip(batches, results, strict=True)
+                    for batch, result in settlement.results
                 }
-                for batch, result in zip(batches, results, strict=True):
+                for batch, result in settlement.results:
                     state = states[batch.member.identity.feed_id]
                     state.next_sequence = result.next_sequence
                     state.remember_urls(result.committed_urls)
-                    if isinstance(
+
+                lost_authority = any(
+                    isinstance(
                         result.terminal,
-                        ingestion_lease_store.GrantRejected,
-                    ):
-                        poll_status = "grant_lost"
-                        return grant_control.RunLost()
+                        (
+                            ingestion_lease_store.GrantRejected,
+                            grant_control.RunLost,
+                        ),
+                    )
+                    for _batch, result in settlement.results
+                )
+                if lost_authority:
+                    if settlement.failure is not None:
+                        _raise_settlement_failure(
+                            settlement.failure,
+                            settlement.cancellation,
+                        )
+                    poll_status = "grant_lost"
+                    return grant_control.RunLost()
+
+                complete = settlement.failure is None and len(
+                    settlement.results
+                ) == len(batches)
+                promoted = None
+                if complete:
+                    promoted = _promoted_sid_failure(
+                        tuple(result for _batch, result in settlement.results)
+                    )
 
                 boundary = _valid_page_boundary(
                     page.last_pos,
@@ -459,26 +662,36 @@ class BcfyCallsSidRunner:
                             }
                         },
                     )
-                try:
-                    mutation_result = await self._commit_page(
+
+                mutation_result: (
+                    ingestion_lease_store.BatchCommitted
+                    | ingestion_lease_store.GrantRejected
+                    | None
+                ) = None
+                commit_cancellation: asyncio.CancelledError | None = None
+                if complete or settlement.results:
+                    (
+                        mutation_result,
+                        commit_cancellation,
+                    ) = await self._commit_page(
                         grant,
                         due_members,
+                        frozenset(
+                            batch.member.identity.feed_id for batch in batches
+                        ),
                         result_by_feed,
                         boundary,
                         request_started,
+                        complete=complete,
+                        promoted=promoted,
                     )
-                except asyncio.CancelledError as error:
-                    msg = "SID page commit cancellation left outcome unknown"
-                    raise grant_control.GrantControlIntegrityError(
-                        msg
-                    ) from error
-                except grant_control.GrantControlIntegrityError:
-                    raise
-                except Exception as error:
-                    msg = "SID page commit failed with outcome unknown"
-                    raise grant_control.GrantControlIntegrityError(
-                        msg
-                    ) from error
+
+                cancellation = settlement.cancellation or commit_cancellation
+                if settlement.failure is not None:
+                    _raise_settlement_failure(
+                        settlement.failure,
+                        cancellation,
+                    )
 
                 if isinstance(
                     mutation_result,
@@ -486,6 +699,17 @@ class BcfyCallsSidRunner:
                 ):
                     poll_status = "grant_lost"
                     return grant_control.RunLost()
+
+                if promoted is not None:
+                    poll_status = "sid_failed"
+                    poll_error = promoted.reason
+                    return grant_control.RunFailed(
+                        promoted.status_reason,
+                        promoted.reason,
+                    )
+
+                if cancellation is not None:
+                    _raise_deferred_cancellation(cancellation)
 
                 poll_status = "completed"
             except asyncio.CancelledError:
@@ -505,7 +729,7 @@ class BcfyCallsSidRunner:
                 return grant_control.RunLost()
             if context.stop_requested.is_set():
                 return grant_control.RunCompleted()
-            await self._finish_poll_wait(poll_started)
+            await self._finish_poll_wait(poll_started, context)
 
     def _route_page(
         self,
@@ -513,6 +737,8 @@ class BcfyCallsSidRunner:
         members: collections.abc.Sequence[ingestion_lease_store.LeaseMember],
         raw_calls: collections.abc.Sequence[object],
         states: dict[uuid.UUID, _FeedState],
+        *,
+        grant_lost: asyncio.Event,
     ) -> tuple[pipeline.FeedBatch, ...]:
         by_source_feed_id = {
             member.identity.source_feed_id: member for member in members
@@ -542,11 +768,9 @@ class BcfyCallsSidRunner:
                 bool,
             ):
                 source_feed_id = str(raw_source_feed_id)
-            member = (
-                by_source_feed_id.get(source_feed_id)
-                if source_feed_id is not None
-                else None
-            )
+            member = None
+            if source_feed_id is not None:
+                member = by_source_feed_id.get(source_feed_id)
             if member is None or member.identity.feed_id in adopting_ids:
                 continue
             audio_url = call.get("url")
@@ -603,39 +827,92 @@ class BcfyCallsSidRunner:
                     session_id=state.session_id,
                     starting_sequence=state.next_sequence,
                     calls=tuple(calls),
+                    grant_lost=grant_lost,
                 )
             )
         return tuple(batches)
 
-    async def _commit_page(
+    async def _commit_page(  # noqa: PLR0912
         self,
         grant: ingestion_lease_store.LeaseGrant,
         due_members: collections.abc.Sequence[
             ingestion_lease_store.LeaseMember
         ],
+        routed_feed_ids: frozenset[uuid.UUID],
         results: collections.abc.Mapping[
             uuid.UUID,
             pipeline.FeedBatchResult,
         ],
         boundary: datetime.datetime | None,
         adoption_boundary: datetime.datetime,
-    ) -> (
+        *,
+        complete: bool,
+        promoted: failure_classification.ItemFailure | None,
+    ) -> tuple[
         ingestion_lease_store.BatchCommitted
         | ingestion_lease_store.GrantRejected
-    ):
+        | None,
+        asyncio.CancelledError | None,
+    ]:
+        """Commit only child evidence proven by the current page settlement.
+
+        Complete ordinary pages may clear parent recovery state. Partial or
+        SID-promoted pages retain it. Unresolved routed Feeds are omitted,
+        while independently quiet or adopting Feeds may share a transaction
+        already required by accepted results.
+
+        Args:
+            grant: Exact fenced SID ownership generation.
+            due_members: Ingestible members included in this poll boundary.
+            routed_feed_ids: Members for which the page contained work.
+            results: Definitive per-Feed results keyed by immutable Feed UUID.
+            boundary: Validated provider page boundary, if available.
+            adoption_boundary: Local request time for newly adopted Feeds.
+            complete: Whether every routed Feed batch settled definitively.
+            promoted: Parent failure selected for a complete page, if any.
+
+        Returns:
+            The fenced mutation result, if a transaction was needed, plus the
+            first caller cancellation deferred during that transaction.
+
+        Raises:
+            GrantControlIntegrityError: The issued transaction failed with an
+                outcome that cannot safely be retried.
+        """
         mutations: list[ingestion_lease_store.ChildMutation] = []
+        failure_plans: dict[
+            uuid.UUID,
+            failure_policy.FailurePersistencePlan,
+        ] = {}
+        members_by_feed_id = {
+            member.identity.feed_id: member for member in due_members
+        }
         for member in due_members:
             feed_id = member.identity.feed_id
             result = results.get(feed_id)
+            if result is None and feed_id in routed_feed_ids:
+                continue
             terminal = result.terminal if result is not None else None
             if isinstance(
                 terminal,
                 failure_classification.ItemFailure,
             ):
+                if promoted is not None:
+                    if terminal.status_reason is _POST_BOOKMARK_FAILURE:
+                        failure_telemetry.emit_post_bookmark_publish_failure(
+                            logger,
+                            feed_id=feed_id,
+                            source_type=grant.source_type,
+                            reason=(
+                                terminal.reason or terminal.status_reason.value
+                            ),
+                        )
+                    continue
                 plan = self._failure_planner(
                     terminal.status_reason,
                     terminal.reason,
                 )
+                failure_plans[feed_id] = plan
                 mutations.append(
                     ingestion_lease_store.FeedFailureTransition(
                         member=member.identity,
@@ -646,11 +923,11 @@ class BcfyCallsSidRunner:
                     )
                 )
                 continue
-            observation = (
-                adoption_boundary
-                if member.last_bookmark_time is None
-                else boundary
-            )
+            if terminal is not None:
+                continue
+            observation = boundary
+            if member.last_bookmark_time is None:
+                observation = adoption_boundary
             mutations.append(
                 ingestion_lease_store.SourceObservation(
                     member.identity,
@@ -658,18 +935,93 @@ class BcfyCallsSidRunner:
                 )
             )
 
-        return await self._store.commit_child_mutations(
-            grant,
-            ingestion_lease_store.ChildMutationBatch(
-                tuple(mutations),
-                ingestion_lease_store.FinalizeLeaseRecovery(),
-            ),
-            actor_id=self._actor_id,
+        lease_effect: ingestion_lease_store.LeaseEffect
+        lease_effect = ingestion_lease_store.NoLeaseEffect()
+        if complete and promoted is None:
+            lease_effect = ingestion_lease_store.FinalizeLeaseRecovery()
+        if not mutations and isinstance(
+            lease_effect,
+            ingestion_lease_store.NoLeaseEffect,
+        ):
+            return (None, None)
+
+        settlement = await retry.settle_issued_operation(
+            self._store.commit_child_mutations(
+                grant,
+                ingestion_lease_store.ChildMutationBatch(
+                    tuple(mutations),
+                    lease_effect,
+                ),
+                actor_id=self._actor_id,
+            )
         )
+        if settlement.failure is not None:
+            message = "SID page commit failed with outcome unknown"
+            _raise_integrity_with_evidence(
+                message,
+                settlement.failure,
+                settlement.cancellation,
+            )
+
+        committed = typing.cast(
+            "_CommitResult",
+            settlement.result,
+        )
+        if isinstance(committed, ingestion_lease_store.BatchCommitted):
+            quarantined_disposition = (
+                ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED
+            )
+            quarantined: list[
+                tuple[
+                    ingestion_lease_store.LeaseMember,
+                    failure_policy.FailurePersistencePlan,
+                ]
+            ] = []
+            for child in committed.children:
+                plan = failure_plans.get(child.feed_id)
+                if (
+                    plan is not None
+                    and child.disposition
+                    is not ingestion_lease_store.ChildDisposition.REJECTED
+                ):
+                    failure_telemetry.emit_failure_policy_decision(
+                        logger,
+                        feed_id=child.feed_id,
+                        source_type=grant.source_type,
+                        plan=plan,
+                    )
+                    if child.disposition is quarantined_disposition:
+                        quarantined.append(
+                            (members_by_feed_id[child.feed_id], plan)
+                        )
+            if quarantined:
+                await self._observe_quarantines(grant, quarantined)
+        return (committed, settlement.cancellation)
 
     async def _finish_poll_wait(
         self,
         poll_started: datetime.datetime,
+        context: grant_control.RunContext,
     ) -> None:
+        """Wait out the poll cadence unless stop or authority loss arrives."""
         elapsed = (self._clock() - poll_started).total_seconds()
-        await asyncio.sleep(max(0.0, self._poll_interval_sec - elapsed))
+        remaining = max(0.0, self._poll_interval_sec - elapsed)
+        if not remaining:
+            return
+
+        stop_wait = asyncio.create_task(context.stop_requested.wait())
+        loss_wait = asyncio.create_task(context.grant_lost.wait())
+        try:
+            await asyncio.wait(
+                (stop_wait, loss_wait),
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            stop_wait.cancel()
+            loss_wait.cancel()
+            await asyncio.gather(
+                stop_wait,
+                loss_wait,
+                return_exceptions=True,
+            )

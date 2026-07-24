@@ -48,6 +48,11 @@ class UploadKwargs(TypedDict, total=False):
 
 logger = logging.getLogger(__name__)
 
+# Ordered publishing otherwise expands the Pub/Sub SDK retry deadline and RPC
+# timeout to effectively infinite values. The ingestion pipeline owns retries,
+# so each physical publish attempt must remain finite.
+_ORDERED_PUBLISH_ATTEMPT_TIMEOUT_SEC = 5.0
+
 # -----------------------------------------------------------------------------
 # Google Cloud Storage helpers
 # -----------------------------------------------------------------------------
@@ -465,6 +470,8 @@ async def publish_audio_chunk(
                 topic_path,
                 serialized_data,
                 ordering_key=feed_id,
+                retry=None,
+                timeout=_ORDERED_PUBLISH_ATTEMPT_TIMEOUT_SEC,
                 **attrs,
             )
             try:
