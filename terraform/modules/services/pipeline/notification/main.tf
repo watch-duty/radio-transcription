@@ -2,9 +2,21 @@
 # NOTIFICATION PIPELINE
 # =============================================================================
 
+data "google_project" "project" {}
+
+locals {
+  project_id              = data.google_project.project.project_id
+  project_number          = data.google_project.project.number
+  redis_certificate_path  = "/etc/secrets"
+  otel_traces_sampler     = var.environment == "dev" ? "parentbased_traceidratio" : "parentbased_always_on"
+  otel_traces_sampler_arg = var.environment == "dev" ? "0.05" : "1.0"
+  otel_bsp_max_batch_size = var.environment == "dev" ? "512" : "64"
+  otel_bsp_schedule_delay = var.environment == "dev" ? "5000" : "1000"
+}
+
 # Secret Manager resource for the external backend API key
 resource "google_secret_manager_secret" "wd_backend_endpoint_api_key" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = "wd-backend-endpoint-API-key"
   replication {
     auto {}
@@ -15,14 +27,6 @@ resource "google_secret_manager_secret" "wd_backend_endpoint_api_key" {
 resource "google_secret_manager_secret_version" "wd_backend_endpoint_api_key" {
   secret      = google_secret_manager_secret.wd_backend_endpoint_api_key.id
   secret_data = var.wd_backend_endpoint_api_key
-}
-
-locals {
-  redis_certificate_path  = "/etc/secrets"
-  otel_traces_sampler     = var.environment == "dev" ? "parentbased_traceidratio" : "parentbased_always_on"
-  otel_traces_sampler_arg = var.environment == "dev" ? "0.05" : "1.0"
-  otel_bsp_max_batch_size = var.environment == "dev" ? "512" : "64"
-  otel_bsp_schedule_delay = var.environment == "dev" ? "5000" : "1000"
 }
 
 # Cloud Run service that pushes alerts to external backend endpoints
@@ -95,7 +99,7 @@ resource "google_cloud_run_v2_service" "notification_pipeline" {
       }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
-        value = var.project_id
+        value = local.project_id
       }
       env {
         name  = "APP_URL"
@@ -188,7 +192,7 @@ resource "google_service_account" "notification_pipeline_sa" {
 
 # Allow notification pipeline to access the backend API key from Secret Manager
 resource "google_secret_manager_secret_iam_member" "wd_backend_endpoint_api_key_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.wd_backend_endpoint_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.notification_pipeline_sa.email}"
@@ -196,7 +200,7 @@ resource "google_secret_manager_secret_iam_member" "wd_backend_endpoint_api_key_
 
 # Allow notification pipeline to access the Memorystore AUTH string password from Secret Manager
 resource "google_secret_manager_secret_iam_member" "notification_pipeline_redis_password_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = var.redis_password_secret_full_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.notification_pipeline_sa.email}"
@@ -204,7 +208,7 @@ resource "google_secret_manager_secret_iam_member" "notification_pipeline_redis_
 
 # Allow notification pipeline to access the Redis cert from Secret Manager
 resource "google_secret_manager_secret_iam_member" "notification_pipeline_redis_certificate_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = var.redis_certificate_secret_full_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.notification_pipeline_sa.email}"
@@ -219,7 +223,7 @@ resource "google_project_iam_member" "notification_pipeline_roles" {
     "roles/monitoring.metricWriter",
   ])
 
-  project = var.project_id
+  project = local.project_id
   role    = each.key
   member  = "serviceAccount:${google_service_account.notification_pipeline_sa.email}"
 }
@@ -228,5 +232,5 @@ resource "google_project_iam_member" "notification_pipeline_roles" {
 resource "google_pubsub_subscription_iam_member" "alert_notification_pubsub_subscriber" {
   subscription = google_pubsub_subscription.alert_notification_pubsub_subscription.name
   role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:service-${var.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  member       = "serviceAccount:service-${local.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }

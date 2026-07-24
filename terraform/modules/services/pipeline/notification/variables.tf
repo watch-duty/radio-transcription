@@ -1,8 +1,3 @@
-variable "project_id" {
-  description = "The GCP project ID."
-  type        = string
-}
-
 variable "region" {
   description = "The GCP region for all resources."
   type        = string
@@ -92,9 +87,4 @@ variable "feeds_api_url" {
 variable "rules_api_url" {
   description = "Base URL of the rules management API service; used to attach triggered rules' tags to notifications. The client appends /v1/rules."
   type        = string
-}
-
-variable "project_number" {
-  type        = string
-  description = "GCP Project Number"
 }
