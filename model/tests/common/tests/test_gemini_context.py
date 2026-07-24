@@ -10,138 +10,109 @@ from common.gemini import context
 
 
 class TestTrainingReferenceHistories(unittest.TestCase):
-    def test_groups_by_original_audio_uri_and_sorts_by_original_offset(
+    def _segment(
+        self,
+        uri: str,
+        *,
+        start: float,
+        end: float,
+        index: int,
+    ) -> context.EvaluationSegment:
+        return context.EvaluationSegment(
+            audio_uri=uri,
+            split="train",
+            source_key="source-a",
+            start_seconds=start,
+            end_seconds=end,
+            manifest_index=index,
+        )
+
+    def test_resolves_references_from_frozen_dependencies(self) -> None:
+        rows = [
+            {"audio_filepath": "gs://a/one", "text": "one"},
+            {"audio_filepath": "gs://a/two", "text": "two"},
+            {"audio_filepath": "gs://a/three", "text": "three"},
+        ]
+        schedule = context.build_strict_causal_schedule(
+            [
+                self._segment("gs://a/one", start=0, end=1, index=0),
+                self._segment("gs://a/two", start=1, end=2, index=1),
+                self._segment("gs://a/three", start=2, end=3, index=2),
+            ],
+            max_turns=2,
+        )
+
+        histories = context.build_training_reference_histories(
+            rows,
+            schedule=schedule,
+        )
+
+        self.assertEqual(histories[0], [])
+        self.assertEqual(
+            histories[1],
+            [context.TrainingReferenceTurn("one")],
+        )
+        self.assertEqual(
+            histories[2],
+            [
+                context.TrainingReferenceTurn("one"),
+                context.TrainingReferenceTurn("two"),
+            ],
+        )
+
+    def test_omits_unusable_selected_reference_without_refill(
         self,
     ) -> None:
         rows = [
             {
-                "audio_filepath": "gs://audio/source-a/002.flac",
-                "original_audio_uri": "gs://audio/source-a.flac",
-                "original_offset": 2.0,
-                "row_index": 2,
-                "text": "second",
+                "audio_filepath": "gs://a/one",
+                "text": "older usable",
             },
             {
-                "audio_filepath": "gs://audio/source-b/001.flac",
-                "original_audio_uri": "gs://audio/source-b.flac",
-                "original_offset": 1.0,
-                "row_index": 1,
-                "text": "other source",
-            },
-            {
-                "audio_filepath": "gs://audio/source-a/001.flac",
-                "original_audio_uri": "gs://audio/source-a.flac",
-                "original_offset": 1.0,
-                "row_index": 1,
-                "text": "first",
-            },
-            {
-                "audio_filepath": "gs://audio/source-a/003.flac",
-                "original_audio_uri": "gs://audio/source-a.flac",
-                "original_offset": 3.0,
-                "row_index": 3,
-                "text": "[UNINTELLIGIBLE]",
-            },
-            {
-                "audio_filepath": "gs://audio/source-a/004.flac",
-                "original_audio_uri": "gs://audio/source-a.flac",
-                "original_offset": 4.0,
-                "row_index": 4,
-                "text": "fourth",
-            },
-        ]
-
-        histories = context.build_training_reference_histories(
-            rows, max_turns=2
-        )
-
-        self.assertEqual(
-            histories[0],
-            [context.TrainingReferenceTurn("first")],
-        )
-        self.assertEqual(histories[1], [])
-        self.assertEqual(histories[2], [])
-        expected = [
-            context.TrainingReferenceTurn("first"),
-            context.TrainingReferenceTurn("second"),
-        ]
-        self.assertEqual(histories[3], expected)
-        self.assertEqual(histories[4], expected)
-
-    def test_limits_history_to_max_turns(self) -> None:
-        rows = [
-            {
-                "audio_filepath": f"gs://audio/{i}.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": float(i),
-                "text": str(i),
-            }
-            for i in range(5)
-        ]
-
-        histories = context.build_training_reference_histories(
-            rows, max_turns=3
-        )
-
-        self.assertEqual(
-            histories[-1],
-            [
-                context.TrainingReferenceTurn("1"),
-                context.TrainingReferenceTurn("2"),
-                context.TrainingReferenceTurn("3"),
-            ],
-        )
-
-    def test_filters_unintelligible_history_case_insensitively(self) -> None:
-        rows = [
-            {
-                "audio_filepath": "gs://audio/first.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 0.0,
+                "audio_filepath": "gs://a/two",
                 "text": "[Unintelligible]",
             },
-            {
-                "audio_filepath": "gs://audio/second.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 1.0,
-                "text": "usable",
-            },
+            {"audio_filepath": "gs://a/three", "text": "current"},
         ]
-
-        histories = context.build_training_reference_histories(
-            rows,
+        schedule = context.build_strict_causal_schedule(
+            [
+                self._segment("gs://a/one", start=0, end=1, index=0),
+                self._segment("gs://a/two", start=1, end=2, index=1),
+                self._segment("gs://a/three", start=2, end=3, index=2),
+            ],
             max_turns=1,
         )
 
-        self.assertEqual(histories, [[], []])
-
-    def test_source_group_does_not_group_unrelated_audio(self) -> None:
-        rows = [
-            {
-                "audio_filepath": "gs://audio/a.flac",
-                "source_group": "eval",
-                "offset": 1.0,
-                "text": "alpha",
-            },
-            {
-                "audio_filepath": "gs://audio/b.flac",
-                "source_group": "eval",
-                "offset": 2.0,
-                "text": "bravo",
-            },
-        ]
-
         histories = context.build_training_reference_histories(
-            rows, max_turns=2
+            rows,
+            schedule=schedule,
         )
 
-        self.assertEqual(histories, [[], []])
-
-    def test_missing_episode_key_falls_back_to_unique_row_key(self) -> None:
-        self.assertNotEqual(
-            context._episode_key({"text": "first"}, 0),
-            context._episode_key({"text": "second"}, 1),
+        self.assertEqual(
+            schedule[2].dependency_audio_uris,
+            ("gs://a/two",),
         )
+        self.assertEqual(histories[2], [])
+
+    def test_rejects_schedule_and_row_alignment_drift(self) -> None:
+        rows = [{"audio_filepath": "gs://a/wrong", "text": "one"}]
+        schedule = context.build_strict_causal_schedule(
+            [
+                self._segment(
+                    "gs://a/expected",
+                    start=0,
+                    end=1,
+                    index=0,
+                )
+            ],
+            max_turns=1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "alignment"):
+            context.build_training_reference_histories(
+                rows,
+                schedule=schedule,
+            )
 
 
 class TestEvaluationContextBoundary(unittest.TestCase):

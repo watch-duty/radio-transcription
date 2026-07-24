@@ -449,46 +449,72 @@ def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
 
 
 def build_training_reference_histories(
-    rows: list[dict[str, typing.Any]],
+    rows: collections.abc.Sequence[dict[str, typing.Any]],
     *,
-    max_turns: int,
+    schedule: collections.abc.Sequence[RollingHistoryScheduleRow],
 ) -> list[list[TrainingReferenceTurn]]:
-    """Build labeled prior-reference histories for SFT preparation only.
-
-    Rows are grouped by source recording/session and sorted by source offset.
-    A row enters later training histories only when its labeled transcript is
-    non-empty and is not the case-insensitive ``[UNINTELLIGIBLE]`` sentinel.
+    """Resolve training-only references for frozen causal dependencies.
 
     Args:
-        rows: Canonical training manifest rows in caller order.
-        max_turns: Maximum number of preceding labeled turns per row.
+        rows: Canonical training manifest rows in authoritative order.
+        schedule: Transcript-free dependency rows compiled for ``rows``.
 
     Returns:
         Training-reference histories aligned one-for-one with ``rows``.
 
     Raises:
-        ValueError: If ``max_turns`` is negative.
+        ValueError: If row identity, uniqueness, or schedule alignment is
+            invalid.
     """
-    if max_turns < 0:
-        msg = "max_turns must be non-negative"
+    row_values = tuple(rows)
+    schedule_values = tuple(schedule)
+    if len(row_values) != len(schedule_values):
+        msg = "training rows and causal schedule must have equal lengths"
         raise ValueError(msg)
-    histories: list[list[TrainingReferenceTurn]] = [[] for _ in rows]
-    if max_turns == 0 or not rows:
-        return histories
 
-    grouped_indices: dict[str, list[int]] = collections.defaultdict(list)
-    for index, row in enumerate(rows):
-        grouped_indices[_episode_key(row, index)].append(index)
+    text_by_audio_uri: dict[str, str] = {}
+    audio_uri_by_index: list[str] = []
+    for row in row_values:
+        audio_uri_value = row.get("audio_filepath")
+        if not isinstance(audio_uri_value, str) or not (
+            audio_uri := audio_uri_value.strip()
+        ):
+            msg = "training row audio_filepath must be a non-empty string"
+            raise ValueError(msg)
+        if audio_uri in text_by_audio_uri:
+            msg = "training row audio_filepath must be unique"
+            raise ValueError(msg)
+        text_by_audio_uri[audio_uri] = str(row.get("text") or "").strip()
+        audio_uri_by_index.append(audio_uri)
 
-    for indices in grouped_indices.values():
+    histories: list[list[TrainingReferenceTurn]] = [[] for _ in row_values]
+    seen_indices: set[int] = set()
+    for schedule_row in schedule_values:
+        index = schedule_row.segment.manifest_index
+        if (
+            index < 0
+            or index >= len(row_values)
+            or index in seen_indices
+            or audio_uri_by_index[index] != schedule_row.segment.audio_uri
+        ):
+            msg = "training rows and causal schedule have invalid alignment"
+            raise ValueError(msg)
+        seen_indices.add(index)
         history: list[TrainingReferenceTurn] = []
-        for index in sorted(indices, key=lambda i: _row_sort_key(rows[i], i)):
-            histories[index] = list(history[-max_turns:])
-            row = rows[index]
-            text = str(row.get("text") or "").strip()
-            audio_uri = str(row.get("audio_filepath") or "").strip()
-            if audio_uri and _usable_history_text(text):
+        for dependency_audio_uri in schedule_row.dependency_audio_uris:
+            if dependency_audio_uri not in text_by_audio_uri:
+                msg = (
+                    "training causal dependency is absent from rows: "
+                    f"{dependency_audio_uri}"
+                )
+                raise ValueError(msg)
+            text = text_by_audio_uri[dependency_audio_uri]
+            if _usable_history_text(text):
                 history.append(TrainingReferenceTurn(text=text))
+        histories[index] = history
+    if len(seen_indices) != len(row_values):
+        msg = "training rows and causal schedule have invalid alignment"
+        raise ValueError(msg)
     return histories
 
 
