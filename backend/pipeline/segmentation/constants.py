@@ -55,7 +55,12 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"
 )
-GCS_CONNECTION_POOL_SIZE: Final = SHARED_DOWNLOAD_POOL_SIZE + 16
+# Scaled to 1.5x max download thread pool to provide sufficient HTTP connection
+# pool headroom without triggering urllib3 connection pool eviction.
+GCS_CONNECTION_POOL_MULTIPLIER: Final = 1.5
+GCS_CONNECTION_POOL_SIZE: Final = int(
+    SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER
+)
 GCS_CONNECTION_MAX_RETRIES: Final = 3
 
 # Structured watermark and FSM recovery configurations
