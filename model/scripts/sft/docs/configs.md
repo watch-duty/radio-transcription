@@ -55,14 +55,20 @@ Supported context representations:
 | `transcript` | One current user turn with a simple numbered prior-transcript block plus current audio. | Compact one-turn context. |
 | `guarded_transcript_block` | One current user turn with a guarded numbered prior-transcript block plus current audio. | Compact context with explicit "do not re-transcribe or continue prior turns" instructions. |
 
-Rolling evaluation groups rows by split and source. A candidate must start
-strictly before the current segment and finish no later than the current start.
-Contextual rows therefore require one complete source-provenance tuple: either
-original source URI plus original offset, or a complete `source_audio`
-URI/offset/duration tuple. The configured K is applied to those structural
-candidates before unusable predictions are omitted. Every provider request
-contains transcript-only predicted history and exactly one audio input: the
-current clip.
+Training and rolling evaluation use the same transcript-free structural
+schedule. Rows are grouped by split and source. Within floating-point boundary
+tolerance, a dependency must start strictly before the current segment and
+finish no later than the current start. Equal intervals and intervals where one
+contains the other are rejected as duplicate contextual segments. Partial
+overlap is allowed, but overlapping rows cannot become dependencies of each
+other; both may become history for a later row after both have ended.
+
+Contextual rows require one complete source-provenance tuple: either original
+source URI plus original offset, or a complete `source_audio`
+URI/offset/duration tuple. The configured K is applied to structural
+dependencies before unusable references or predictions are omitted, without
+refilling older rows. Every evaluation request contains transcript-only
+predicted history and exactly one audio input: the current clip.
 
 ## Eval Target Snippets
 
