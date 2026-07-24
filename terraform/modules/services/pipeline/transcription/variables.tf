@@ -37,7 +37,7 @@ variable "max_instances" {
 
 variable "transcriber_type" {
   type        = string
-  default     = "GOOGLE_CHIRP_V3"
+  default     = "GEMINI"
   description = "Type of transcription model to use."
 }
 
