@@ -23,6 +23,7 @@ from backend.services.feeds.main import app
 from backend.services.feeds.models import (
     Feed,
     FeedHistoryEvent,
+    FeedSearchOptionsResponse,
     ListFeedHistoryResponse,
     ListFeedsResponse,
     Tag,
@@ -389,6 +390,28 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         response = self.client.get(f"/v1/feeds/{feed_id}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_get_feed_search_options(self) -> None:
+        """Test fetching precomputed search filter options."""
+        mock_options = FeedSearchOptionsResponse(
+            source_types=["bcfy_feeds", "openmhz"],
+            statuses=["active", "failing"],
+            tags=[Tag(key="county", value="Marin")],
+        )
+        self.mock_service.get_feed_search_options.return_value = mock_options
+
+        response = self.client.get("/v1/feeds/search-options")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.json(),
+            {
+                "source_types": ["bcfy_feeds", "openmhz"],
+                "statuses": ["active", "failing"],
+                "tags": [{"key": "county", "value": "Marin"}],
+            },
+        )
+        self.mock_service.get_feed_search_options.assert_called_once()
 
     def test_list_feeds(self) -> None:
         """Test listing feeds with defaults."""

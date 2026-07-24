@@ -9,6 +9,8 @@ import TableCell from '@mui/material/TableCell';
 import Typography from '@mui/material/Typography';
 import type { Feed, Rule } from '@transcription/common';
 
+import { groupTagsByKey } from '../feeds/tagDisplay';
+
 export interface RuleRowProps {
   rule: Rule;
   feedMap: Map<string, Feed>;
@@ -17,7 +19,7 @@ export interface RuleRowProps {
   allowEdit: boolean;
   onEditRule?: (rule: Rule) => void;
   isSubmitting?: boolean;
-  isMobile?: boolean;
+  isNarrow?: boolean;
 }
 
 export function RuleRow({
@@ -28,7 +30,7 @@ export function RuleRow({
   allowEdit,
   onEditRule,
   isSubmitting = false,
-  isMobile = false,
+  isNarrow = false,
 }: RuleRowProps) {
   const isEditing = editingRuleId === rule.ruleId;
   const targetFeedNames = rule.scope.targetFeeds
@@ -158,7 +160,7 @@ export function RuleRow({
             flexWrap: 'wrap',
           }}
         >
-          {isMobile && (
+          {isNarrow && (
             <Typography
               variant="caption"
               color="text.secondary"
@@ -175,7 +177,7 @@ export function RuleRow({
             variant="caption"
             color="text.secondary"
             noWrap
-            sx={{ maxWidth: '100%', mt: 0.5, pl: isMobile ? 5 : 0 }}
+            sx={{ maxWidth: '100%', mt: 0.5, pl: isNarrow ? 5 : 0 }}
             title={targetFeedNames}
           >
             Feeds: {targetFeedNames}
@@ -194,6 +196,41 @@ export function RuleRow({
         }}
       >
         {renderConditions()}
+      </TableCell>
+
+      <TableCell
+        component="div"
+        role="cell"
+        sx={{
+          gridArea: { xs: 'tags', sm: 'unset' },
+          py: { xs: 0.5, sm: 1 },
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 0.5,
+          borderBottom: 'none',
+          minWidth: 0,
+        }}
+      >
+        {isNarrow && rule.tags && rule.tags.length > 0 && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 600 }}
+          >
+            Tags:
+          </Typography>
+        )}
+        {rule.tags && rule.tags.length > 0
+          ? groupTagsByKey(rule.tags).map((group) => (
+              <Chip
+                key={group.key}
+                label={`${group.key}: ${group.values.join(', ')}`}
+                size="small"
+                variant="outlined"
+              />
+            ))
+          : null}
       </TableCell>
 
       <TableCell

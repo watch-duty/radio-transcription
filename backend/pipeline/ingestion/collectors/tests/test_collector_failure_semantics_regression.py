@@ -17,6 +17,7 @@ from backend.pipeline.ingestion.collectors import (
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
+    provider,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
@@ -47,7 +48,7 @@ class _CaptureHandler(logging.Handler):
 class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector.control_flow.sleep_or_cancel",
+        ".provider.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_bcfy_calls_retry_shutdown_raises_cancelled_error(
@@ -63,7 +64,7 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
         session.get.return_value = context_manager
 
         with self.assertRaises(asyncio.CancelledError):
-            await bcfy_calls_collector._download_audio(
+            await provider._download_audio(
                 session,
                 "https://audio.example/test.mp3",
                 asyncio.Event(),

@@ -47,14 +47,45 @@ describe('AudioControl', () => {
     ).toBeTruthy();
   });
 
-  it('renders the settings button slot next to the transport buttons', () => {
+  it('renders volume slider and Audio controls button in row when state is passed', () => {
     render(
       <AudioControl
         {...defaultProps}
-        settingsButton={<button>audio settings</button>}
+        volumeDb={0}
+        setVolumeDb={vi.fn()}
+        pan={0}
+        setPan={vi.fn()}
+        speed={1}
+        setSpeed={vi.fn()}
       />
     );
-    expect(screen.getByRole('button', { name: 'audio settings' })).toBeTruthy();
+
+    expect(screen.getByRole('slider', { name: 'Volume' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'audio controls' })).toBeTruthy();
+  });
+
+  it('renders active Pan and Speed Chip badges right of settings button when off-default', () => {
+    const setPan = vi.fn();
+    const setSpeed = vi.fn();
+    render(
+      <AudioControl
+        {...defaultProps}
+        volumeDb={0}
+        setVolumeDb={vi.fn()}
+        pan={-1}
+        setPan={setPan}
+        speed={1.5}
+        setSpeed={setSpeed}
+      />
+    );
+
+    expect(screen.getByText('Pan L')).toBeTruthy();
+    expect(screen.getByText('1.5×')).toBeTruthy();
+
+    // Clicking delete button on Pan chip resets pan to 0
+    const panCancel = screen.getAllByTestId('CancelIcon')[0];
+    fireEvent.click(panCancel);
+    expect(setPan).toHaveBeenCalledWith(0);
   });
 
   it('shows pause icon when isAudioPlaying is true', () => {

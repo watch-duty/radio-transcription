@@ -150,7 +150,7 @@ describe('FeedHeader', () => {
     );
 
     const shareButton = screen.getByRole('button', {
-      name: 'copy feed deeplink',
+      name: 'Share feed',
     });
     expect(shareButton).toBeTruthy();
 

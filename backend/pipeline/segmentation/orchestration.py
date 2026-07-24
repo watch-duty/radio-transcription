@@ -24,6 +24,7 @@ from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+    DEFAULT_MIN_RAM_RESOURCE_HINT,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
@@ -129,7 +130,7 @@ def get_pipeline(
             ),
             stitch_config=stitch_config,
         )
-    ).with_resource_hints(min_ram="8GB").with_outputs(
+    ).with_resource_hints(min_ram=DEFAULT_MIN_RAM_RESOURCE_HINT).with_outputs(
         DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
     )
 
@@ -144,7 +145,9 @@ def get_pipeline(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
         )
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ).with_resource_hints(min_ram=DEFAULT_MIN_RAM_RESOURCE_HINT).with_outputs(
+        DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+    )
 
     uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,

@@ -1349,6 +1349,36 @@ class TestFeedGrantHeartbeatSql(unittest.TestCase):
 class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
     """Tests for exact, caller-correlated Feed grant heartbeats."""
 
+    async def test_timeout_budget_covers_checkout_query_and_release(
+        self,
+    ) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+        rows = [_grant_heartbeat_row(grant)]
+        connection = mock.AsyncMock()
+        connection.fetch.return_value = rows
+        pool = mock.MagicMock()
+        pool.acquire = mock.AsyncMock(return_value=connection)
+        pool.release = mock.AsyncMock()
+        store = FeedStore(pool, heartbeat_timeout_sec=18.0)
+
+        with mock.patch(
+            "backend.pipeline.storage.connection.time.monotonic",
+            side_effect=(100.0, 101.0, 105.0, 109.0),
+        ):
+            result = await store.renew_grant_heartbeats((grant,))
+
+        self.assertEqual(result[0].grant, grant)
+        pool.acquire.assert_awaited_once_with(timeout=16.0)
+        connection.fetch.assert_awaited_once_with(
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
+            [_FEED_ID],
+            [_WORKER_ID],
+            [7],
+            [0],
+            timeout=12.0,
+        )
+        pool.release.assert_awaited_once_with(connection, timeout=9.0)
+
     async def test_empty_input_returns_before_pool_checkout(self) -> None:
         pool = make_mock_pool()
         store = FeedStore(pool)
@@ -1358,22 +1388,15 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, ())
         pool.fetch.assert_not_awaited()
 
-    async def test_invalid_and_duplicate_input_fail_before_checkout(
-        self,
-    ) -> None:
+    async def test_duplicate_input_fails_before_checkout(self) -> None:
         first = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 1)
         duplicate = feed_store.FeedGrant(_FEED_ID, uuid.uuid4(), 9)
 
-        for grants, expected_error in (
-            ((cast("feed_store.FeedGrant", object()),), TypeError),
-            ((first, duplicate), ValueError),
-        ):
-            with self.subTest(expected_error=expected_error.__name__):
-                pool = make_mock_pool()
-                store = FeedStore(pool)
-                with self.assertRaises(expected_error):
-                    await store.renew_grant_heartbeats(grants)
-                pool.fetch.assert_not_awaited()
+        pool = make_mock_pool()
+        store = FeedStore(pool)
+        with self.assertRaises(ValueError):
+            await store.renew_grant_heartbeats((first, duplicate))
+        pool.fetch.assert_not_awaited()
 
     async def test_sorted_lock_arrays_retain_original_caller_ordinals(
         self,
@@ -2513,6 +2536,22 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 "bcfy_feeds",
                 "123",
                 tags=tags,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+    async def test_create_feed_translates_source_unique_violation(self) -> None:
+        """The source lookup unique index remains a feed duplicate error."""
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = _unique_violation(
+            "idx_feed_properties_source_lookup"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedAlreadyExistsError):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
 

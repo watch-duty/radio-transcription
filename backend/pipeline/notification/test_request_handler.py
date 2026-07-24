@@ -51,7 +51,7 @@ class TestRequestHandler(TestCase):
                 '"sourceAudioUris": [], "canonicalAudioUri": "", '
                 '"evaluationDecisions": [], "playbackAudioUri": "", '
                 '"appUrl": "", "feedName": "", "tags": [], '
-                '"evaluationErrors": []}'
+                '"evaluationErrors": [], "ruleTags": []}'
             ),
             headers={
                 "Content-Type": "application/json",

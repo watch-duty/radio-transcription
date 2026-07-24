@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -17,6 +17,7 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.storage import (
+    connection,
     feed_change_notifications,
     feed_lifecycle,
     feed_queries,
@@ -34,7 +35,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
@@ -63,7 +69,13 @@ class SourceType(enum.StrEnum):
         deploy.
     """
 
+    # Continuous Icecast-protocol stream for Broadcastify feeds
+    # (handled by icecast_collector.py). Currently the primary stream source
+    # using the Icecast collector; feeds into Dataflow segmentation.
+    # Note: Do not confuse with BCFY_CALLS (discrete REST polling collector).
     BCFY_FEEDS = "bcfy_feeds"
+    # Discrete call REST polling API collector for Broadcastify Calls
+    # (bcfy_calls_collector.py). Does NOT pass through Dataflow segmentation.
     BCFY_CALLS = "bcfy_calls"
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
@@ -141,6 +153,11 @@ class FeedGrant:
     feed_id: uuid.UUID
     owner_worker_id: uuid.UUID
     fencing_token: int
+
+    @property
+    def unit_key(self) -> uuid.UUID:
+        """Return the permanent identity within the Feed domain."""
+        return self.feed_id
 
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
@@ -278,13 +295,6 @@ def _require_actor_id(actor_id: str | None) -> str:
     return actor_id
 
 
-def _require_feed_grant(value: object) -> FeedGrant:
-    if not isinstance(value, FeedGrant):
-        msg = "grant must be a FeedGrant"
-        raise TypeError(msg)
-    return value
-
-
 class FeedStore:
     """
     Storage layer for feed lifecycle operations against AlloyDB.
@@ -309,6 +319,8 @@ class FeedStore:
             are never leased here). ``CollectorRuntime`` passes
             ``list(settings.caps.keys())`` so the SQL shape and the
             runtime's per-type budgets are seeded from the same set.
+        heartbeat_timeout_sec: Optional total timeout for heartbeat pool
+            checkout, query execution, and connection release.
 
     """
 
@@ -316,8 +328,11 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         claim_types: collections.abc.Sequence[SourceType] | None = None,
+        *,
+        heartbeat_timeout_sec: float | None = None,
     ) -> None:
         self._pool = pool
+        self._heartbeat_timeout_sec = heartbeat_timeout_sec
         if claim_types is None:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
@@ -576,14 +591,12 @@ class FeedStore:
             One exact, caller-correlated result for every input grant.
 
         Raises:
-            TypeError: If an input is not a ``FeedGrant``.
             ValueError: If inputs repeat or results are malformed or
                 miscorrelated.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
-        for candidate in grants:
-            grant = _require_feed_grant(candidate)
+        for grant in grants:
             if grant.feed_id in feed_ids:
                 msg = f"duplicate Feed identity {grant.feed_id}"
                 raise ValueError(msg)
@@ -595,12 +608,14 @@ class FeedStore:
             enumerate(grants),
             key=lambda item: item[1].feed_id.int,
         )
-        rows = await self._pool.fetch(
+        rows = await connection.fetch_with_timeout_budget(
+            self._pool,
             feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             [grant.feed_id for _, grant in ordered],
             [grant.owner_worker_id for _, grant in ordered],
             [grant.fencing_token for _, grant in ordered],
             [ordinal for ordinal, _ in ordered],
+            timeout_sec=self._heartbeat_timeout_sec,
         )
 
         expected_by_ordinal = dict(enumerate(grants))
@@ -1425,3 +1440,23 @@ class FeedStore:
                 )
             )
         return PaginatedFeedAuditEvents(events, new_next_token, total)
+
+    async def get_feed_search_options(self) -> dict[str, list[Any]]:
+        """Fetch precomputed search filter options for feeds."""
+        async with self._pool.acquire() as conn:
+            tag_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_TAGS_SQL
+            )
+            st_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL
+            )
+            status_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL
+            )
+            return {
+                "source_types": [r["source_type"] for r in st_rows],
+                "statuses": [r["status"] for r in status_rows],
+                "tags": [
+                    {"key": r["key"], "value": r["value"]} for r in tag_rows
+                ],
+            }

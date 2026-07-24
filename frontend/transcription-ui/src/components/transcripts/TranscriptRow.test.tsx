@@ -190,7 +190,7 @@ describe('TranscriptRow', () => {
     expect(screen.getByText(/Wednesday/i)).toBeTruthy();
   });
 
-  it('triggers copy transcript clipboard action successfully', () => {
+  it('triggers copy transcript clipboard action successfully', async () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -209,7 +209,10 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const copyButton = screen.getAllByLabelText('copy transcript')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('button', {
+      name: /copy transcript/i,
+    });
     fireEvent.click(copyButton);
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -218,7 +221,7 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('triggers copy deeplink action successfully', () => {
+  it('triggers copy deeplink action successfully', async () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -237,7 +240,10 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const deepLinkButton = await screen.findByRole('button', {
+      name: /copy link/i,
+    });
     fireEvent.click(deepLinkButton);
 
     const startMs = new Date(mockAudioSegment.startTimestamp).getTime();
@@ -311,7 +317,10 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const downloadButton = screen.getByLabelText('download audio');
+    fireEvent.click(screen.getByLabelText('Share'));
+    const downloadButton = await screen.findByRole('button', {
+      name: /download audio/i,
+    });
     fireEvent.click(downloadButton);
 
     await vi.waitFor(() => {
@@ -325,7 +334,7 @@ describe('TranscriptRow', () => {
     fetchSpy.mockRestore();
   });
 
-  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
+  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', async () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -352,7 +361,10 @@ describe('TranscriptRow', () => {
     expect(styles.opacity).toBe('0.6');
     expect(styles.userSelect).not.toBe('none');
 
-    const copyButton = screen.getAllByLabelText('copy transcript')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('button', {
+      name: /copy transcript/i,
+    });
     expect(copyButton).toBeTruthy();
     expect((copyButton as HTMLButtonElement).disabled).toBe(false);
 
@@ -363,7 +375,7 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('renders silence bundle correctly with placeholder text and disabled copy', () => {
+  it('renders silence bundle correctly with placeholder text and disabled copy', async () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
@@ -400,7 +412,12 @@ describe('TranscriptRow', () => {
 
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.getByText('10 sec')).toBeTruthy();
-    expect(screen.queryByLabelText('copy transcript')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Share'));
+    await screen.findByRole('button', { name: /copy link/i });
+    expect(
+      screen.queryByRole('button', { name: /copy transcript/i })
+    ).toBeNull();
   });
 
   it('shows coarse elapsed time without seconds when silence row is at the live edge (ongoing silence)', () => {
@@ -444,7 +461,7 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('<1 min')).toBeTruthy();
   });
 
-  it('does not render segment info button for non-admins', () => {
+  it('does not render segment details in the share popover for non-admins', async () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -463,12 +480,12 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    expect(
-      screen.queryByLabelText('view segment info')
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Share'));
+    await screen.findByRole('button', { name: /copy link/i });
+    expect(screen.queryByText('Segment ID')).not.toBeInTheDocument();
   });
 
-  it('renders segment info button for admins', () => {
+  it('renders segment details in the share popover for admins', async () => {
     mockIsAdmin = true;
 
     render(
@@ -489,10 +506,11 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Share'));
+    expect(await screen.findByText('Segment ID')).toBeInTheDocument();
   });
 
-  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
+  it('renders transcription failure correctly with placeholder text and disabled copy', async () => {
     const mockFailedTranscript: AudioSegment = {
       ...mockAudioSegment,
       annotations: [
@@ -527,11 +545,14 @@ describe('TranscriptRow', () => {
 
     expect(screen.getByText('[Transcription failed]')).toBeTruthy();
 
-    const copyButton = screen.getByLabelText('copy transcript');
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('button', {
+      name: /copy transcript/i,
+    });
     expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('renders partial transcription with text and incomplete prefix, and copy button enabled', () => {
+  it('renders partial transcription with text and incomplete prefix, and copy button enabled', async () => {
     const mockPartialTranscript: AudioSegment = {
       ...mockAudioSegment,
       annotations: [
@@ -569,7 +590,10 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('[Transcript may be incomplete]')).toBeTruthy();
     expect(screen.queryByText('[Transcription failed]')).toBeNull();
     // Copy button should be enabled
-    const copyButton = screen.getByLabelText('copy transcript');
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('button', {
+      name: /copy transcript/i,
+    });
     expect((copyButton as HTMLButtonElement).disabled).toBe(false);
   });
 });

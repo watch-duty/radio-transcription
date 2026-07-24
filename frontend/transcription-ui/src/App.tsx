@@ -1,8 +1,9 @@
-import { Suspense, lazy, useCallback, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
 
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import {
   CssBaseline,
   ThemeProvider,
@@ -17,11 +18,13 @@ import { ApiError } from '@transcription/common';
 
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
+import { AnnouncementBanner } from './components/common/AnnouncementBanner';
 import LoginModal from './components/common/LoginModal';
 import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
+import SettingsView from './components/settings/SettingsView';
 import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
@@ -29,6 +32,10 @@ import { useAuth } from './context/AuthContext';
 import './App.css';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
+
+const CSAT_SURVEY_START_DATE = new Date('2026-07-20T00:00:00');
+const CSAT_SURVEY_END_DATE = new Date('2026-07-29T23:59:59');
+const CSAT_SURVEY_FORM_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
 
 function App() {
   const { token } = useAuth();
@@ -134,7 +141,47 @@ function App() {
     [addAlert, token]
   );
 
+  const [themeMode, setThemeMode] = useState<'system' | 'light' | 'dark'>(
+    () => {
+      const stored = localStorage.getItem('radio.themeMode');
+      if (stored === 'light' || stored === 'dark' || stored === 'system') {
+        return stored;
+      }
+      return 'system';
+    }
+  );
+
+  useEffect(() => {
+    const handleThemeChange = (e: CustomEvent<string>) => {
+      if (['system', 'light', 'dark'].includes(e.detail)) {
+        setThemeMode(e.detail as 'system' | 'light' | 'dark');
+      }
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'radio.themeMode' && e.newValue) {
+        if (['system', 'light', 'dark'].includes(e.newValue)) {
+          setThemeMode(e.newValue as 'system' | 'light' | 'dark');
+        }
+      }
+    };
+    window.addEventListener(
+      'radio-theme-changed' as keyof WindowEventMap,
+      handleThemeChange as EventListener
+    );
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(
+        'radio-theme-changed' as keyof WindowEventMap,
+        handleThemeChange as EventListener
+      );
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
+  const effectiveMode =
+    themeMode === 'system' ? (prefersDarkMode ? 'dark' : 'light') : themeMode;
+
   const theme = createTheme({
     breakpoints: {
       values: {
@@ -146,7 +193,7 @@ function App() {
       },
     },
     palette: {
-      mode: prefersDarkMode ? 'dark' : 'light',
+      mode: effectiveMode,
     },
     components: {
       MuiBadge: {
@@ -175,6 +222,15 @@ function App() {
             autoHideDuration={3000}
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
+          />
+          <AnnouncementBanner
+            startDate={CSAT_SURVEY_START_DATE}
+            endDate={CSAT_SURVEY_END_DATE}
+            title="CSAT Survey:"
+            message="Your feedback will help us improve this transcription tool. Please share your experience by Wednesday, July 29th!"
+            linkUrl={CSAT_SURVEY_FORM_URL}
+            linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
+            icon={<RateReviewIcon />}
           />
           {alerts.length > 0 && (
             <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
@@ -255,6 +311,18 @@ function App() {
                     <DocsView />
                   </Suspense>
                 </RequireAdmin>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <>
+                  <title>Settings - Radio Transcription</title>
+                  <SettingsView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
               }
             />
             <Route path="/demo-outage" element={<DemoOutageView />} />

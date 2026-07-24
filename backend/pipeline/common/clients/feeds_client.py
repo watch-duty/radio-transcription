@@ -1,12 +1,8 @@
 import logging
 
-import requests
+import httpx
 
-from backend.pipeline.common import auth_client, env
-from backend.pipeline.common.clients.session_helper import (
-    create_resilient_session,
-)
-from backend.pipeline.common.tracing_utils import get_current_traceparent
+from backend.pipeline.common.clients.session_helper import authenticated_get
 from backend.services.feeds.models import Tag
 
 logger = logging.getLogger(__name__)
@@ -20,7 +16,11 @@ class FeedsClient:
             msg = "Feeds API base URL must be provided."
             raise ValueError(msg)
         self.base_url = base_url.rstrip("/")
-        self.session = create_resilient_session()
+        self.client = httpx.Client()
+
+    def close(self) -> None:
+        """Closes the underlying HTTP client session connection pool."""
+        self.client.close()
 
     def get_feed_tags(self, feed_id: str) -> list[Tag] | None:
         """Fetches tags for a given feed_id from the feeds API.
@@ -32,20 +32,10 @@ class FeedsClient:
             A list of Tag objects if successful, otherwise None.
         """
         url = f"{self.base_url}/v1/feeds/{feed_id}"
-        headers = {}
-
-        traceparent = get_current_traceparent()
-        if traceparent:
-            headers["traceparent"] = traceparent
-
-        if env.is_gcp_env():
-            token = auth_client.get_id_token(self.base_url)
-            headers["Authorization"] = f"Bearer {token}"
 
         try:
-            response = self.session.get(url, headers=headers, timeout=5)
-            response.raise_for_status()
-        except requests.exceptions.RequestException:
+            response = authenticated_get(self.client, self.base_url, url)
+        except httpx.HTTPError:
             logger.exception("Error fetching feed %s from feeds API", feed_id)
             return None
 
