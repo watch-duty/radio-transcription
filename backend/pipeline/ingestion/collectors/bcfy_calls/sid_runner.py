@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 _POLL_INTERVAL_SEC = 10.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _RECENT_URL_LIMIT = 1_000
+_QUARANTINE_OBSERVER_TIMEOUT_SEC = 2.0
 _MEMBERSHIP_INVALID = "bcfy_calls_sid_membership_invalid"
 _MEMBERSHIP_REFRESH_FAILED = "bcfy_calls_sid_membership_refresh_failed"
 _MIXED_FEED_FAILURES = "mixed_feed_failures"
@@ -60,6 +61,14 @@ _TRANSIENT_MEMBERSHIP_FAILURES = (
 type FailurePlanner = collections.abc.Callable[
     [feed_store.FeedStatusReason, str | None],
     failure_policy.FailurePersistencePlan,
+]
+type QuarantineObserver = collections.abc.Callable[
+    [
+        ingestion_lease_store.LeaseGrant,
+        ingestion_lease_store.LeaseMember,
+        failure_policy.FailurePersistencePlan,
+    ],
+    collections.abc.Awaitable[None],
 ]
 type _CommitResult = (
     ingestion_lease_store.BatchCommitted | ingestion_lease_store.GrantRejected
@@ -374,6 +383,7 @@ class BcfyCallsSidRunner:
         actor_id: str,
         poll_interval_sec: float = _POLL_INTERVAL_SEC,
         clock: collections.abc.Callable[[], datetime.datetime] | None = None,
+        on_quarantined: QuarantineObserver | None = None,
     ) -> None:
         if poll_interval_sec < 0:
             msg = "poll_interval_sec must be nonnegative"
@@ -385,6 +395,48 @@ class BcfyCallsSidRunner:
         self._actor_id = actor_id
         self._poll_interval_sec = poll_interval_sec
         self._clock = clock or (lambda: datetime.datetime.now(datetime.UTC))
+        self._on_quarantined = on_quarantined
+
+    async def _observe_quarantines(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        quarantined: collections.abc.Sequence[
+            tuple[
+                ingestion_lease_store.LeaseMember,
+                failure_policy.FailurePersistencePlan,
+            ]
+        ],
+    ) -> None:
+        """Bound all non-authoritative telemetry after durable quarantine."""
+        observer = self._on_quarantined
+        if observer is None or not quarantined:
+            return
+
+        async def observe_all() -> None:
+            for member, plan in quarantined:
+                try:
+                    await observer(grant, member, plan)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Quarantine observer failed after SID child "
+                        "finalization"
+                    )
+
+        try:
+            await asyncio.wait_for(
+                observe_all(),
+                timeout=_QUARANTINE_OBSERVER_TIMEOUT_SEC,
+            )
+        except asyncio.CancelledError:
+            logger.warning(
+                "Quarantine observer cancelled after SID child finalization"
+            )
+        except TimeoutError:
+            logger.warning(
+                "Quarantine observer timed out after SID child finalization"
+            )
 
     async def run(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -474,6 +526,13 @@ class BcfyCallsSidRunner:
                     shutdown_event=context.stop_requested,
                 )
             except provider.TokenLoadStopped:
+                if context.grant_lost.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="grant_lost",
+                        error=None,
+                    )
+                    return grant_control.RunLost()
                 _log_poll_settled(
                     grant,
                     status="stopped",
@@ -546,6 +605,7 @@ class BcfyCallsSidRunner:
                     due_members,
                     page.calls,
                     states,
+                    grant_lost=context.grant_lost,
                 )
                 settlement = await self._work_pool.settle_batches(batches)
                 result_by_feed = {
@@ -557,14 +617,17 @@ class BcfyCallsSidRunner:
                     state.next_sequence = result.next_sequence
                     state.remember_urls(result.committed_urls)
 
-                rejected = any(
+                lost_authority = any(
                     isinstance(
                         result.terminal,
-                        ingestion_lease_store.GrantRejected,
+                        (
+                            ingestion_lease_store.GrantRejected,
+                            grant_control.RunLost,
+                        ),
                     )
                     for _batch, result in settlement.results
                 )
-                if rejected:
+                if lost_authority:
                     if settlement.failure is not None:
                         _raise_settlement_failure(
                             settlement.failure,
@@ -674,6 +737,8 @@ class BcfyCallsSidRunner:
         members: collections.abc.Sequence[ingestion_lease_store.LeaseMember],
         raw_calls: collections.abc.Sequence[object],
         states: dict[uuid.UUID, _FeedState],
+        *,
+        grant_lost: asyncio.Event,
     ) -> tuple[pipeline.FeedBatch, ...]:
         by_source_feed_id = {
             member.identity.source_feed_id: member for member in members
@@ -762,11 +827,12 @@ class BcfyCallsSidRunner:
                     session_id=state.session_id,
                     starting_sequence=state.next_sequence,
                     calls=tuple(calls),
+                    grant_lost=grant_lost,
                 )
             )
         return tuple(batches)
 
-    async def _commit_page(
+    async def _commit_page(  # noqa: PLR0912
         self,
         grant: ingestion_lease_store.LeaseGrant,
         due_members: collections.abc.Sequence[
@@ -818,6 +884,9 @@ class BcfyCallsSidRunner:
             uuid.UUID,
             failure_policy.FailurePersistencePlan,
         ] = {}
+        members_by_feed_id = {
+            member.identity.feed_id: member for member in due_members
+        }
         for member in due_members:
             feed_id = member.identity.feed_id
             result = results.get(feed_id)
@@ -853,6 +922,8 @@ class BcfyCallsSidRunner:
                         completion_cursor=None,
                     )
                 )
+                continue
+            if terminal is not None:
                 continue
             observation = boundary
             if member.last_bookmark_time is None:
@@ -897,6 +968,15 @@ class BcfyCallsSidRunner:
             settlement.result,
         )
         if isinstance(committed, ingestion_lease_store.BatchCommitted):
+            quarantined_disposition = (
+                ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED
+            )
+            quarantined: list[
+                tuple[
+                    ingestion_lease_store.LeaseMember,
+                    failure_policy.FailurePersistencePlan,
+                ]
+            ] = []
             for child in committed.children:
                 plan = failure_plans.get(child.feed_id)
                 if (
@@ -910,6 +990,12 @@ class BcfyCallsSidRunner:
                         source_type=grant.source_type,
                         plan=plan,
                     )
+                    if child.disposition is quarantined_disposition:
+                        quarantined.append(
+                            (members_by_feed_id[child.feed_id], plan)
+                        )
+            if quarantined:
+                await self._observe_quarantines(grant, quarantined)
         return (committed, settlement.cancellation)
 
     async def _finish_poll_wait(

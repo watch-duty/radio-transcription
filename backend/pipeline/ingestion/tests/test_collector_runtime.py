@@ -28,7 +28,7 @@ from backend.pipeline.ingestion.models import (
     FeedFailure,
     SourceObservation,
 )
-from backend.pipeline.storage import feed_store
+from backend.pipeline.storage import feed_store, ingestion_lease_store
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -202,6 +202,7 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
         collector_runtime.CollectorRuntime,
         mock.AsyncMock,
         mock.MagicMock,
+        mock.MagicMock,
     ]:
         runtime = _runtime(mode)
         runtime._data_pool = mock.MagicMock()
@@ -235,16 +236,21 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
                 collector_runtime.bcfy_calls_sid_runner,
                 "BcfyCallsSidRunner",
                 return_value=mock.MagicMock(),
-            ),
+            ) as runner_constructor,
         ):
             await runtime._compose_supervisor()
 
         pool.start.assert_awaited_once_with()
         pool_constructor.assert_called_once()
-        return runtime, pool, supervisor_constructor
+        return runtime, pool, supervisor_constructor, runner_constructor
 
     async def test_composes_feed_and_sid_into_one_supervisor(self) -> None:
-        runtime, pool, supervisor_constructor = await self._compose(
+        (
+            runtime,
+            pool,
+            supervisor_constructor,
+            runner_constructor,
+        ) = await self._compose(
             worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
         )
 
@@ -269,6 +275,10 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
                 None,
             ),
             18.0,
+        )
+        self.assertEqual(
+            runner_constructor.call_args.kwargs["on_quarantined"],
+            runtime._emit_sid_feed_quarantine,
         )
 
     async def test_failed_work_pool_start_is_not_published_for_shutdown(
@@ -993,6 +1003,54 @@ class TestAcceptedOperationSettlement(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestQuarantineTelemetry(unittest.IsolatedAsyncioTestCase):
+    """Durable SID child quarantine emits existing Feed telemetry."""
+
+    async def test_sid_child_quarantine_uses_child_identity(self) -> None:
+        runtime = _runtime()
+        grant = ingestion_lease_store.LeaseGrant(
+            feed_store.SourceType.BCFY_CALLS,
+            "7017",
+            _WORKER_ID,
+            8,
+        )
+        member = ingestion_lease_store.LeaseMember(
+            ingestion_lease_store.LeaseMemberIdentity(
+                _FEED_ID,
+                feed_store.SourceType.BCFY_CALLS,
+                "7017-100",
+            ),
+            "Dispatch",
+            None,
+            None,
+        )
+        decision = runtime._plan_failure(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "invalid child configuration",
+        )
+
+        with mock.patch.object(
+            collector_runtime.quarantine_telemetry,
+            "emit_quarantine_event",
+            new_callable=mock.AsyncMock,
+        ) as emit:
+            await runtime._emit_sid_feed_quarantine(
+                grant,
+                member,
+                decision,
+            )
+
+        emit.assert_awaited_once_with(
+            feed_id=str(_FEED_ID),
+            feed_name="Dispatch",
+            source_type=feed_store.SourceType.BCFY_CALLS.value,
+            reason="invalid child configuration",
+            status_reason=(
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
+            ),
+        )
+
+
 class TestFailurePolicy(unittest.TestCase):
     """Feed and SID failures use the same budget classification."""
 
@@ -1032,9 +1090,11 @@ class TestShutdown(unittest.IsolatedAsyncioTestCase):
         runtime._work_pool = mock.AsyncMock()
         runtime._work_pool.close.side_effect = lambda: order.append("pool")
         runtime._pubsub_client = mock.AsyncMock()
-        runtime._pubsub_client.close.side_effect = lambda: order.append(
-            "pubsub"
-        )
+
+        def close_pubsub() -> None:
+            order.append("pubsub")
+
+        runtime._pubsub_client.close.side_effect = close_pubsub
         runtime._gcs_client = mock.AsyncMock()
         runtime._gcs_client.close.side_effect = lambda: order.append("gcs")
         runtime._http_session = mock.AsyncMock()

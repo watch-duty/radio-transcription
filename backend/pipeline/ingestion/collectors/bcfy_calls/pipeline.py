@@ -14,6 +14,7 @@ from backend.pipeline.ingestion import (
     audio_pipeline,
     grant_control,
     models,
+    retry,
     settings,
 )
 from backend.pipeline.ingestion.collectors import failure_classification
@@ -62,6 +63,7 @@ class FeedBatch:
         session_id: Stable logical session for this Feed and SID grant.
         starting_sequence: First create-only GCS sequence for this batch.
         calls: Provider calls in execution order.
+        grant_lost: Exact parent authority-loss signal for pre-bookmark work.
     """
 
     grant: ingestion_lease_contracts.LeaseGrant
@@ -69,6 +71,7 @@ class FeedBatch:
     session_id: str
     starting_sequence: int
     calls: tuple[CallWork, ...]
+    grant_lost: asyncio.Event
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -90,6 +93,7 @@ class FeedBatchResult:
     terminal: (
         failure_classification.ItemFailure
         | ingestion_lease_contracts.GrantRejected
+        | grant_control.RunLost
         | None
     )
 
@@ -135,7 +139,10 @@ class BcfyCallsFeedBatchExecutor:
         self._topic_path = topic_path
         self._actor_id = actor_id
 
-    async def execute(self, batch: FeedBatch) -> FeedBatchResult:
+    async def execute(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        batch: FeedBatch,
+    ) -> FeedBatchResult:
         """Execute one Feed batch in call order."""
         outcome = failure_classification.ItemBatchOutcome()
         published_count = 0
@@ -145,20 +152,44 @@ class BcfyCallsFeedBatchExecutor:
         feed = _leased_feed(batch)
 
         for call in batch.calls:
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             outcome.record_attempt()
             sequence = next_sequence
             next_sequence += 1
 
-            chunk_result = await (
-                bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
-            )(
-                dict(call.payload),
-                call.audio_url,
-                no_stop,
-                batch.session_id,
-                datetime.datetime.now(datetime.UTC),
-                self._calls_provider,
-            )
+            try:
+                chunk_result = await (
+                    bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
+                )(
+                    dict(call.payload),
+                    call.audio_url,
+                    batch.grant_lost,
+                    batch.session_id,
+                    datetime.datetime.now(datetime.UTC),
+                    self._calls_provider,
+                )
+            except asyncio.CancelledError:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
+                raise
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             if chunk_result.failure is not None:
                 logger.error(
                     "Broadcastify Calls item failed for %s: %s",
@@ -178,11 +209,33 @@ class BcfyCallsFeedBatchExecutor:
                     chunk,
                     sequence,
                     batch.grant.fencing_token,
+                    batch.grant_lost,
                     no_stop,
                 )
+            except retry.LeaseExpiredError:
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             except asyncio.CancelledError:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
                 raise
             except Exception:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
                 logger.exception(
                     "GCS upload failed for Broadcastify Calls item %s",
                     call.audio_url,
@@ -196,6 +249,13 @@ class BcfyCallsFeedBatchExecutor:
                         feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                         _GCS_UPLOAD_FAILED,
                     ),
+                )
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
                 )
 
             commit_result = await self._commit_progress(
@@ -278,6 +338,7 @@ class BcfyCallsFeedBatchExecutor:
         chunk: models.CapturedChunk,
         sequence: int,
         fencing_token: int,
+        grant_lost: asyncio.Event,
         no_stop: asyncio.Event,
     ) -> str:
         extension, content_type = audio_pipeline.staging_parameters(
@@ -293,7 +354,7 @@ class BcfyCallsFeedBatchExecutor:
             fencing_token=fencing_token,
             extension=extension,
             content_type=content_type,
-            lease_lost=no_stop,
+            lease_lost=grant_lost,
             shutdown=no_stop,
         )
 
@@ -374,6 +435,7 @@ class BcfyCallsFeedBatchExecutor:
         terminal: (
             failure_classification.ItemFailure
             | ingestion_lease_contracts.GrantRejected
+            | grant_control.RunLost
             | None
         ),
     ) -> FeedBatchResult:
@@ -383,4 +445,20 @@ class BcfyCallsFeedBatchExecutor:
             next_sequence=next_sequence,
             committed_urls=tuple(committed_urls),
             terminal=terminal,
+        )
+
+    def _lost_authority_result(
+        self,
+        outcome: failure_classification.ItemBatchOutcome,
+        published_count: int,
+        next_sequence: int,
+        committed_urls: list[str],
+    ) -> FeedBatchResult:
+        """Return definitive pre-bookmark authority-loss evidence."""
+        return self._result(
+            outcome,
+            published_count,
+            next_sequence,
+            committed_urls,
+            grant_control.RunLost(),
         )

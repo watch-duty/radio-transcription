@@ -508,7 +508,9 @@ class IngestionLeaseStore:
             One typed result per input grant in the original caller order.
 
         Raises:
-            ValueError: The input repeats a permanent Lease identity.
+            TypeError: A returned row contains an invalid runtime type.
+            ValueError: The input repeats a permanent Lease identity or
+                returned rows are malformed or miscorrelated.
             RuntimeError: An exact active row unexpectedly was not updated.
         """
         grants = tuple(grants)
@@ -539,11 +541,41 @@ class IngestionLeaseStore:
             [ordinal for ordinal, _ in ordered],
             timeout_sec=self._heartbeat_timeout_sec,
         )
-        rows_by_ordinal = {row["caller_ordinal"]: row for row in rows}
+        expected_by_ordinal = dict(enumerate(grants))
+        rows_by_ordinal: dict[
+            int,
+            collections.abc.Mapping[str, object],
+        ] = {}
+        for row in rows:
+            try:
+                caller_ordinal = row["caller_ordinal"]
+                returned_source_type = row["source_type"]
+                returned_lease_key = row["lease_key"]
+            except (KeyError, TypeError) as error:
+                msg = "Lease heartbeat returned a malformed row"
+                raise ValueError(msg) from error
+            if (
+                isinstance(caller_ordinal, bool)
+                or not isinstance(caller_ordinal, int)
+                or caller_ordinal not in expected_by_ordinal
+                or caller_ordinal in rows_by_ordinal
+                or returned_source_type
+                != expected_by_ordinal[caller_ordinal].source_type.value
+                or returned_lease_key
+                != expected_by_ordinal[caller_ordinal].lease_key
+            ):
+                msg = "Lease heartbeat returned an unexpected or duplicate row"
+                raise ValueError(msg)
+            rows_by_ordinal[caller_ordinal] = row
+
+        if set(rows_by_ordinal) != set(expected_by_ordinal):
+            msg = "Lease heartbeat did not return every caller input"
+            raise ValueError(msg)
+
         return tuple(
             self._heartbeat_result(
                 grant,
-                rows_by_ordinal.get(ordinal),
+                rows_by_ordinal[ordinal],
             )
             for ordinal, grant in enumerate(grants)
         )
@@ -551,15 +583,34 @@ class IngestionLeaseStore:
     def _heartbeat_result(
         self,
         grant: LeaseGrant,
-        row: collections.abc.Mapping | None,
+        row: collections.abc.Mapping[str, object],
     ) -> LeaseHeartbeatResult:
-        if row is None or row["status"] is None:
+        required_fields = (
+            "status",
+            "worker_id",
+            "fencing_token",
+            "applied",
+        )
+        if any(field not in row for field in required_fields):
+            msg = "Lease heartbeat row is missing required state fields"
+            raise ValueError(msg)
+        applied = row["applied"]
+        if not isinstance(applied, bool):
+            msg = "Lease heartbeat row contains an invalid applied marker"
+            raise TypeError(msg)
+        if row["status"] is None:
+            if applied or any(
+                row[field] is not None
+                for field in ("worker_id", "fencing_token")
+            ):
+                msg = "missing Lease heartbeat row contains current state"
+                raise ValueError(msg)
             return LeaseHeartbeatResult(
                 grant,
                 LeaseOperationDisposition.MISSING,
             )
         rejection_reason = self._grant_rejection_reason(grant, row)
-        if row["applied"]:
+        if applied:
             if rejection_reason is not None:
                 msg = "heartbeat updated a mismatched Lease grant"
                 raise RuntimeError(msg)

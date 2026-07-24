@@ -986,6 +986,7 @@ async def test_routes_due_members_and_adopts_null_cursor_at_live_edge(
     assert isinstance(outcome, grant_control.RunCompleted)
     assert calls_provider.positions == [due.last_bookmark_time]
     assert [batch.member for batch in pool.batches] == [due]
+    assert pool.batches[0].grant_lost is context.grant_lost
     assert len(pool.batches[0].calls) == 1
     assert len(store.batches) == 1
     committed_ids = {
@@ -1206,6 +1207,59 @@ async def test_metadata_fetch_uses_supervisor_stop_event(
     ]
     assert len(settled) == 1
     assert getattr(settled[0], "json_fields", {}).get("status") == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_token_load_stop_preserves_confirmed_grant_loss(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(seconds=30),
+    )
+    context = _context()
+
+    class LostTokenProvider:
+        async def fetch_sid_page(
+            self,
+            sid: str,
+            pos: datetime.datetime | None,
+            *,
+            shutdown_event: asyncio.Event,
+        ) -> provider.CallsPageEnvelope:
+            del sid, pos
+            assert shutdown_event is context.stop_requested
+            context.grant_lost.set()
+            context.stop_requested.set()
+            raise provider.TokenLoadStopped
+
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        LostTokenProvider(),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with caplog.at_level(logging.INFO, sid_runner.__name__):
+        outcome = await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert isinstance(outcome, grant_control.RunLost)
+    settled = [
+        record
+        for record in caplog.records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == "bcfy_calls_sid_poll_settled"
+    ]
+    assert len(settled) == 1
+    assert getattr(settled[0], "json_fields", {}).get("status") == "grant_lost"
 
 
 @pytest.mark.asyncio
@@ -2023,6 +2077,74 @@ async def test_committed_publish_gap_emits_runtime_telemetry(
         assert record["source_type"] == feed_store.SourceType.BCFY_CALLS.value
         assert record["replay_missing"] is True
         assert record["data_gap_known"] is True
+
+
+@pytest.mark.asyncio
+async def test_durable_child_quarantine_invokes_observer() -> None:
+    grant = _grant()
+    member = _member("100", bookmark=_NOW - datetime.timedelta(minutes=1))
+
+    class QuarantiningStore(_Store):
+        async def commit_child_mutations(
+            self,
+            grant: ingestion_lease_store.LeaseGrant,
+            batch: ingestion_lease_store.ChildMutationBatch,
+            *,
+            actor_id: str,
+        ) -> ingestion_lease_store.BatchCommitted:
+            assert grant == self.snapshot.grant
+            assert actor_id == "test"
+            self.batches.append(batch)
+            return ingestion_lease_store.BatchCommitted(
+                (
+                    ingestion_lease_store.ChildMutationResult(
+                        member.identity.feed_id,
+                        ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED,
+                    ),
+                )
+            )
+
+    failure = failure_classification.ItemFailure(
+        feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        "invalid child configuration",
+    )
+    result = pipeline.FeedBatchResult(
+        attempted_count=1,
+        published_count=0,
+        next_sequence=1,
+        committed_urls=(),
+        terminal=failure,
+    )
+    observer = mock.AsyncMock()
+    runner = sid_runner.BcfyCallsSidRunner(
+        QuarantiningStore(_snapshot(grant, member)),
+        mock.MagicMock(),
+        mock.MagicMock(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+        on_quarantined=observer,
+    )
+
+    committed, cancellation = await runner._commit_page(
+        grant,
+        (member,),
+        frozenset((member.identity.feed_id,)),
+        {member.identity.feed_id: result},
+        _NOW,
+        _NOW,
+        complete=True,
+        promoted=None,
+    )
+
+    assert isinstance(committed, ingestion_lease_store.BatchCommitted)
+    assert cancellation is None
+    observer.assert_awaited_once_with(
+        grant,
+        member,
+        _failure_planner(failure.status_reason, failure.reason),
+    )
 
 
 @pytest.mark.asyncio

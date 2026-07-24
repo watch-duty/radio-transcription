@@ -71,6 +71,21 @@ def _load_bcfy_calls_authority_mode() -> worker_profiles.BcfyCallsAuthorityMode:
         raise ValueError(msg) from error
 
 
+def _load_max_sids_per_worker() -> int:
+    """Load the process-wide SID ownership ceiling."""
+    return int(os.environ.get("MAX_SIDS_PER_WORKER", "32"))
+
+
+def _load_sid_lease_admission_cycle_budget() -> int:
+    """Load the per-cycle SID claim budget."""
+    return int(os.environ.get("SID_LEASE_ADMISSION_CYCLE_BUDGET", "2"))
+
+
+def _load_bcfy_calls_work_concurrency() -> int:
+    """Load the process-wide Calls physical-work concurrency."""
+    return int(os.environ.get("BCFY_CALLS_WORK_CONCURRENCY", "16"))
+
+
 @dataclass(frozen=True, kw_only=True)
 class CollectorSettings:
     """
@@ -112,19 +127,13 @@ class CollectorSettings:
         ),
     )
     max_sids_per_worker: int = field(
-        default_factory=lambda: int(
-            os.environ.get("MAX_SIDS_PER_WORKER", "32"),
-        ),
+        default_factory=_load_max_sids_per_worker,
     )
     sid_lease_admission_cycle_budget: int = field(
-        default_factory=lambda: int(
-            os.environ.get("SID_LEASE_ADMISSION_CYCLE_BUDGET", "2"),
-        ),
+        default_factory=_load_sid_lease_admission_cycle_budget,
     )
     bcfy_calls_work_concurrency: int = field(
-        default_factory=lambda: int(
-            os.environ.get("BCFY_CALLS_WORK_CONCURRENCY", "16"),
-        ),
+        default_factory=_load_bcfy_calls_work_concurrency,
     )
     startup_stagger_max_sec: float = field(
         default_factory=lambda: float(

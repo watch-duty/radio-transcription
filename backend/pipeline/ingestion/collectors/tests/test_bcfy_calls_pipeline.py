@@ -70,13 +70,17 @@ def _chunk(index: int) -> models.CapturedChunk:
     )
 
 
-def _batch(*works: pipeline.CallWork) -> pipeline.FeedBatch:
+def _batch(
+    *works: pipeline.CallWork,
+    grant_lost: asyncio.Event | None = None,
+) -> pipeline.FeedBatch:
     return pipeline.FeedBatch(
         grant=_grant(),
         member=_member(),
         session_id="session-1",
         starting_sequence=10,
         calls=tuple(works),
+        grant_lost=grant_lost or asyncio.Event(),
     )
 
 
@@ -349,6 +353,62 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 "gcs_upload_failed",
             ),
         )
+
+    @mock.patch.object(
+        bcfy_calls_collector,
+        "_create_chunk_from_call",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch.object(
+        pipeline.gcp_helper,
+        "upload_staged_audio",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_confirmed_loss_stops_before_prebookmark_work(
+        self,
+        upload: mock.AsyncMock,
+        create_chunk: mock.AsyncMock,
+    ) -> None:
+        grant_lost = asyncio.Event()
+        grant_lost.set()
+
+        result = await _executor(_Store()).execute(
+            _batch(_work(0), grant_lost=grant_lost)
+        )
+
+        self.assertEqual(result.attempted_count, 0)
+        self.assertIsInstance(result.terminal, grant_control.RunLost)
+        create_chunk.assert_not_awaited()
+        upload.assert_not_awaited()
+
+    @mock.patch.object(
+        bcfy_calls_collector,
+        "_create_chunk_from_call",
+        new_callable=mock.AsyncMock,
+        return_value=bcfy_calls_collector._CallChunkResult(chunk=_chunk(0)),
+    )
+    async def test_loss_during_upload_is_authority_loss(
+        self,
+        _create_chunk: mock.AsyncMock,
+    ) -> None:
+        grant_lost = asyncio.Event()
+
+        async def lose_authority(*_args: object) -> str:
+            grant_lost.set()
+            message = "gcs unavailable after grant loss"
+            raise OSError(message)
+
+        with mock.patch.object(
+            pipeline.gcp_helper,
+            "upload_staged_audio",
+            side_effect=lose_authority,
+        ):
+            result = await _executor(_Store()).execute(
+                _batch(_work(0), grant_lost=grant_lost)
+            )
+
+        self.assertEqual(result.attempted_count, 1)
+        self.assertIsInstance(result.terminal, grant_control.RunLost)
 
     @mock.patch.object(
         bcfy_calls_collector,

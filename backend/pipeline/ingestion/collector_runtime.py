@@ -239,6 +239,11 @@ def _non_budgeted_retry_after() -> datetime.datetime:
     )
 
 
+def _retry_without_failure_budget() -> failure_policy.RetryWithoutBudget:
+    """Return one non-budgeted retry treatment at a jittered time."""
+    return failure_policy.RetryWithoutBudget(_non_budgeted_retry_after())
+
+
 def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
     """Return whether a leased Feed carries durable failure evidence.
 
@@ -472,6 +477,22 @@ class CollectorRuntime:
             status_reason=decision.status_reason.value,
         )
 
+    async def _emit_sid_feed_quarantine(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        member: ingestion_lease_store.LeaseMember,
+        decision: failure_policy.FailurePersistencePlan,
+    ) -> None:
+        """Emit observational telemetry after durable SID child quarantine."""
+        del grant
+        await quarantine_telemetry.emit_quarantine_event(
+            feed_id=str(member.identity.feed_id),
+            feed_name=member.name,
+            source_type=member.identity.source_type.value,
+            reason=decision.reason or decision.status_reason.value,
+            status_reason=decision.status_reason.value,
+        )
+
     async def _compose_supervisor(self) -> None:
         """Create selected controls, runners, and the sole supervisor.
 
@@ -570,6 +591,7 @@ class CollectorRuntime:
                 work_pool,
                 self._plan_failure,
                 actor_id=self._runtime_actor_id,
+                on_quarantined=self._emit_sid_feed_quarantine,
             )
             control = sid_grant_control.SidGrantControl(
                 self._sid_data_store,
@@ -778,9 +800,7 @@ class CollectorRuntime:
             status_reason,
             reason,
             budgeted=self._failure_budget,
-            non_budgeted=lambda: failure_policy.RetryWithoutBudget(
-                _non_budgeted_retry_after()
-            ),
+            non_budgeted=_retry_without_failure_budget,
         )
 
     def _plan_terminal_failure(
@@ -1295,13 +1315,11 @@ class CollectorRuntime:
         if supervisor is None:
             msg = "supervisor is not initialized"
             raise RuntimeError(msg)
-        await supervisor.heartbeat_cycle(
-            lambda: setattr(
-                self._health_state,
-                "last_heartbeat_tick",
-                time.monotonic(),
-            )
-        )
+
+        def observe_heartbeat() -> None:
+            self._health_state.last_heartbeat_tick = time.monotonic()
+
+        await supervisor.heartbeat_cycle(observe_heartbeat)
 
     async def _stop_heartbeat_supervision(self) -> None:
         """Stop and join the heartbeat OS thread.
