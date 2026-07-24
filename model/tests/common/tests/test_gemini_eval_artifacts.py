@@ -182,7 +182,10 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
             ]
             for split in ("train", "eval")
         }
-        schedules: dict[str, list[context.CausalScheduleRow]] = {}
+        schedules: dict[
+            str,
+            tuple[context.RollingHistoryScheduleRow, ...],
+        ] = {}
         for split, source_rows in source_rows_by_split.items():
             _, canonical_rows = sft_artifacts.canonical_rows_from_entries(
                 source_rows,
