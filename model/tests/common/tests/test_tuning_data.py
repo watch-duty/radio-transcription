@@ -87,8 +87,8 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="sys",
             user_prompt=user_prompt,
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.TrainingReferenceTurn("first"),
+                context.TrainingReferenceTurn("second"),
             ],
         )
 
@@ -126,8 +126,8 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="sys",
             user_prompt="current prompt",
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.TrainingReferenceTurn("first"),
+                context.TrainingReferenceTurn("second"),
             ],
             history_mode="transcript",
         )
@@ -154,12 +154,8 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="sys",
             user_prompt="IMPORTANT: current prompt",
             history=[
-                context.ContextTurn(
-                    "gs://bucket/prev-1.flac", " first   transcript "
-                ),
-                context.ContextTurn(
-                    "gs://bucket/prev-2.flac", "second transcript"
-                ),
+                context.TrainingReferenceTurn(" first   transcript "),
+                context.TrainingReferenceTurn("second transcript"),
             ],
             history_mode="guarded_transcript_block",
         )
@@ -223,8 +219,8 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="sys",
             user_prompt=user_prompt,
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.TrainingReferenceTurn("first"),
+                context.TrainingReferenceTurn("second"),
             ],
             history_mode="text_turns",
         )
@@ -340,7 +336,7 @@ class TestValidateExample(unittest.TestCase):
             "current",
             "sys",
             "user",
-            history=[context.ContextTurn("gs://b/prior.flac", "prior")],
+            history=[context.TrainingReferenceTurn("prior")],
             history_mode="text_turns",
         )
 
@@ -352,7 +348,7 @@ class TestValidateExample(unittest.TestCase):
             "   ",
             "sys",
             "user",
-            history=[context.ContextTurn("gs://b/prior.flac", "prior")],
+            history=[context.TrainingReferenceTurn("prior")],
             history_mode="text_turns",
         )
 
