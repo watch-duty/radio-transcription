@@ -203,3 +203,49 @@ causal.
   the local marker, and has SHA-256
   `0391d662b9742e328156ce2eeec1c53482d13c74b479f8a813bf52d2f52d5ee8`.
 - No provider inference, tuning submission, or SFT run occurred.
+
+## 2026-07-24 — H07 post-publication incident evidence
+
+- Recorded the user-supplied full-cohort prompt rerun: 1,642/1,934 selected
+  tuned-empty/foundation-nonempty segments produced a non-empty tuned response
+  under the training-aligned prompt; 292 remained empty. This establishes a
+  high-impact prompt-contract problem for that selected cohort, but does not
+  establish transcript correctness.
+- Verified that the current build independently loads the backend production
+  prompt and model/SFT prompt, fails on any string difference, and writes the
+  identical prompt into training and validation requests. The frozen prompt
+  SHA-256 is
+  `c806d02e134d47aa6c90284ed2544507ab0895c804c7cac004510d08c748cc17`;
+  the audio-only request-schema SHA-256 is
+  `df148bc8c710b2c5ea56e3093410f6b746980e937875377610a640623be9e856`.
+- The exact prompt bytes/digest used in the 84.9% rerun were not included in
+  the supplied summary. The latest completed SFT freezes a different prompt,
+  SHA-256
+  `3fa0b4d3cab803e715abbc0e6ff310e776a317d807fc1df871a77771ffdfb23a`.
+  Kept the empirical result separate from both repository-verified prompt
+  identities and from deployment state.
+- Recorded the user-supplied residual characterization: blind listening
+  contradicted the proposed buzzy/vocoded/muffled causal signature; residual
+  failures were associated with shorter duration, lower level, and lower
+  internal SNR, with only modest individual discrimination and no established
+  causal intervention. Made no geometry, membership, or waveform-treatment
+  change.
+- Recomputed the final unique training mix from the emitted canonical
+  manifest. BCFY Calls contributes 1,179/33,780 requests (3.490%),
+  2,914/50,586 protected Speech owners (5.760%), 16,926/302,955 words
+  (5.587%), and 10,243.915/145,735.521 seconds (7.029%).
+- Recomputed the completed SFT's final canonical manifest rather than treating
+  the 830 original `calls_train` inputs as its final family count. Assembly
+  contains 839/49,632 BCFY Calls-family rows (1.690%), 4,519/296,039 words
+  (1.527%), and 1,790.761/106,014.672 seconds (1.689%).
+- Distinguished the reported 20.7-fold old-training-row/recovered-cohort
+  composition gap from exposure-adjusted enrichment. The frozen
+  current-metadata sensitivity mapping assigns 90,117/629,374 production
+  candidates (14.319%) to BCFY Calls, while the recovered cohort contains
+  669/1,934 (34.592%), a 2.42-fold composition enrichment. Neither ratio is an
+  automatic SFT sampling multiplier.
+- Kept the create-only GCS dataset immutable. A future repeated/weighted SFT
+  rendering, if selected, must be a separate hash-bound manifest over the same
+  unique training census. The family distribution of the 292 post-prompt
+  residuals is still required before treating the residual as a weighting
+  target.

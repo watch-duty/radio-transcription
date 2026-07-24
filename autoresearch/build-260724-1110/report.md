@@ -106,6 +106,92 @@ Each row records the encoded hash and size, decoded PCM hash, encoder profile
 and version, command digest, frozen encoder-contract digest, and—where
 applicable—the exact FFmpeg binary and deployed-image identities.
 
+## Post-publication incident findings
+
+The detailed evidence and decision record is
+[`additional-findings-20260724.md`](additional-findings-20260724.md).
+
+The user subsequently supplied results from a complete rerun of the 1,934
+production segments for which every observed tuned attempt had lacked an
+accepted transcript and a configured foundation fallback had produced a
+non-empty transcript. With the training-aligned prompt, 1,642/1,934 (84.9%)
+produced a non-empty tuned response; 292/1,934 (15.1%) remained empty. This is
+strong evidence that prompt skew was the dominant cause in that selected
+incident cohort. It is evidence about whether a transcript was produced, not
+about the transcript's WER.
+
+Prompt parity is therefore a launch contract, not a data-treatment heuristic.
+This build:
+
+- loads the production backend prompt and the model/SFT prompt independently
+  and aborts unless their text is exactly equal;
+- uses that same text in every training and provider-validation example;
+- freezes system-prompt SHA-256
+  `c806d02e134d47aa6c90284ed2544507ab0895c804c7cac004510d08c748cc17`
+  and audio-only request-schema SHA-256
+  `df148bc8c710b2c5ea56e3093410f6b746980e937875377610a640623be9e856`.
+
+The repository prompt-parity guard was merged in
+[PR #1094](https://github.com/watch-duty/radio-transcription/pull/1094).
+The latest completed SFT froze a different system prompt, SHA-256
+`3fa0b4d3cab803e715abbc0e6ff310e776a317d807fc1df871a77771ffdfb23a`.
+That is the repository-frozen meaning of “training-aligned” for the completed
+model; the current next-round prompt is a third, later contract. The rerun's
+exact prompt bytes or digest were not supplied with the incident summary, so
+the 84.9% result must not be attributed specifically to either digest without
+that final comparison. It demonstrates the importance of alignment, not the
+performance of the new prompt. Repository/build parity also does not, by
+itself, prove which revision is deployed. The deployment and every eval request
+must bind the same prompt and request-contract digests before SFT results are
+interpreted.
+
+The user also reported that blind listening contradicted the proposed
+digital-radio distortion signature: it was more common among rerun successes.
+The 292 residual failures were statistically shorter, quieter, and lower in
+internal SNR than successes, but the individual predictive discrimination was
+only about 0.65–0.71 and causality was not established. Those associations
+therefore do not justify trimming, padding, gain changes, membership changes,
+or outcome-informed boundaries. They remain post-freeze evaluation strata.
+
+### BCFY Calls representation
+
+The previous run's frozen inventory contains 830 original `calls_train` input
+rows. After corrections and composite assembly, its final canonical manifest
+contains 839 BCFY Calls-family rows among 49,632 rows (1.690%), 4,519/296,039
+target words (1.527%), and 1,790.761/106,014.672 seconds (1.689%). The
+reconstructed unique training dataset contains:
+
+| BCFY Calls measure | Count | Share of reconstructed training |
+|---|---:|---:|
+| Requests | 1,179 | 3.490% |
+| Protected Speech owners | 2,914 | 5.760% |
+| Target words | 16,926 | 5.587% |
+| Audio duration | 10,243.915 s | 7.029% |
+
+BCFY Calls supplied 669/1,934 (34.592%) of the pre-fix recovered-failure
+cohort. Comparing 34.592% with the original-input proxy of 830/49,632 (1.672%)
+yields the reported 20.7-fold composition gap. The apples-to-apples comparison
+with the final 839-row family share is 20.46-fold. Neither is a calibrated
+failure risk or a justified sampling multiplier: both compare training rows
+with an outcome-selected cohort and include failures that the prompt
+correction removed.
+
+The most complete frozen production sensitivity mapping instead assigns
+90,117/629,374 candidate segments (14.319%) to BCFY Calls. Against that
+exposure, the recovered cohort is enriched by about 2.42-fold, not 20.7-fold.
+That mapping uses current metadata for 74,342 candidates whose event-time
+source was unresolved, so it is sensitivity evidence rather than an
+authoritative event-time mixture.
+
+The evidence supports treating BCFY Calls exposure as a high-priority SFT
+sampling decision, but it does not support making 34.592% the training target.
+The source breakdown of the 292 post-prompt residuals is needed before using
+that residual as a weighting target. The published unique owner census remains
+unchanged. If repeated examples are used for the one actual SFT input, that
+effective manifest must be an explicit, separately hash-bound rendering of
+this same training dataset; it must not silently alter the immutable published
+prefix or create a second semantic dataset.
+
 ## Short valid FLAC rejection finding
 
 The user supplied an eight-case audit where tuned and foundation endpoints both

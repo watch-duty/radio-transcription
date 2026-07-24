@@ -101,6 +101,32 @@ validated_hypotheses:
       completion_marker_generation: 1784935243692024
       completion_marker_sha256: 0391d662b9742e328156ce2eeec1c53482d13c74b479f8a813bf52d2f52d5ee8
       remote_universe_verified: true
+  - id: H07
+    statement: >-
+      Post-publication incident evidence makes exact prompt/request parity a
+      launch contract and BCFY Calls exposure a sampling decision, without
+      invalidating or mutating the outcome-blind reconstructed owner census.
+    evidence:
+      provenance: mixed-user-supplied-and-repository-verified
+      user_supplied_recoverable_cohort_count: 1934
+      user_supplied_training_aligned_prompt_nonempty_count: 1642
+      user_supplied_post_prompt_residual_count: 292
+      latest_completed_sft_system_prompt_sha256: 3fa0b4d3cab803e715abbc0e6ff310e776a317d807fc1df871a77771ffdfb23a
+      current_system_prompt_sha256: c806d02e134d47aa6c90284ed2544507ab0895c804c7cac004510d08c748cc17
+      current_audio_only_schema_sha256: df148bc8c710b2c5ea56e3093410f6b746980e937875377610a640623be9e856
+      latest_completed_sft_bcfy_calls_row_count: 839
+      latest_completed_sft_bcfy_calls_row_share_percent: 1.690442
+      reconstructed_bcfy_calls_request_count: 1179
+      reconstructed_bcfy_calls_request_share_percent: 3.490231
+      reconstructed_bcfy_calls_word_share_percent: 5.586968
+      reconstructed_bcfy_calls_duration_share_percent: 7.029113
+      recovered_cohort_bcfy_calls_count: 669
+      recovered_cohort_bcfy_calls_share_percent: 34.591520
+      production_sensitivity_bcfy_calls_candidate_count: 90117
+      production_sensitivity_candidate_count: 629374
+      production_sensitivity_bcfy_calls_share_percent: 14.318513
+      recovered_cohort_composition_enrichment_vs_production: 2.415860
+      immutable_publication_mutated: false
 rejected_hypotheses:
   - id: supplied-frame-zero-collapse
     reason: >-
