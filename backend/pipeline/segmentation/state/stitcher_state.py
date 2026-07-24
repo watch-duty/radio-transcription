@@ -194,9 +194,10 @@ class AudioStitchingStateMachine:
             else False,
             missing_post_context=missing_post_context if is_speech else False,
             start_audio_offset_ms=max(0, ctx.start_audio_offset_ms or 0),
-            end_audio_offset_ms=max(
-                0,
-                min(ctx.buffer_duration_ms, end_ms - ctx.buffer_start_time_ms),
+            end_audio_offset_ms=trans_utils.compute_end_audio_offset_ms(
+                padded_end_time_ms,
+                ctx.contributing_chunks,
+                ctx.buffer_start_time_ms,
             ),
             clear_state=True,
             isolated_audio_buffer=[],
