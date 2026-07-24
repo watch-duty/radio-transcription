@@ -362,6 +362,51 @@ def validate_evaluation_context_contract(
         TypeError: If the context count is not an integer.
         ValueError: If the count is negative or the mode is unsupported.
     """
+    _validate_prior_context_count(prior_context_count)
+    return validate_history_mode(history_mode)
+
+
+def resolve_evaluation_backend_for_context(
+    prior_context_count: int,
+    configured_backend: str | None,
+) -> str | None:
+    """Resolve any backend selection imposed by evaluation context.
+
+    Args:
+        prior_context_count: Maximum structural prediction-history window.
+        configured_backend: Already-parsed explicit backend, or ``None``.
+
+    Returns:
+        The configured backend for stateless evaluation, ``"online"`` for
+        positive context, or ``None`` when target shape must choose.
+
+    Raises:
+        TypeError: If the context count is not an integer.
+        ValueError: If the count is negative or positive context is combined
+            with explicit batch execution.
+    """
+    _validate_prior_context_count(prior_context_count)
+    if prior_context_count == 0:
+        return configured_backend
+    if configured_backend == "batch":
+        msg = (
+            "predicted-history evaluation requires the online backend; "
+            "batch cannot construct causal prior predictions"
+        )
+        raise ValueError(msg)
+    return "online"
+
+
+def _validate_prior_context_count(prior_context_count: int) -> None:
+    """Validate one structural prediction-history window size.
+
+    Args:
+        prior_context_count: Maximum structural prediction-history window.
+
+    Raises:
+        TypeError: If the context count is not an integer.
+        ValueError: If the context count is negative.
+    """
     if isinstance(prior_context_count, bool) or not isinstance(
         prior_context_count, int
     ):
@@ -370,7 +415,6 @@ def validate_evaluation_context_contract(
     if prior_context_count < 0:
         msg = "prior_context_count must be non-negative"
         raise ValueError(msg)
-    return validate_history_mode(history_mode)
 
 
 def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
