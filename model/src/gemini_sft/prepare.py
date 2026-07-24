@@ -17,7 +17,10 @@ from gemini_sft import preflight
 
 if typing.TYPE_CHECKING:
     import argparse
+    import collections.abc
     import pathlib
+
+    from common import manifest
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = artifacts_lib.DEFAULT_RESULTS_DIR
@@ -252,14 +255,62 @@ def _prepare_eval_artifacts(
         run_cfg.eval_manifest_uri,
         canonical_eval_path,
     )
-    _, eval_rows = artifacts_lib.load_canonical_rows(
+    eval_entries, eval_rows = artifacts_lib.load_canonical_rows(
         canonical_eval_path,
         "eval",
+    )
+    _validate_eval_context_plan(
+        eval_entries,
+        eval_rows,
+        max_turns=run_cfg.prior_context_count,
     )
     return artifacts_lib.PreparedEvalArtifacts(
         run_config_path=run_config_path,
         canonical_eval_path=canonical_eval_path,
         canonical_eval_rows=len(eval_rows),
+    )
+
+
+def _training_reference_histories(
+    source_rows: collections.abc.Sequence[dict[str, typing.Any]],
+    canonical_rows: collections.abc.Sequence[manifest.CanonicalRow],
+    *,
+    split: str,
+    max_turns: int,
+) -> list[list[context.TrainingReferenceTurn]]:
+    if max_turns == 0:
+        return [[] for _ in source_rows]
+    segments = artifacts_lib.causal_segments_from_rows(
+        source_rows,
+        canonical_rows,
+        split=split,
+    )
+    schedule = context.build_strict_causal_schedule(
+        segments,
+        max_turns=max_turns,
+    )
+    return context.build_training_reference_histories(
+        source_rows,
+        schedule=schedule,
+    )
+
+
+def _validate_eval_context_plan(
+    source_rows: collections.abc.Sequence[dict[str, typing.Any]],
+    canonical_rows: collections.abc.Sequence[manifest.CanonicalRow],
+    *,
+    max_turns: int,
+) -> None:
+    if max_turns == 0:
+        return
+    segments = artifacts_lib.causal_segments_from_rows(
+        source_rows,
+        canonical_rows,
+        split="eval",
+    )
+    context.build_strict_causal_schedule(
+        segments,
+        max_turns=max_turns,
     )
 
 
@@ -321,7 +372,7 @@ def prepare_artifacts(
     validation_entries, validation_rows = artifacts_lib.load_canonical_rows(
         canonical_validation_path, "validation"
     )
-    _, eval_rows = artifacts_lib.load_canonical_rows(
+    eval_entries, eval_rows = artifacts_lib.load_canonical_rows(
         canonical_eval_path,
         "eval",
     )
@@ -335,6 +386,24 @@ def prepare_artifacts(
     )
     artifacts_lib.reject_split_overlap("train", train_rows, "eval", eval_rows)
 
+    train_histories = _training_reference_histories(
+        train_entries,
+        train_rows,
+        split="train",
+        max_turns=run_cfg.prior_context_count,
+    )
+    validation_histories = _training_reference_histories(
+        validation_entries,
+        validation_rows,
+        split="validation",
+        max_turns=run_cfg.prior_context_count,
+    )
+    _validate_eval_context_plan(
+        eval_entries,
+        eval_rows,
+        max_turns=run_cfg.prior_context_count,
+    )
+
     gemini_train_path = model_inputs_dir / "train.jsonl"
     gemini_validation_path = model_inputs_dir / "validation.jsonl"
     # Only train/validation need Gemini SFT JSONL. Eval remains canonical here;
@@ -343,17 +412,17 @@ def prepare_artifacts(
     write_gemini_jsonl(
         train_entries,
         gemini_train_path,
+        histories=train_histories,
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
-        prior_context_count=run_cfg.prior_context_count,
         prior_context_mode=run_cfg.prior_context_mode,
     )
     write_gemini_jsonl(
         validation_entries,
         gemini_validation_path,
+        histories=validation_histories,
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
-        prior_context_count=run_cfg.prior_context_count,
         prior_context_mode=run_cfg.prior_context_mode,
     )
 
@@ -373,35 +442,43 @@ def prepare_artifacts(
 
 
 def write_gemini_jsonl(
-    rows: list[dict[str, typing.Any]],
+    rows: collections.abc.Sequence[dict[str, typing.Any]],
     path: pathlib.Path,
     *,
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.TrainingReferenceTurn]
+    ],
     system_prompt: str,
     user_prompt: str,
-    prior_context_count: int = 0,
     prior_context_mode: str = "text_turns",
 ) -> None:
-    """Write Gemini audio-SFT JSONL from canonical rows.
+    """Write Gemini audio-SFT JSONL from resolved training rows.
 
     Args:
         rows: Canonical manifest rows to convert in input order.
         path: Local JSONL destination path.
+        histories: Frozen reference histories aligned with ``rows``.
         system_prompt: System instruction included in every example.
         user_prompt: User instruction included in every current audio turn.
-        prior_context_count: Maximum prior same-source transcript turns.
         prior_context_mode: Context encoding mode used for each example.
 
     Raises:
         OSError: If the destination cannot be created or written.
-        ValueError: If context settings or a generated example are invalid.
+        ValueError: If rows and histories are misaligned or a generated
+            example is invalid.
     """
+    row_values = tuple(rows)
+    history_values = tuple(histories)
+    if len(row_values) != len(history_values):
+        msg = "training rows and histories must have equal lengths"
+        raise ValueError(msg)
     path.parent.mkdir(parents=True, exist_ok=True)
-    histories = context.build_training_reference_histories(
-        rows,
-        max_turns=prior_context_count,
-    )
-    with path.open("w", encoding="utf-8") as fh:
-        for row, history in zip(rows, histories, strict=True):
+    with path.open("w", encoding="utf-8") as handle:
+        for row, history in zip(
+            row_values,
+            history_values,
+            strict=True,
+        ):
             audio_uri = str(row.get("audio_filepath") or "")
             example = tuning_data.build_audio_tuning_example(
                 audio_uri=audio_uri,
@@ -414,7 +491,7 @@ def write_gemini_jsonl(
             if not tuning_data.validate_audio_tuning_example(example):
                 msg = f"invalid Gemini SFT example for {audio_uri}"
                 raise ValueError(msg)
-            fh.write(json.dumps(example) + "\n")
+            handle.write(json.dumps(example) + "\n")
 
 
 def upload_prepared_artifacts(
