@@ -500,6 +500,28 @@ class BcfyCallsSidRunner:
                 await self._finish_poll_wait(poll_started, context)
                 continue
             except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if task is None or task.cancelling() > 0:
+                    _log_poll_settled(
+                        grant,
+                        status="cancelled",
+                        error=None,
+                    )
+                    raise
+                if context.grant_lost.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="grant_lost",
+                        error=None,
+                    )
+                    return grant_control.RunLost()
+                if context.stop_requested.is_set():
+                    _log_poll_settled(
+                        grant,
+                        status="stopped",
+                        error=None,
+                    )
+                    return grant_control.RunCompleted()
                 _log_poll_settled(
                     grant,
                     status="cancelled",
@@ -554,13 +576,11 @@ class BcfyCallsSidRunner:
                 complete = settlement.failure is None and len(
                     settlement.results
                 ) == len(batches)
-                promoted = (
-                    _promoted_sid_failure(
+                promoted = None
+                if complete:
+                    promoted = _promoted_sid_failure(
                         tuple(result for _batch, result in settlement.results)
                     )
-                    if complete
-                    else None
-                )
 
                 boundary = _valid_page_boundary(
                     page.last_pos,
@@ -683,11 +703,9 @@ class BcfyCallsSidRunner:
                 bool,
             ):
                 source_feed_id = str(raw_source_feed_id)
-            member = (
-                by_source_feed_id.get(source_feed_id)
-                if source_feed_id is not None
-                else None
-            )
+            member = None
+            if source_feed_id is not None:
+                member = by_source_feed_id.get(source_feed_id)
             if member is None or member.identity.feed_id in adopting_ids:
                 continue
             audio_url = call.get("url")
@@ -836,11 +854,9 @@ class BcfyCallsSidRunner:
                     )
                 )
                 continue
-            observation = (
-                adoption_boundary
-                if member.last_bookmark_time is None
-                else boundary
-            )
+            observation = boundary
+            if member.last_bookmark_time is None:
+                observation = adoption_boundary
             mutations.append(
                 ingestion_lease_store.SourceObservation(
                     member.identity,
@@ -848,11 +864,10 @@ class BcfyCallsSidRunner:
                 )
             )
 
-        lease_effect: ingestion_lease_store.LeaseEffect = (
-            ingestion_lease_store.FinalizeLeaseRecovery()
-            if complete and promoted is None
-            else ingestion_lease_store.NoLeaseEffect()
-        )
+        lease_effect: ingestion_lease_store.LeaseEffect
+        lease_effect = ingestion_lease_store.NoLeaseEffect()
+        if complete and promoted is None:
+            lease_effect = ingestion_lease_store.FinalizeLeaseRecovery()
         if not mutations and isinstance(
             lease_effect,
             ingestion_lease_store.NoLeaseEffect,

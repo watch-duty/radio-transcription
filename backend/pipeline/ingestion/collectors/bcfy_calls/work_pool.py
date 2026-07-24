@@ -259,7 +259,15 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         self,
         batch: BatchT,
     ) -> _BatchAdmission[ResultT]:
-        """Resolve one queue admission without losing caller cancellation."""
+        """Resolve one queue admission without losing caller cancellation.
+
+        Args:
+            batch: Caller-ordered Feed batch to admit.
+
+        Returns:
+            Accepted completion evidence, admission failure, or deferred
+            caller cancellation.
+        """
         if not self._admission_open:
             message = "Broadcastify Calls work pool is not accepting work"
             return _BatchAdmission(None, RuntimeError(message), None)

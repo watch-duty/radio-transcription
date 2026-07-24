@@ -31,6 +31,7 @@ class HealthState:
     Attributes:
         active_feed_count: Process-local active Feed-grant count provider.
         active_sid_count: Process-local active SID-grant count provider.
+        integrity_failed: Process-local fatal supervisor signal provider.
         bcfy_calls_authority_mode: Selected process authority mode.
         startup_time: Monotonic process startup observation.
         last_heartbeat_tick: Latest monotonic heartbeat-dispatch observation.
@@ -38,6 +39,7 @@ class HealthState:
 
     active_feed_count: collections.abc.Callable[[], int]
     active_sid_count: collections.abc.Callable[[], int]
+    integrity_failed: collections.abc.Callable[[], bool]
     bcfy_calls_authority_mode: str
     startup_time: float = dataclasses.field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
@@ -87,6 +89,19 @@ async def _healthz(request: web.Request) -> web.Response:
     now = time.monotonic()
     uptime = now - state.startup_time
     hb = state.last_heartbeat_tick
+
+    # A fatal supervisor outcome takes precedence over startup grace and a
+    # fresh heartbeat dispatch. Admission can be blocked independently while
+    # an existing runner fails closed, so heartbeat freshness alone is not
+    # sufficient evidence that this process can still serve work.
+    if state.integrity_failed():
+        payload = _response_payload(
+            state,
+            status="unhealthy",
+            heartbeat_age_sec=(now - hb) if hb is not None else None,
+        )
+        payload["reason"] = "integrity_failure"
+        return web.json_response(payload, status=503)
 
     # Gate 0: Startup grace. Return 200 for the first
     # health_check_startup_grace_sec regardless of state. The MIG autohealer's

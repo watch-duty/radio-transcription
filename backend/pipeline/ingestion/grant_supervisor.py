@@ -352,28 +352,28 @@ class GrantSupervisor:
             allocation = domain.allocation
             active = self._owned_by_domain[domain_id]
             slack = allocation.owned_cap - active
-            admission_budget = (
-                min(
+            admission_budget = 0
+            if (
+                self._admission_enabled
+                and allocation.claims_enabled
+                and not memory_paused
+            ):
+                admission_budget = min(
                     max(0, slack - self._reserved_by_domain[domain_id]),
                     allocation.claims_per_cycle,
                 )
-                if (
-                    self._admission_enabled
-                    and allocation.claims_enabled
-                    and not memory_paused
-                )
-                else 0
-            )
             admission_snapshot[domain_id] = (
                 active,
                 slack,
                 admission_budget,
             )
-        acquired = {
-            (domain.domain_id, mode): 0
-            for domain in self._domains
-            for mode in grant_control.ClaimMode
-        }
+        acquired: dict[
+            tuple[grant_control.DomainId, grant_control.ClaimMode], int
+        ]
+        acquired = {}
+        for domain in self._domains:
+            for mode in grant_control.ClaimMode:
+                acquired[(domain.domain_id, mode)] = 0
         if not self._admission_enabled or memory_paused:
             self._log_admission_cycle(
                 owner_worker_id,
@@ -614,16 +614,15 @@ class GrantSupervisor:
                     registered_count += 1
                 return registered_count  # noqa: TRY300
             except Exception as exc:
-                failure = (
-                    exc
-                    if isinstance(
-                        exc,
-                        grant_control.GrantControlIntegrityError,
-                    )
-                    else grant_control.GrantControlIntegrityError(
+                if isinstance(
+                    exc,
+                    grant_control.GrantControlIntegrityError,
+                ):
+                    failure = exc
+                else:
+                    failure = grant_control.GrantControlIntegrityError(
                         "claim outcome is unknown"
                     )
-                )
                 if failure is not exc:
                     failure.__cause__ = exc
                 self._surface_integrity_failure(failure)
@@ -802,16 +801,15 @@ class GrantSupervisor:
         except Exception as exc:
             if self._is_current(managed):
                 managed.discard_without_finalize = True
-                failure = (
-                    exc
-                    if isinstance(
-                        exc,
-                        grant_control.GrantControlIntegrityError,
-                    )
-                    else grant_control.GrantControlIntegrityError(
+                if isinstance(
+                    exc,
+                    grant_control.GrantControlIntegrityError,
+                ):
+                    failure = exc
+                else:
+                    failure = grant_control.GrantControlIntegrityError(
                         "runner exited without a closed outcome"
                     )
-                )
                 if failure is not exc:
                     failure.__cause__ = exc
                 self._surface_integrity_failure(failure)

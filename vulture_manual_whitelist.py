@@ -7,7 +7,10 @@
 # MockCacheProvider is a mock implementation of CacheProvider used in integration and unit tests.
 # Vulture excludes test directories (**/tests/**, **/test_*.py) from analysis, so it misses
 # the imports of this class in tests, falsely flagging it as dead code.
-from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
+from backend.pipeline.common.storage.mock_cache_provider import (
+    MockCacheProvider,
+)
+
 MockCacheProvider
 _.get_value
 
@@ -17,16 +20,16 @@ _.get_value
 current_worker
 current_fencing_token
 
-# These PRs intentionally introduce the Lease lifecycle and membership storage
-# boundaries before the generic runtime starts calling them. Vulture excludes
-# the focused tests, so keep only dormant public methods, returned result fields,
-# and lifecycle telemetry causes allowlisted until the runtime wiring lands.
+# Vulture excludes focused tests and cannot follow runtime-selected Lease
+# adapters, so retain the public lifecycle methods, returned result fields, and
+# lifecycle telemetry causes exercised through those dynamic boundaries.
 from backend.pipeline.storage.ingestion_lease_store import (
     IngestionLeaseStore,
     LeaseHeartbeatResult,
     LeaseOperationResult,
     LeaseReleaseCause,
 )
+
 IngestionLeaseStore.claim_unclaimed
 IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
@@ -44,6 +47,7 @@ LeaseReleaseCause.ABANDONMENT
 # The exact Feed-grant heartbeat storage boundary lands before the generic
 # Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
 from backend.pipeline.storage.feed_store import FeedStore
+
 FeedStore.renew_grant_heartbeats
 
 # CollectorRuntime no longer calls these legacy lifecycle helpers. The next
@@ -63,6 +67,7 @@ from backend.pipeline.ingestion import (
     sid_grant_control,
     worker_profiles,
 )
+
 failure_policy.plan_failure
 feed_grant_control.FeedGrantControl
 feed_grant_control.FeedGrantControl.heartbeat
@@ -83,6 +88,7 @@ worker_profiles.resolve_worker_profile
 # The pure Calls cursor policy lands before the scheduler and SID runner that
 # consume it. Vulture excludes its focused tests.
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
+
 cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE
 cursor_policy.ReplayFloorCause.OVERLOAD
 cursor_policy.BootstrapDecision.replay_floor
@@ -112,6 +118,7 @@ grant_supervisor.GrantSupervisor.active_count
 # consumes it. Vulture excludes its focused shard tests, so allowlist this
 # dormant package only until the next stacked scheduler PR wires the facade.
 from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
+
 _shard._Shard
 _shard._Shard.fatal_failure
 _shard._Shard.admit
@@ -127,6 +134,7 @@ cohort_timestamp
 from backend.pipeline.ingestion.collectors.bcfy_calls.provider import (
     CallsProviderClient,
 )
+
 CallsProviderClient.fetch_sid_page
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation

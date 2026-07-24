@@ -43,6 +43,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         self.state = HealthState(
             active_feed_count=lambda: 0,
             active_sid_count=lambda: 0,
+            integrity_failed=lambda: False,
             bcfy_calls_authority_mode="legacy_feed",
         )
         return build_app(self.settings, self.state)
@@ -95,6 +96,23 @@ class HealthzHandlerTests(AioHTTPTestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "healthy")
+
+    async def test_integrity_failure_overrides_startup_grace_and_heartbeat(
+        self,
+    ) -> None:
+        """Fatal supervisor evidence immediately fails process health."""
+        now = time.monotonic()
+        self.state.startup_time = now - 30.0
+        self.state.last_heartbeat_tick = now - 1.0
+        integrity_failed = mock.Mock(return_value=True)
+        self.state.integrity_failed = integrity_failed
+
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 503)
+        self.assertEqual(body["status"], "unhealthy")
+        self.assertEqual(body["reason"], "integrity_failure")
+        integrity_failed.assert_called_once_with()
 
     async def test_post_grace_missing_heartbeat_returns_unhealthy(self) -> None:
         """Post-grace, tick is None → 503 no_heartbeat."""

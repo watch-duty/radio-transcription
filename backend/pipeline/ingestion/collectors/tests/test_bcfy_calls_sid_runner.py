@@ -1209,6 +1209,113 @@ async def test_metadata_fetch_uses_supervisor_stop_event(
 
 
 @pytest.mark.asyncio
+async def test_metadata_fetch_cooperative_cancellation_completes_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(seconds=30),
+    )
+    context = _context()
+
+    class StopCancelledProvider:
+        async def fetch_sid_page(
+            self,
+            sid: str,
+            pos: datetime.datetime | None,
+            *,
+            shutdown_event: asyncio.Event,
+        ) -> provider.CallsPageEnvelope:
+            del sid, pos
+            assert shutdown_event is context.stop_requested
+            context.stop_requested.set()
+            message = "cooperative stop"
+            raise asyncio.CancelledError(message)
+
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        StopCancelledProvider(),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with caplog.at_level(logging.INFO, sid_runner.__name__):
+        outcome = await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert isinstance(outcome, grant_control.RunCompleted)
+    settled = [
+        record
+        for record in caplog.records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == "bcfy_calls_sid_poll_settled"
+    ]
+    assert len(settled) == 1
+    assert getattr(settled[0], "json_fields", {}).get("status") == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_metadata_fetch_cooperative_cancellation_reports_grant_loss(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    grant = _grant()
+    member = _member(
+        "100",
+        bookmark=_NOW - datetime.timedelta(seconds=30),
+    )
+    context = _context()
+
+    class LostCancelledProvider:
+        async def fetch_sid_page(
+            self,
+            sid: str,
+            pos: datetime.datetime | None,
+            *,
+            shutdown_event: asyncio.Event,
+        ) -> provider.CallsPageEnvelope:
+            del sid, pos
+            assert shutdown_event is context.stop_requested
+            context.grant_lost.set()
+            context.stop_requested.set()
+            message = "cooperative grant loss"
+            raise asyncio.CancelledError(message)
+
+    runner = sid_runner.BcfyCallsSidRunner(
+        _Store(_snapshot(grant, member)),
+        LostCancelledProvider(),
+        _Pool(),
+        _failure_planner,
+        actor_id="test",
+        poll_interval_sec=0,
+        clock=lambda: _NOW,
+    )
+
+    with caplog.at_level(logging.INFO, sid_runner.__name__):
+        outcome = await runner.run(
+            grant,
+            grant_control.ClaimMode.PRIMARY,
+            context,
+        )
+
+    assert isinstance(outcome, grant_control.RunLost)
+    settled = [
+        record
+        for record in caplog.records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == "bcfy_calls_sid_poll_settled"
+    ]
+    assert len(settled) == 1
+    assert getattr(settled[0], "json_fields", {}).get("status") == "grant_lost"
+
+
+@pytest.mark.asyncio
 async def test_authentication_failure_retries_the_owned_sid() -> None:
     grant = _grant()
     member = _member(

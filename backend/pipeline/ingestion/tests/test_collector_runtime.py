@@ -1052,11 +1052,10 @@ class TestShutdown(unittest.IsolatedAsyncioTestCase):
         runtime._supervisor = supervisor
 
         async def close_test_pool(pool) -> None:
-            order.append(
-                "heartbeat_store"
-                if pool is runtime._heartbeat_pool
-                else "data_store"
-            )
+            pool_name = "data_store"
+            if pool is runtime._heartbeat_pool:
+                pool_name = "heartbeat_store"
+            order.append(pool_name)
 
         with (
             mock.patch.object(

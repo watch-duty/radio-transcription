@@ -398,6 +398,7 @@ class CollectorRuntime:
         self._health_state = HealthState(
             active_feed_count=self._active_feed_count,
             active_sid_count=self._active_sid_count,
+            integrity_failed=self._integrity_failed,
             bcfy_calls_authority_mode=(
                 settings.bcfy_calls_authority_mode.value
             ),
@@ -425,6 +426,14 @@ class CollectorRuntime:
         if supervisor is None:
             return 0
         return supervisor.active_count(grant_control.DomainId.SID)
+
+    def _integrity_failed(self) -> bool:
+        """Return whether the local supervisor has failed closed."""
+        supervisor = self._supervisor
+        return (
+            supervisor is not None
+            and supervisor.integrity_failure_event.is_set()
+        )
 
     def run(self) -> None:
         """Start the runtime and block until ordered shutdown completes.
@@ -496,11 +505,11 @@ class CollectorRuntime:
             if allocation.domain_id is grant_control.DomainId.FEED:
                 self._store = FeedStore(
                     data_pool,
-                    claim_types=list(settings.feed_claim_caps.keys()),
+                    claim_types=list(settings.feed_claim_caps),
                 )
                 self._heartbeat_store = FeedStore(
                     heartbeat_pool,
-                    claim_types=list(settings.feed_claim_caps.keys()),
+                    claim_types=list(settings.feed_claim_caps),
                     heartbeat_timeout_sec=heartbeat_timeout_sec,
                 )
                 control = feed_grant_control.FeedGrantControl(
@@ -669,11 +678,9 @@ class CollectorRuntime:
                 ),
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
             )
-            segment_dir = (
-                Path(settings.segment_temp_dir)
-                if settings.segment_temp_dir
-                else None
-            )
+            segment_dir = None
+            if settings.segment_temp_dir:
+                segment_dir = Path(settings.segment_temp_dir)
             self._capture_resources = CaptureResources(
                 http_session=self._http_session,
                 segment_temp_dir=segment_dir,
@@ -1054,6 +1061,10 @@ class CollectorRuntime:
             return
 
         context.grant_lost.set()
+        current_worker = result["current_worker"]
+        current_worker_id = None
+        if current_worker is not None:
+            current_worker_id = str(current_worker)
         logger.info(
             "Source observation rejected for feed %s",
             feed["name"],
@@ -1061,11 +1072,7 @@ class CollectorRuntime:
                 "json_fields": {
                     "feed_id": str(feed["id"]),
                     "current_status": result["current_status"],
-                    "current_worker": (
-                        str(result["current_worker"])
-                        if result["current_worker"] is not None
-                        else None
-                    ),
+                    "current_worker": current_worker_id,
                     "current_fencing_token": result["current_fencing_token"],
                 }
             },
