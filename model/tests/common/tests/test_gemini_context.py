@@ -268,24 +268,198 @@ class TestStrictCausalSchedule(unittest.TestCase):
         self.assertEqual(schedule[4].dependency_audio_uris, ())
         self.assertEqual(schedule[5].dependency_audio_uris, ())
 
-    def test_candidate_order_is_end_start_uri_then_last_k(self) -> None:
+    def test_rejects_identical_same_source_intervals(self) -> None:
         segments = [
-            self._segment("gs://a/z", start=0, end=1, index=0),
-            self._segment("gs://a/a", start=0, end=1, index=1),
-            self._segment("gs://a/m", start=0.5, end=1, index=2),
-            self._segment("gs://a/current", start=2, end=3, index=3),
+            self._segment("gs://a/one", start=10, end=20, index=0),
+            self._segment("gs://a/two", start=10, end=20, index=1),
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"relationship=equality.*manifest_indices=\(0, 1\)",
+        ):
+            context.build_strict_causal_schedule(segments, max_turns=2)
+
+    def test_rejects_strict_containment_in_either_input_order(self) -> None:
+        outer = self._segment("gs://a/outer", start=10, end=20, index=0)
+        inner = self._segment("gs://a/inner", start=12, end=18, index=1)
+
+        for segments in ([outer, inner], [inner, outer]):
+            with (
+                self.subTest(order=[row.audio_uri for row in segments]),
+                self.assertRaisesRegex(
+                    ValueError,
+                    r"total_invalid_pairs=1.*relationship=containment",
+                ),
+            ):
+                context.build_strict_causal_schedule(
+                    segments,
+                    max_turns=2,
+                )
+
+    def test_rejects_shared_start_or_end_containment(self) -> None:
+        cases = (
+            (
+                self._segment("gs://a/outer", start=10, end=20, index=0),
+                self._segment("gs://a/inner", start=10, end=18, index=1),
+            ),
+            (
+                self._segment("gs://a/outer", start=10, end=20, index=0),
+                self._segment("gs://a/inner", start=12, end=20, index=1),
+            ),
+        )
+
+        for outer, inner in cases:
+            with (
+                self.subTest(inner=(inner.start_seconds, inner.end_seconds)),
+                self.assertRaisesRegex(ValueError, "relationship=containment"),
+            ):
+                context.build_strict_causal_schedule(
+                    [outer, inner],
+                    max_turns=2,
+                )
+
+    def test_applies_containment_tolerance(self) -> None:
+        tolerance = context._CAUSAL_BOUNDARY_TOLERANCE_SECONDS
+        near_container = self._segment(
+            "gs://a/near-container",
+            start=10 + tolerance / 2,
+            end=20,
+            index=0,
+        )
+        contained = self._segment(
+            "gs://a/contained",
+            start=10,
+            end=18,
+            index=1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "relationship=containment"):
+            context.build_strict_causal_schedule(
+                [near_container, contained],
+                max_turns=2,
+            )
+
+    def test_partial_overlaps_are_independent_then_both_feed_later(
+        self,
+    ) -> None:
+        segments = [
+            self._segment("gs://a/first", start=10, end=20, index=0),
+            self._segment("gs://a/second", start=15, end=25, index=1),
+            self._segment("gs://a/later", start=25, end=30, index=2),
+        ]
+
+        for values in (segments, list(reversed(segments))):
+            schedule = context.build_strict_causal_schedule(
+                values,
+                max_turns=2,
+            )
+
+            self.assertEqual(schedule[0].dependency_audio_uris, ())
+            self.assertEqual(schedule[1].dependency_audio_uris, ())
+            self.assertEqual(
+                schedule[2].dependency_audio_uris,
+                ("gs://a/first", "gs://a/second"),
+            )
+
+    def test_allows_equal_spans_in_other_contextual_populations(self) -> None:
+        segments = [
+            self._segment("gs://a/eval", start=10, end=20, index=0),
+            self._segment(
+                "gs://a/other-source",
+                start=10,
+                end=20,
+                index=1,
+                source="source-b",
+            ),
+            self._segment(
+                "gs://a/other-split",
+                start=10,
+                end=20,
+                index=2,
+                split="train",
+            ),
         ]
 
         schedule = context.build_strict_causal_schedule(
-            list(reversed(segments)), max_turns=2
+            segments,
+            max_turns=2,
         )
 
-        current = next(
-            row for row in schedule if row.segment.audio_uri.endswith("current")
-        )
         self.assertEqual(
-            current.dependency_audio_uris, ("gs://a/z", "gs://a/m")
+            [row.dependency_audio_uris for row in schedule],
+            [(), (), ()],
         )
+
+    def test_zero_history_skips_contextual_duplicate_validation(self) -> None:
+        segments = [
+            self._segment("gs://a/outer", start=10, end=20, index=0),
+            self._segment("gs://a/inner", start=12, end=18, index=1),
+        ]
+
+        schedule = context.build_strict_causal_schedule(
+            segments,
+            max_turns=0,
+        )
+
+        self.assertEqual(
+            [row.dependency_audio_uris for row in schedule],
+            [(), ()],
+        )
+
+    def test_candidate_order_retains_last_k_completed_segments(self) -> None:
+        segments = [
+            self._segment("gs://a/first", start=0, end=1, index=0),
+            self._segment("gs://a/second", start=1, end=2, index=1),
+            self._segment("gs://a/third", start=2, end=3, index=2),
+            self._segment("gs://a/current", start=4, end=5, index=3),
+        ]
+
+        schedule = context.build_strict_causal_schedule(
+            list(reversed(segments)),
+            max_turns=2,
+        )
+
+        self.assertEqual(
+            schedule[3].dependency_audio_uris,
+            ("gs://a/second", "gs://a/third"),
+        )
+
+    def test_duplicate_diagnostics_are_deterministic_and_bounded(
+        self,
+    ) -> None:
+        outer = self._segment(
+            "gs://a/outer",
+            start=0,
+            end=100,
+            index=0,
+        )
+        inners = [
+            self._segment(
+                f"gs://a/inner-{index}",
+                start=float(index * 10),
+                end=float(index * 10 + 5),
+                index=index,
+            )
+            for index in range(1, 7)
+        ]
+
+        messages = []
+        for segments in ([outer, *inners], [*reversed(inners), outer]):
+            with self.assertRaises(ValueError) as raised:
+                context.build_strict_causal_schedule(
+                    segments,
+                    max_turns=2,
+                )
+            messages.append(str(raised.exception))
+
+        self.assertEqual(messages[0], messages[1])
+        self.assertIn("total_invalid_pairs=6", messages[0])
+        self.assertEqual(messages[0].count("relationship="), 5)
+        self.assertIn("split='eval'", messages[0])
+        self.assertIn("source_key='source-a'", messages[0])
+        self.assertIn("audio_uris=", messages[0])
+        self.assertIn("intervals=", messages[0])
 
     def test_contiguous_boundary_tolerates_float_rounding(self) -> None:
         prior_start = 1.1
