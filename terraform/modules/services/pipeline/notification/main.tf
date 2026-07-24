@@ -15,7 +15,7 @@ locals {
 }
 
 # Secret Manager resource for the external backend API key
-resource "google_secret_manager_secret" "wd_backend_endpoint_api_key" {
+resource "google_secret_manager_secret" "external_endpoint_api_key" {
   project   = local.project_id
   secret_id = "wd-backend-endpoint-API-key"
   replication {
@@ -24,8 +24,8 @@ resource "google_secret_manager_secret" "wd_backend_endpoint_api_key" {
 }
 
 # Store the user-provided API key as a secret version
-resource "google_secret_manager_secret_version" "wd_backend_endpoint_api_key" {
-  secret      = google_secret_manager_secret.wd_backend_endpoint_api_key.id
+resource "google_secret_manager_secret_version" "external_endpoint_api_key" {
+  secret      = google_secret_manager_secret.external_endpoint_api_key.id
   secret_data = var.wd_backend_endpoint_api_key
 }
 
@@ -35,7 +35,7 @@ resource "google_cloud_run_v2_service" "notification_pipeline" {
   location = var.region
 
   depends_on = [
-    google_secret_manager_secret_iam_member.wd_backend_endpoint_api_key_secret_access,
+    google_secret_manager_secret_iam_member.external_endpoint_api_key_secret_access,
     google_secret_manager_secret_iam_member.notification_pipeline_redis_password_secret_access,
     google_secret_manager_secret_iam_member.notification_pipeline_redis_certificate_secret_access
   ]
@@ -67,7 +67,7 @@ resource "google_cloud_run_v2_service" "notification_pipeline" {
         name = "NOTIFICATION_ENDPOINT_API_KEY"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.wd_backend_endpoint_api_key.secret_id
+            secret  = google_secret_manager_secret.external_endpoint_api_key.secret_id
             version = "latest"
           }
         }
@@ -191,9 +191,9 @@ resource "google_service_account" "notification_pipeline_sa" {
 }
 
 # Allow notification pipeline to access the backend API key from Secret Manager
-resource "google_secret_manager_secret_iam_member" "wd_backend_endpoint_api_key_secret_access" {
+resource "google_secret_manager_secret_iam_member" "external_endpoint_api_key_secret_access" {
   project   = local.project_id
-  secret_id = google_secret_manager_secret.wd_backend_endpoint_api_key.id
+  secret_id = google_secret_manager_secret.external_endpoint_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.notification_pipeline_sa.email}"
 }
