@@ -251,6 +251,30 @@ class TestStrictCausalSchedule(unittest.TestCase):
         ):
             context.build_strict_causal_schedule(segments, max_turns=2)
 
+    def test_counts_every_identical_pair_independent_of_input_order(
+        self,
+    ) -> None:
+        segments = [
+            self._segment("gs://a/one", start=10, end=20, index=0),
+            self._segment("gs://a/two", start=10, end=20, index=1),
+            self._segment("gs://a/three", start=10, end=20, index=2),
+        ]
+
+        for ordered in (segments, [segments[2], segments[0], segments[1]]):
+            with (
+                self.subTest(
+                    order=[segment.audio_uri for segment in ordered],
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    r"total_invalid_pairs=3.*relationship=equality",
+                ),
+            ):
+                context.build_strict_causal_schedule(
+                    ordered,
+                    max_turns=2,
+                )
+
     def test_rejects_strict_containment_in_either_input_order(self) -> None:
         outer = self._segment("gs://a/outer", start=10, end=20, index=0)
         inner = self._segment("gs://a/inner", start=12, end=18, index=1)

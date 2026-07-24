@@ -258,6 +258,7 @@ def causal_segments_from_rows(
         Transcript-free segments aligned in authoritative manifest order.
 
     Raises:
+        TypeError: If contextual provenance or timing has an invalid type.
         ValueError: If alignment, split, source identity, or timing is invalid.
     """
     source_values = tuple(source_rows)

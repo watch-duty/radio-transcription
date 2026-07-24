@@ -278,6 +278,21 @@ def _training_reference_histories(
     split: str,
     max_turns: int,
 ) -> list[list[context.TrainingReferenceTurn]]:
+    """Compile and resolve one training split's causal reference histories.
+
+    Args:
+        source_rows: Raw manifest rows carrying text and source provenance.
+        canonical_rows: Strict rows aligned with ``source_rows``.
+        split: Training or validation split assigned to causal segments.
+        max_turns: Maximum structural dependencies per training example.
+
+    Returns:
+        Reference histories aligned with the source manifest.
+
+    Raises:
+        TypeError: If contextual provenance or schedule types are invalid.
+        ValueError: If provenance, duplicate spans, or alignment is invalid.
+    """
     if max_turns == 0:
         return [[] for _ in source_rows]
     segments = artifacts_lib.causal_segments_from_rows(
@@ -301,6 +316,17 @@ def _validate_eval_context_plan(
     *,
     max_turns: int,
 ) -> None:
+    """Compile the full eval schedule before durable publication.
+
+    Args:
+        source_rows: Raw eval rows carrying source provenance.
+        canonical_rows: Strict eval rows aligned with ``source_rows``.
+        max_turns: Maximum structural dependencies per evaluation request.
+
+    Raises:
+        TypeError: If contextual provenance or schedule types are invalid.
+        ValueError: If provenance or same-source spans are invalid.
+    """
     if max_turns == 0:
         return
     segments = artifacts_lib.causal_segments_from_rows(

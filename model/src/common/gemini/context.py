@@ -179,6 +179,15 @@ GUARDED_TRANSCRIPT_NO_HISTORY_TEXT = (
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _DuplicateSpanPair:
+    """One canonicalized invalid same-source interval pair.
+
+    Attributes:
+        first: Lower-manifest-index member of the pair.
+        second: Higher-manifest-index member of the pair.
+        relationship: Whether the intervals are equal or one contains the
+            other within boundary tolerance.
+    """
+
     first: EvaluationSegment
     second: EvaluationSegment
     relationship: typing.Literal["equality", "containment"]
@@ -191,12 +200,26 @@ class _FenwickCounter:
         self._tree = [0] * (size + 1)
 
     def add(self, index: int, delta: int) -> None:
+        """Add one count delta at a zero-based compressed coordinate.
+
+        Args:
+            index: Zero-based coordinate to update.
+            delta: Signed count change applied at ``index``.
+        """
         tree_index = index + 1
         while tree_index < len(self._tree):
             self._tree[tree_index] += delta
             tree_index += tree_index & -tree_index
 
     def prefix_count(self, stop: int) -> int:
+        """Return the count below one exclusive compressed-coordinate bound.
+
+        Args:
+            stop: Exclusive zero-based coordinate bound.
+
+        Returns:
+            Sum of all stored counts at coordinates lower than ``stop``.
+        """
         total = 0
         tree_index = stop
         while tree_index:
@@ -589,6 +612,15 @@ def _span_contains(
     container: EvaluationSegment,
     contained: EvaluationSegment,
 ) -> bool:
+    """Return whether one interval contains another within tolerance.
+
+    Args:
+        container: Candidate outer segment.
+        contained: Candidate inner segment.
+
+    Returns:
+        ``True`` when both boundaries satisfy tolerant containment.
+    """
     tolerance = _CAUSAL_BOUNDARY_TOLERANCE_SECONDS
     return (
         container.start_seconds <= contained.start_seconds + tolerance
@@ -600,6 +632,15 @@ def _duplicate_span_pair(
     first: EvaluationSegment,
     second: EvaluationSegment,
 ) -> _DuplicateSpanPair:
+    """Canonicalize and classify one already-invalid interval pair.
+
+    Args:
+        first: One member of an equality or containment pair.
+        second: The other member of the pair.
+
+    Returns:
+        Pair ordered by manifest identity and classified by span relationship.
+    """
     ordered = sorted(
         (first, second),
         key=lambda value: (value.manifest_index, value.audio_uri),
@@ -619,6 +660,14 @@ def _duplicate_span_pair(
 def _duplicate_pair_key(
     pair: _DuplicateSpanPair,
 ) -> tuple[int, str, int, str]:
+    """Return the stable identity used to de-duplicate diagnostic samples.
+
+    Args:
+        pair: Canonicalized duplicate-span pair.
+
+    Returns:
+        Both manifest indices and audio URIs in canonical pair order.
+    """
     return (
         pair.first.manifest_index,
         pair.first.audio_uri,
@@ -627,11 +676,50 @@ def _duplicate_pair_key(
     )
 
 
+def _append_duplicate_span_sample(
+    samples: list[_DuplicateSpanPair],
+    sample_keys: set[tuple[int, str, int, str]],
+    first: EvaluationSegment,
+    second: EvaluationSegment,
+    *,
+    sample_limit: int,
+) -> None:
+    """Append one canonical pair when diagnostic capacity remains.
+
+    Args:
+        samples: Mutable ordered diagnostic samples.
+        sample_keys: Mutable identities already represented in ``samples``.
+        first: One member of the candidate pair.
+        second: The other member of the candidate pair.
+        sample_limit: Maximum number of samples to retain.
+    """
+    if len(samples) >= sample_limit:
+        return
+    pair = _duplicate_span_pair(first, second)
+    key = _duplicate_pair_key(pair)
+    if key not in sample_keys:
+        sample_keys.add(key)
+        samples.append(pair)
+
+
 def _scan_duplicate_source_spans(
     source_segments: collections.abc.Sequence[EvaluationSegment],
     *,
     sample_limit: int,
 ) -> tuple[int, tuple[_DuplicateSpanPair, ...]]:
+    """Count invalid pairs and retain bounded witnesses for one source.
+
+    The sweep uses compressed end coordinates to count prior-containing,
+    current-containing, and equal pairs without enumerating every pair.
+    Equality is subtracted once because it appears in both containment counts.
+
+    Args:
+        source_segments: Segments from one split and normalized source.
+        sample_limit: Maximum number of deterministic pair witnesses to retain.
+
+    Returns:
+        Exact invalid-pair count and up to ``sample_limit`` diagnostic pairs.
+    """
     ordered = sorted(
         source_segments,
         key=lambda value: (
@@ -655,18 +743,6 @@ def _scan_duplicate_source_spans(
     sample_keys: set[tuple[int, str, int, str]] = set()
     invalid_pair_count = 0
     tolerance = _CAUSAL_BOUNDARY_TOLERANCE_SECONDS
-
-    def add_sample(
-        first: EvaluationSegment,
-        second: EvaluationSegment,
-    ) -> None:
-        if len(samples) >= sample_limit:
-            return
-        pair = _duplicate_span_pair(first, second)
-        key = _duplicate_pair_key(pair)
-        if key not in sample_keys:
-            sample_keys.add(key)
-            samples.append(pair)
 
     for prior_count, current in enumerate(ordered):
         while (
@@ -703,9 +779,21 @@ def _scan_duplicate_source_spans(
         )
 
         if prior_contains_current:
-            add_sample(max_end_heap[0][3], current)
+            _append_duplicate_span_sample(
+                samples,
+                sample_keys,
+                max_end_heap[0][3],
+                current,
+                sample_limit=sample_limit,
+            )
         if current_contains_prior:
-            add_sample(near_min_end_heap[0][3], current)
+            _append_duplicate_span_sample(
+                samples,
+                sample_keys,
+                near_min_end_heap[0][3],
+                current,
+                sample_limit=sample_limit,
+            )
 
         end_index = end_indices[current.end_seconds]
         all_prior_ends.add(end_index, 1)
@@ -735,6 +823,14 @@ def _scan_duplicate_source_spans(
 
 
 def _format_duplicate_span_pair(pair: _DuplicateSpanPair) -> str:
+    """Format one duplicate pair for a stable operator diagnostic.
+
+    Args:
+        pair: Canonicalized pair to serialize.
+
+    Returns:
+        Named relationship, population, identity, and interval fields.
+    """
     first = pair.first
     second = pair.second
     return (
@@ -755,6 +851,14 @@ def _validate_no_duplicate_source_spans(
         collections.abc.Sequence[EvaluationSegment],
     ],
 ) -> None:
+    """Reject equal or contained intervals across contextual populations.
+
+    Args:
+        grouped: Segments grouped by ``(split, source_key)``.
+
+    Raises:
+        ValueError: If any group contains equal or contained intervals.
+    """
     total_invalid_pairs = 0
     samples: list[_DuplicateSpanPair] = []
     for group_key in sorted(grouped):
@@ -784,6 +888,20 @@ def _build_source_dependencies(
     dict[str, tuple[str, ...]],
     dict[str, int],
 ]:
+    """Build bounded causal dependencies and waves for one source.
+
+    Segments become eligible only after their start is strictly earlier than
+    the current start outside tolerance and their end is no later than the
+    current start within tolerance. A heap tracks newly completed segments,
+    while a sorted list retains only the latest structural ``max_turns``.
+
+    Args:
+        source_segments: Segments from one split and normalized source.
+        max_turns: Maximum number of completed dependencies per segment.
+
+    Returns:
+        Audio-URI dependency tuples and causal wave indices keyed by audio URI.
+    """
     dependency_map: dict[str, tuple[str, ...]] = {}
     wave_by_audio_uri: dict[str, int] = {}
     ordered = sorted(source_segments, key=_execution_sort_key)

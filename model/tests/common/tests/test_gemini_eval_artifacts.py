@@ -154,6 +154,74 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
         for segment in segments.values():
             self.assertNotIn("text", dataclasses.asdict(segment))
 
+    def test_training_and_eval_normalization_produce_identical_schedules(
+        self,
+    ) -> None:
+        source_rows_by_split = {
+            split: [
+                {
+                    **_eval_row(
+                        f"gs://bucket/audio/{name}.flac",
+                        name,
+                        example_id=f"{split}-{name}",
+                        segment_id=str(index),
+                        offset=0.0,
+                        duration=duration,
+                    ),
+                    "split": split,
+                    "original_audio_uri": ("gs://bucket/source/original.wav"),
+                    "original_offset": source_offset,
+                }
+                for index, (name, source_offset, duration) in enumerate(
+                    (
+                        ("first", 0.0, 3.0),
+                        ("overlap", 2.0, 2.0),
+                        ("later", 5.0, 1.0),
+                    )
+                )
+            ]
+            for split in ("train", "eval")
+        }
+        schedules: dict[str, list[context.CausalScheduleRow]] = {}
+        for split, source_rows in source_rows_by_split.items():
+            _, canonical_rows = sft_artifacts.canonical_rows_from_entries(
+                source_rows,
+                split=split,
+                source="test",
+            )
+            segments = sft_artifacts.causal_segments_from_rows(
+                source_rows,
+                canonical_rows,
+                split=split,
+            )
+            schedules[split] = context.build_strict_causal_schedule(
+                segments,
+                max_turns=2,
+            )
+
+        schedule_shapes = {
+            split: [(row.dependency_audio_uris, row.wave) for row in schedule]
+            for split, schedule in schedules.items()
+        }
+        self.assertEqual(
+            schedule_shapes["train"],
+            schedule_shapes["eval"],
+        )
+        self.assertEqual(
+            schedule_shapes["train"],
+            [
+                ((), 0),
+                ((), 0),
+                (
+                    (
+                        "gs://bucket/audio/first.flac",
+                        "gs://bucket/audio/overlap.flac",
+                    ),
+                    1,
+                ),
+            ],
+        )
+
     def test_causal_segments_reject_alignment_drift(self) -> None:
         row = {
             **_eval_row(
