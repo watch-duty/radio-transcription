@@ -44,8 +44,11 @@ class TestRejectSplitLeakage(unittest.TestCase):
         with self.assertRaisesRegex(
             ValueError,
             "train and eval share 1 physical recording group",
-        ):
+        ) as raised:
             recording_groups.reject_split_leakage(rows)
+        message = str(raised.exception)
+        self.assertIn("echo", message)
+        self.assertIn("gs://sources/recording.flac", message)
 
     def test_top_level_original_source_matches_latest_context_contract(
         self,
@@ -60,6 +63,24 @@ class TestRejectSplitLeakage(unittest.TestCase):
             "gs://sources/intermediate-eval.flac",
         )
         evaluation["original_audio_uri"] = "gs://sources/original.flac"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
+    def test_blank_top_level_source_falls_back_to_source_audio(self) -> None:
+        shared_source = "gs://sources/original.flac"
+        train = _row("gs://clips/train.flac", shared_source)
+        train["original_audio_uri"] = "  "
+        evaluation = _row("gs://clips/eval.flac", shared_source)
 
         with self.assertRaisesRegex(
             ValueError,

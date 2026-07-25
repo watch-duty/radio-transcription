@@ -102,9 +102,24 @@ def reject_split_leakage(
         if overlap:
             msg = (
                 f"train and {holdout} share {len(overlap)} physical "
-                "recording group(s)"
+                "recording group(s); sample source(s): "
+                f"{_source_sample(physical_nodes, groups, overlap)}"
             )
             raise ValueError(msg)
+
+
+def _source_sample(
+    physical_nodes: collections.abc.Iterable[_Node],
+    groups: _UnionFind,
+    overlap: collections.abc.Set[object],
+) -> str:
+    matches = sorted(
+        node for node in physical_nodes if groups.root(node) in overlap
+    )[:5]
+    return ", ".join(
+        f"{dataset or '<unknown>'}: {source_uri}"
+        for dataset, source_uri in matches
+    )
 
 
 def _source_uri(
@@ -113,18 +128,21 @@ def _source_uri(
     split: str,
     row_index: int,
 ) -> str:
-    value: object = row.get("original_audio_uri")
+    candidates: list[object] = [row.get("original_audio_uri")]
     source_audio = row.get("source_audio")
-    if value is None and isinstance(source_audio, collections.abc.Mapping):
-        value = source_audio.get("audio_filepath")
-        if value is None:
-            value = source_audio.get("original_audio_uri")
-    if value is None:
-        value = row.get("audio_filepath")
-    if not isinstance(value, str) or not value.strip():
-        msg = f"{split} row {row_index} lacks an original physical source URI"
-        raise ValueError(msg)
-    return value.strip()
+    if isinstance(source_audio, collections.abc.Mapping):
+        candidates.extend(
+            (
+                source_audio.get("audio_filepath"),
+                source_audio.get("original_audio_uri"),
+            )
+        )
+    candidates.append(row.get("audio_filepath"))
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    msg = f"{split} row {row_index} lacks an original physical source URI"
+    raise ValueError(msg)
 
 
 def _dataset_name(
