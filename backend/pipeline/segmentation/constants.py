@@ -84,7 +84,8 @@ VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
 # Absolute lower bound (in seconds) for padded audio segment start offsets
 VAD_MIN_AUDIO_OFFSET_SEC: Final = 0.0
-# Divisor used to split silence gaps between adjacent speech bursts into equal halves for midpoint padding clamping
+# Divisor used to split silence gaps between adjacent speech bursts into equal
+# halves for midpoint padding clamping
 VAD_GAP_MIDPOINT_DIVISOR: Final = 2.0
 
 # VAD Priming Terminology Glossary:

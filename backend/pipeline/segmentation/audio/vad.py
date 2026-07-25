@@ -276,6 +276,28 @@ class VoiceActivityDetector:
             shifted_segments.append((start_sec, end_sec))
         return shifted_segments
 
+    def _pad_and_merge_segments(
+        self,
+        segments: list[tuple[float, float]],
+        audio_len_sec: float,
+    ) -> list[tuple[float, float]]:
+        """Pads speech segments using configured padding limits.
+
+        Clamps padding to gap midpoints between adjacent speech segments to
+        maintain non-overlapping segment invariants.
+
+        Args:
+            segments: List of raw (start, end) speech segment boundaries in
+                seconds (assumed sorted by start time).
+            audio_len_sec: Total duration of the audio payload in seconds.
+
+        Returns:
+            List of padded, non-overlapping (start, end) speech segment
+            boundaries in seconds.
+        """
+        merged_raw = self._merge_raw_segments(segments)
+        return self._apply_clamped_padding(merged_raw, audio_len_sec)
+
     def _merge_raw_segments(
         self,
         segments: list[tuple[float, float]],
@@ -283,7 +305,8 @@ class VoiceActivityDetector:
         """Merges raw speech segments that overlap in unpadded time boundaries.
 
         Args:
-            segments: List of raw (start, end) speech segment boundaries.
+            segments: List of raw (start, end) speech segment boundaries
+                (assumed sorted by start time).
 
         Returns:
             List of merged raw (start, end) speech segment boundaries.
@@ -306,7 +329,7 @@ class VoiceActivityDetector:
 
         Args:
             merged_raw: List of non-overlapping raw (start, end) speech
-                boundaries.
+                boundaries (assumed sorted by start time).
             audio_len_sec: Total duration of the audio payload in seconds.
 
         Returns:
@@ -335,31 +358,6 @@ class VoiceActivityDetector:
 
             padded_segments.append((p_start, p_end))
         return padded_segments
-
-    def _pad_and_merge_segments(
-        self,
-        segments: list[tuple[float, float]],
-        audio_len_sec: float,
-    ) -> list[tuple[float, float]]:
-        """Pads speech segments using configured padding limits.
-
-        Clamps padding to gap midpoints between adjacent speech segments to
-        maintain non-overlapping segment invariants.
-
-        Args:
-            segments: List of raw (start, end) speech segment boundaries in
-                seconds.
-            audio_len_sec: Total duration of the audio payload in seconds.
-
-        Returns:
-            List of padded, non-overlapping (start, end) speech segment
-            boundaries in seconds.
-        """
-        if not segments:
-            return []
-
-        merged_raw = self._merge_raw_segments(segments)
-        return self._apply_clamped_padding(merged_raw, audio_len_sec)
 
     def _peak_normalize(self, audio_array: np.ndarray) -> np.ndarray:
         """Applies software peak volume normalization if the signal is not completely silent."""
