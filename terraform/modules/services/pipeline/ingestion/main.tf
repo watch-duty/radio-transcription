@@ -18,8 +18,7 @@ locals {
 # -----------------------------------------------------------------------------
 
 module "collector_mig" {
-  # tflint-ignore: terraform_module_pinned_source
-  source = "git::https://github.com/watch-duty/radio-transcription.git//terraform/modules/container_mig?ref=main"
+  source = "../../../container_mig"
 
   project_id            = local.project_id
   region                = var.region
@@ -231,8 +230,7 @@ resource "google_compute_region_autoscaler" "collector" {
 # -----------------------------------------------------------------------------
 
 module "echo_recordings_bucket" {
-  # tflint-ignore: terraform_module_pinned_source
-  source = "git::https://github.com/watch-duty/radio-transcription.git//terraform/modules/gcs_bucket?ref=main"
+  source = "../../../gcs_bucket"
 
   project_id = local.project_id
   name       = var.echo_recordings_bucket_name
