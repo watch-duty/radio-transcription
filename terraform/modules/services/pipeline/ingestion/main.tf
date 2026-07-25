@@ -345,29 +345,7 @@ resource "google_project_iam_member" "collector_trace_writer" {
 
 
 
-# METRIC-01: Custom metric the Publisher writes every 60s; consumed by the
-# Phase 3 autoscaler as the PRIMARY scaling signal (queue-length, additive,
-# leading indicator). INT64 GAUGE — count of rows is integer by definition;
-# matches the existing quarantine_events descriptor pattern (the only other
-# custom.googleapis.com/feeds/* metric in this codebase). unit "1"
-# (dimensionless count). No labels — fleet-wide signal.
-#
-# (Earlier iterations of this milestone used custom.googleapis.com/feeds/
-# oldest_unclaimed_age_seconds — a per-group latency metric (DOUBLE,
-# unit "s"). Cross-AI review on 2026-04-29 surfaced that as mathematically
-# unsound for GCP autoscaling; replaced with this queue-length signal.
-# The latency metric will be re-added in a follow-up PR as an SLO
-# observability metric driving an alert policy — it stops feeding the
-# autoscaler entirely.)
-resource "google_monitoring_metric_descriptor" "unclaimed_count" {
-  project      = local.project_id
-  type         = "custom.googleapis.com/feeds/unclaimed_count"
-  metric_kind  = "GAUGE"
-  value_type   = "INT64"
-  unit         = "1"
-  description  = "Count of feeds in 'unclaimed' status — fleet-wide queue depth. Published by oldest-feed-publisher Cloud Run service every 60s. Drives MIG autoscaler queue-length signal in Phase 3."
-  display_name = "Unclaimed Feed Count"
-}
+
 
 
 # Publish audio storage trigger messages to continuous-audio topic
