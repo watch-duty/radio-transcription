@@ -97,11 +97,11 @@ validates exact-row and physical-recording split overlap, derives Gemini JSONL
 for train and validation, writes preflight output, and stores resolved prompts
 in durable GCS `config.json`. Physical identity uses the existing exact source
 locator or source SHA-256 metadata, with dataset-scoped normalized filenames
-only when a dataset lacks hashes and a filename can be derived safely. For an
-eval-only round, `prepare` validates and publishes only `run_config.toml`,
-`config.json`, and the canonical eval manifest. Its durable config status is
-`eval_prepared`; it intentionally does not publish the training-only root
-`status.json`.
+only when a dataset lacks hashes, a filename can be derived safely, and
+multiple explicit hashes do not disprove that alias. For an eval-only round,
+`prepare` validates and publishes only `run_config.toml`, `config.json`, and the
+canonical eval manifest. Its durable config status is `eval_prepared`; it
+intentionally does not publish the training-only root `status.json`.
 
 Every prepared round has these durable inspection points:
 

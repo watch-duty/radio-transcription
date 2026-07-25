@@ -18,7 +18,7 @@ _AUDIO_SUFFIXES: typing.Final = (
     ".opus",
     ".webm",
 )
-_SHA256_PATTERN: typing.Final = re.compile(r"[0-9a-f]{64}\Z")
+_SHA256_PATTERN: typing.Final = re.compile(r"[0-9a-fA-F]{64}\Z")
 _PhysicalSourceKey = tuple[str, str]
 
 
@@ -32,7 +32,8 @@ def reject_split_leakage(
     Rows are joined by their best existing source URI and, when present, the
     reconstructed dataset's source-encoding SHA-256. A dataset with any row
     lacking that hash also uses normalized source filenames as compatibility
-    evidence. Validation and eval may intentionally share recordings.
+    evidence unless multiple explicit hashes disprove the filename alias.
+    Validation and eval may intentionally share recordings.
 
     Args:
         rows_by_split: Canonical manifest rows keyed by split.
@@ -92,10 +93,11 @@ def reject_split_leakage(
             continue
         basename_key = (dataset, normalized_basename)
         by_basename.setdefault(basename_key, []).append(node)
-    for matches in (
-        *by_uri.values(),
-        *by_sha.values(),
-        *by_basename.values(),
+    for matches in (*by_uri.values(), *by_sha.values()):
+        groups.merge_all(matches)
+    for matches in _unambiguous_basename_groups(
+        by_basename,
+        sha_by_physical,
     ):
         groups.merge_all(matches)
 
@@ -129,6 +131,36 @@ def _source_sample(
     )
 
 
+def _unambiguous_basename_groups(
+    by_basename: collections.abc.Mapping[
+        tuple[str, str],
+        collections.abc.Sequence[_PhysicalSourceKey],
+    ],
+    sha_by_physical: collections.abc.Mapping[
+        _PhysicalSourceKey,
+        str | None,
+    ],
+) -> collections.abc.Iterator[collections.abc.Sequence[_PhysicalSourceKey]]:
+    """Yield basename groups not disproved by multiple explicit hashes.
+
+    Args:
+        by_basename: Physical sources grouped by dataset and filename.
+        sha_by_physical: Optional source hash for each physical-source key.
+
+    Yields:
+        Basename groups with at most one distinct known source hash.
+    """
+    for matches in by_basename.values():
+        known_hashes = {
+            source_sha
+            for node in matches
+            if (source_sha := sha_by_physical[node]) is not None
+        }
+        # An ambiguous filename cannot safely assign its hashless rows.
+        if len(known_hashes) <= 1:
+            yield matches
+
+
 def _source_uri(
     row: collections.abc.Mapping[str, typing.Any],
     *,
@@ -153,8 +185,8 @@ def _source_uri(
     if isinstance(source_audio, collections.abc.Mapping):
         candidates.extend(
             (
-                source_audio.get("audio_filepath"),
                 source_audio.get("original_audio_uri"),
+                source_audio.get("audio_filepath"),
             )
         )
     candidates.append(row.get("audio_filepath"))
@@ -221,10 +253,10 @@ def _source_sha(
     if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
         msg = (
             f"{split} row {row_index} source_lineage.source_encoded_sha256 "
-            "must be a lowercase SHA-256"
+            "must be a hexadecimal SHA-256"
         )
         raise ValueError(msg)
-    return value
+    return value.lower()
 
 
 def _normalized_basename(source_uri: str) -> str | None:
@@ -292,10 +324,16 @@ class _UnionFind:
         self._parent = {value: value for value in values}
 
     def root(self, value: _PhysicalSourceKey) -> _PhysicalSourceKey:
-        parent = self._parent[value]
-        if parent != value:
-            self._parent[value] = self.root(parent)
-        return self._parent[value]
+        root = value
+        while self._parent[root] != root:
+            root = self._parent[root]
+
+        current = value
+        while current != root:
+            parent = self._parent[current]
+            self._parent[current] = root
+            current = parent
+        return root
 
     def merge_all(
         self,

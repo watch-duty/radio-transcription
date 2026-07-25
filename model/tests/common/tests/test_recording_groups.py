@@ -78,6 +78,39 @@ class TestRejectSplitLeakage(unittest.TestCase):
                 }
             )
 
+    def test_nested_original_source_takes_precedence_over_intermediate(
+        self,
+    ) -> None:
+        shared_source = "gs://sources/original.flac"
+        train = _row(
+            "gs://clips/train.flac",
+            "gs://sources/intermediate-train.flac",
+        )
+        train["source_audio"] = {
+            "audio_filepath": "gs://sources/intermediate-train.flac",
+            "original_audio_uri": shared_source,
+        }
+        evaluation = _row(
+            "gs://clips/eval.flac",
+            "gs://sources/intermediate-eval.flac",
+        )
+        evaluation["source_audio"] = {
+            "audio_filepath": "gs://sources/intermediate-eval.flac",
+            "original_audio_uri": shared_source,
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
     def test_blank_top_level_source_falls_back_to_source_audio(self) -> None:
         shared_source = "gs://sources/original.flac"
         train = _row("gs://clips/train.flac", shared_source)
@@ -265,6 +298,55 @@ class TestRejectSplitLeakage(unittest.TestCase):
                 }
             )
 
+    def test_source_sha_is_case_insensitive(self) -> None:
+        train = _row(
+            "gs://clips/train.flac",
+            "gs://sources/original-a.flac",
+        )
+        train["source_lineage"] = {"source_encoded_sha256": "A" * 64}
+        evaluation = _row(
+            "gs://clips/eval.flac",
+            "gs://sources/original-b.flac",
+        )
+        evaluation["source_lineage"] = {"source_encoded_sha256": "a" * 64}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
+    def test_distinct_hashes_override_ambiguous_legacy_basename(self) -> None:
+        train = _row(
+            "gs://clips/train.flac",
+            "gs://sources/a/shared-name.flac",
+        )
+        train["source_lineage"] = {"source_encoded_sha256": "a" * 64}
+        evaluation = _row(
+            "gs://clips/eval.flac",
+            "gs://archive/b/shared-name.wav",
+        )
+        evaluation["source_lineage"] = {"source_encoded_sha256": "b" * 64}
+
+        recording_groups.reject_split_leakage(
+            {
+                "train": [train],
+                "validation": [
+                    _row(
+                        "gs://clips/validation.flac",
+                        "gs://sources/unhashed.flac",
+                    )
+                ],
+                "eval": [evaluation],
+            }
+        )
+
     def test_source_sha_disables_filename_guessing_for_complete_dataset(
         self,
     ) -> None:
@@ -307,3 +389,17 @@ class TestRejectSplitLeakage(unittest.TestCase):
         }
 
         recording_groups.reject_split_leakage(rows)
+
+
+class TestUnionFind(unittest.TestCase):
+    def test_root_handles_a_deep_alias_chain(self) -> None:
+        values = [("echo", str(index)) for index in range(1_500)]
+        groups = recording_groups._UnionFind(values)
+        for new_root, previous_root in zip(
+            values[1:],
+            values[:-1],
+            strict=True,
+        ):
+            groups.merge_all((new_root, previous_root))
+
+        self.assertEqual(groups.root(values[0]), values[-1])
