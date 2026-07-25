@@ -105,6 +105,7 @@ def prepare_run(
     Raises:
         google_exceptions.GoogleAPIError: If a GCS operation fails.
         OSError: If local or GCS artifacts cannot be read or written.
+        TypeError: If training source-lineage metadata has the wrong type.
         ValueError: If strict parsing, canonical validation, or preparation
             invariants fail.
     """
@@ -358,6 +359,7 @@ def prepare_artifacts(
     Raises:
         google_exceptions.GoogleAPIError: If a source download fails.
         OSError: If a local artifact cannot be read or written.
+        TypeError: If training source-lineage metadata has the wrong type.
         ValueError: If strict parsing, training manifests, or generated
             examples are invalid.
     """
