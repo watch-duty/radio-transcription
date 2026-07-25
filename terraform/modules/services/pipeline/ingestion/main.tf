@@ -6,7 +6,6 @@ data "google_project" "project" {}
 
 locals {
   project_id              = data.google_project.project.project_id
-  project_number          = data.google_project.project.number
   otel_traces_sampler     = var.environment == "dev" ? "parentbased_traceidratio" : "parentbased_always_on"
   otel_traces_sampler_arg = var.environment == "dev" ? "0.05" : "1.0"
   otel_bsp_max_batch_size = var.environment == "dev" ? "512" : "64"
@@ -137,10 +136,8 @@ module "echo" {
 module "broadcastify_credential_rotation" {
   source = "./broadcastify_credential_rotation"
 
-  project_id              = local.project_id
   region                  = var.region
   environment             = var.environment
-  project_number          = local.project_number
   broadcastify_api_key    = var.broadcastify_api_key
   broadcastify_api_key_id = var.broadcastify_api_key_id
   broadcastify_api_app_id = var.broadcastify_api_app_id

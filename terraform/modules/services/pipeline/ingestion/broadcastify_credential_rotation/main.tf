@@ -1,3 +1,10 @@
+data "google_project" "project" {}
+
+locals {
+  project_id     = data.google_project.project.project_id
+  project_number = data.google_project.project.number
+}
+
 # =============================================================================
 # BROADCASTIFY CREDENTIAL ROTATION
 # =============================================================================
@@ -5,7 +12,7 @@
 
 # Secret Manager resource for the Broadcastify API key
 resource "google_secret_manager_secret" "broadcastify_api_key" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = "broadcastify-api-key-${var.environment}"
   replication {
     auto {}
@@ -20,7 +27,7 @@ resource "google_secret_manager_secret_version" "broadcastify_api_key" {
 
 # Secret Manager resource for the Broadcastify API key ID
 resource "google_secret_manager_secret" "broadcastify_api_key_id" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = "broadcastify-api-key-id-${var.environment}"
   replication {
     auto {}
@@ -35,7 +42,7 @@ resource "google_secret_manager_secret_version" "broadcastify_api_key_id" {
 
 # Secret Manager resource for the Broadcastify API app ID
 resource "google_secret_manager_secret" "broadcastify_api_app_id" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = "broadcastify-api-app-id-${var.environment}"
   replication {
     auto {}
@@ -50,7 +57,7 @@ resource "google_secret_manager_secret_version" "broadcastify_api_app_id" {
 
 # Secret Manager resource for the Broadcastify Auth JWT token (rotated)
 resource "google_secret_manager_secret" "broadcastify_jwt" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = "broadcastify-jwt-${var.environment}"
   replication {
     auto {}
@@ -70,7 +77,7 @@ resource "google_service_account" "broadcastify_credential_rotation_sa" {
 
 # Allow the credential rotation function to read the Broadcastify API key
 resource "google_secret_manager_secret_iam_member" "broadcastify_api_key_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.broadcastify_api_key.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
@@ -78,7 +85,7 @@ resource "google_secret_manager_secret_iam_member" "broadcastify_api_key_secret_
 
 # Allow the credential rotation function to read the Broadcastify API key ID
 resource "google_secret_manager_secret_iam_member" "broadcastify_api_key_id_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.broadcastify_api_key_id.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
@@ -86,7 +93,7 @@ resource "google_secret_manager_secret_iam_member" "broadcastify_api_key_id_secr
 
 # Allow the credential rotation function to read the Broadcastify API app ID
 resource "google_secret_manager_secret_iam_member" "broadcastify_api_app_id_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.broadcastify_api_app_id.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
@@ -94,7 +101,7 @@ resource "google_secret_manager_secret_iam_member" "broadcastify_api_app_id_secr
 
 # Allow the credential rotation function to read the Broadcastify Auth JWT token
 resource "google_secret_manager_secret_iam_member" "broadcastify_jwt_secret_access" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.broadcastify_jwt.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
@@ -102,7 +109,7 @@ resource "google_secret_manager_secret_iam_member" "broadcastify_jwt_secret_acce
 
 # Allow the credential rotation function to add, list, and delete versions of the Auth JWT token
 resource "google_secret_manager_secret_iam_member" "broadcastify_jwt_secret_version_manager" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = google_secret_manager_secret.broadcastify_jwt.id
   role      = "roles/secretmanager.secretVersionManager"
   member    = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
@@ -110,7 +117,7 @@ resource "google_secret_manager_secret_iam_member" "broadcastify_jwt_secret_vers
 
 # Allow the rotation function SA to invoke the Cloud Run service (used by Cloud Scheduler OIDC auth)
 resource "google_cloud_run_v2_service_iam_member" "broadcastify_credential_rotation_run_invoker" {
-  project  = var.project_id
+  project  = local.project_id
   location = var.region
   name     = google_cloud_run_v2_service.broadcastify_credential_rotation.name
   role     = "roles/run.invoker"
@@ -121,7 +128,7 @@ resource "google_cloud_run_v2_service_iam_member" "broadcastify_credential_rotat
 resource "google_service_account_iam_member" "cloud_scheduler_token_creator" {
   service_account_id = google_service_account.broadcastify_credential_rotation_sa.name
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${var.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  member             = "serviceAccount:service-${local.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
 # Project-level roles for the Broadcastify credential rotation service account (logging, metrics, tracing)
@@ -132,7 +139,7 @@ resource "google_project_iam_member" "broadcastify_credential_rotation_roles" {
     "roles/cloudtrace.agent",
   ])
 
-  project = var.project_id
+  project = local.project_id
   role    = each.key
   member  = "serviceAccount:${google_service_account.broadcastify_credential_rotation_sa.email}"
 }
@@ -144,7 +151,7 @@ resource "google_project_iam_member" "broadcastify_credential_rotation_roles" {
 # Cloud Scheduler job that fires every 30 minutes to trigger credential rotation.
 resource "google_cloud_scheduler_job" "broadcastify_credential_rotation" {
   name      = "broadcastify-credential-rotation-${var.environment}"
-  project   = var.project_id
+  project   = local.project_id
   region    = var.region
   schedule  = "*/30 * * * *"
   time_zone = "UTC"
@@ -233,7 +240,7 @@ resource "time_sleep" "wait_for_log_metric_propagation" {
 }
 
 resource "google_monitoring_alert_policy" "broadcastify_credential_rotation_failed_executions" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Broadcastify credential rotation job failed (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -278,7 +285,7 @@ resource "google_monitoring_alert_policy" "broadcastify_credential_rotation_fail
 }
 
 resource "google_monitoring_alert_policy" "broadcastify_credential_rotation_run_errors" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Broadcastify credential rotation Cloud Run errors (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -352,7 +359,7 @@ resource "google_cloud_run_v2_service" "broadcastify_credential_rotation" {
 
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
-        value = var.project_id
+        value = local.project_id
       }
 
       env {
