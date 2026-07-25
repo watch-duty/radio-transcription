@@ -1020,6 +1020,60 @@ class TestPrepareRun(unittest.TestCase):
                 storage.has("gs://test-bucket/sft/runs/round-a/config.json")
             )
 
+    def test_prepare_rejects_shared_physical_recording_before_model_inputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            _seed_source_manifests(storage)
+            shared_source = "gs://sources/shared-recording.flac"
+            train = {
+                **_row("gs://audio/train-clip.flac", "train transcript"),
+                "dataset": {"name": "echo"},
+                "source_audio": {"audio_filepath": shared_source},
+            }
+            evaluation = {
+                **_row("gs://audio/eval-clip.flac", "eval transcript"),
+                "dataset": {"name": "echo"},
+                "source_audio": {"audio_filepath": shared_source},
+            }
+            validation = {
+                **_row(
+                    "gs://audio/validation-clip.flac",
+                    "validation transcript",
+                ),
+                "dataset": {"name": "echo"},
+                "source_audio": {
+                    "audio_filepath": "gs://sources/validation.flac"
+                },
+            }
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest([train]),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest([validation]),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest([evaluation]),
+            )
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "train and eval share 1 physical recording group",
+            ):
+                prepare.prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            _assert_no_prepared_outputs(self, tmp, storage)
+
     def test_train_validation_identity_overlap_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = pathlib.Path(tmp_s)

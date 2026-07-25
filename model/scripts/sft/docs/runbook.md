@@ -93,12 +93,14 @@ gemini-sft prepare --config /path/to/run.toml
 ```
 
 For a training round, it copies canonical manifests into the run prefix,
-validates split overlap, derives Gemini JSONL for train and validation, writes
-preflight output, and stores resolved prompts in durable GCS `config.json`. For
-an eval-only round, it validates and publishes only `run_config.toml`,
-`config.json`, and the canonical eval manifest. Its durable config status is
-`eval_prepared`; it intentionally does not publish the training-only root
-`status.json`.
+validates exact-row and physical-recording split overlap, derives Gemini JSONL
+for train and validation, writes preflight output, and stores resolved prompts
+in durable GCS `config.json`. Physical identity uses the existing source URI or
+source SHA-256 metadata, with dataset-scoped normalized filenames only when a
+dataset lacks hashes. For an eval-only round, `prepare` validates and publishes
+only `run_config.toml`, `config.json`, and the canonical eval manifest. Its
+durable config status is `eval_prepared`; it intentionally does not publish the
+training-only root `status.json`.
 
 Every prepared round has these durable inspection points:
 

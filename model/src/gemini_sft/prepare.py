@@ -6,7 +6,7 @@ import json
 import logging
 import typing
 
-from common import gcs_utils
+from common import gcs_utils, recording_groups
 from common.gemini import context, tuning_data
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
@@ -411,6 +411,13 @@ def prepare_artifacts(
         validation_rows,
     )
     artifacts_lib.reject_split_overlap("train", train_rows, "eval", eval_rows)
+    recording_groups.reject_split_leakage(
+        {
+            "train": train_entries,
+            "validation": validation_entries,
+            "eval": eval_entries,
+        }
+    )
 
     train_histories = _training_reference_histories(
         train_entries,
