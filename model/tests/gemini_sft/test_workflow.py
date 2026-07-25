@@ -225,17 +225,23 @@ def _seed_source_manifests(
     validation_uri: str = "gs://audio/validation.flac",
     eval_uri: str = "gs://audio/eval.flac",
 ) -> None:
+    train = _row(train_uri, "train transcript", 4.0)
+    train["source_audio"] = {"audio_filepath": train_uri}
+    validation = _row(validation_uri, "validation transcript", 5.0)
+    validation["source_audio"] = {"audio_filepath": validation_uri}
+    evaluation = _row(eval_uri, "eval transcript", 6.0)
+    evaluation["source_audio"] = {"audio_filepath": eval_uri}
     storage.put(
         "gs://source/manifests/train.jsonl",
-        _manifest([_row(train_uri, "train transcript", 4.0)]),
+        _manifest([train]),
     )
     storage.put(
         "gs://source/manifests/validation.jsonl",
-        _manifest([_row(validation_uri, "validation transcript", 5.0)]),
+        _manifest([validation]),
     )
     storage.put(
         "gs://source/manifests/eval.jsonl",
-        _manifest([_row(eval_uri, "eval transcript", 6.0)]),
+        _manifest([evaluation]),
     )
     storage.put(train_uri, "audio")
     storage.put(validation_uri, "audio")
