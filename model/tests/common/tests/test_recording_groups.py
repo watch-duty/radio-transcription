@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from common import recording_groups
+from common import manifest, recording_groups
 
 
 def _row(
@@ -14,7 +14,9 @@ def _row(
     return {
         "audio_filepath": audio_uri,
         "dataset": {"name": dataset},
+        "duration": 1.0,
         "example_id": audio_uri,
+        "offset": 0.0,
         "segment_id": "001",
         "source_audio": {"audio_filepath": source_uri},
         "text": "transcript",
@@ -50,7 +52,7 @@ class TestRejectSplitLeakage(unittest.TestCase):
         self.assertIn("echo", message)
         self.assertIn("gs://sources/recording.flac", message)
 
-    def test_top_level_original_source_matches_latest_context_contract(
+    def test_top_level_original_source_takes_precedence(
         self,
     ) -> None:
         train = _row(
@@ -81,6 +83,122 @@ class TestRejectSplitLeakage(unittest.TestCase):
         train = _row("gs://clips/train.flac", shared_source)
         train["original_audio_uri"] = "  "
         evaluation = _row("gs://clips/eval.flac", shared_source)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
+    def test_unusable_basename_evidence_does_not_invalidate_row(self) -> None:
+        source_locators = (
+            "https://example.com/raw/recording.mp3",
+            "gs://sources/raw/recording.unknown",
+            "gs://sources/raw/%FF.flac",
+            "opaque-source-id",
+        )
+        for source_locator in source_locators:
+            with self.subTest(source_locator=source_locator):
+                row = _row("gs://clips/train.flac", source_locator)
+                manifest.require_canonical_manifest([row])
+
+                recording_groups.reject_split_leakage(
+                    {
+                        "train": [row],
+                        "validation": [],
+                        "eval": [],
+                    }
+                )
+
+    def test_exact_uri_still_matches_without_basename_evidence(self) -> None:
+        shared_source = "https://example.com/raw/recording.mp3"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [_row("gs://clips/train.flac", shared_source)],
+                    "validation": [],
+                    "eval": [_row("gs://clips/eval.flac", shared_source)],
+                }
+            )
+
+    def test_rejects_training_and_validation_source_overlap(self) -> None:
+        shared_source = "gs://sources/recording.flac"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and validation share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [_row("gs://clips/train.flac", shared_source)],
+                    "validation": [
+                        _row("gs://clips/validation.flac", shared_source)
+                    ],
+                    "eval": [],
+                }
+            )
+
+    def test_allows_validation_and_eval_source_overlap(self) -> None:
+        shared_source = "gs://sources/holdout.flac"
+
+        recording_groups.reject_split_leakage(
+            {
+                "train": [
+                    _row(
+                        "gs://clips/train.flac",
+                        "gs://sources/train.flac",
+                    )
+                ],
+                "validation": [
+                    _row("gs://clips/validation.flac", shared_source)
+                ],
+                "eval": [_row("gs://clips/eval.flac", shared_source)],
+            }
+        )
+
+    def test_nested_original_source_is_used_as_fallback(self) -> None:
+        shared_source = "gs://sources/original.flac"
+        train = _row("gs://clips/train.flac", "unused")
+        train["source_audio"] = {"original_audio_uri": shared_source}
+        evaluation = _row("gs://clips/eval.flac", "unused")
+        evaluation["source_audio"] = {"original_audio_uri": shared_source}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
+    def test_model_ready_audio_is_used_when_source_metadata_is_absent(
+        self,
+    ) -> None:
+        train = _row(
+            "gs://clips/train/shared-recording.flac",
+            "unused",
+        )
+        del train["source_audio"]
+        evaluation = _row(
+            "gs://archive/eval/shared-recording.flac",
+            "unused",
+        )
+        del evaluation["source_audio"]
+        manifest.require_canonical_manifest([train, evaluation])
 
         with self.assertRaisesRegex(
             ValueError,

@@ -19,7 +19,7 @@ _AUDIO_SUFFIXES: typing.Final = (
     ".webm",
 )
 _SHA256_PATTERN: typing.Final = re.compile(r"[0-9a-f]{64}\Z")
-_Node = tuple[str, str]
+_PhysicalSourceKey = tuple[str, str]
 
 
 def reject_split_leakage(
@@ -37,15 +37,18 @@ def reject_split_leakage(
     Args:
         rows_by_split: Canonical manifest rows keyed by split.
 
+    Returns:
+        None after all split pairs pass validation.
+
     Raises:
         ValueError: If source metadata is invalid or a training recording also
             appears in validation or eval.
     """
-    nodes_by_split: dict[str, list[_Node]] = {}
-    physical_nodes: set[_Node] = set()
-    sha_by_physical: dict[_Node, str | None] = {}
+    nodes_by_split: dict[str, list[_PhysicalSourceKey]] = {}
+    physical_nodes: set[_PhysicalSourceKey] = set()
+    sha_by_physical: dict[_PhysicalSourceKey, str | None] = {}
     for split in ("train", "validation", "eval"):
-        nodes: list[_Node] = []
+        nodes: list[_PhysicalSourceKey] = []
         for row_index, row in enumerate(rows_by_split.get(split, ())):
             physical = (
                 _dataset_name(row) or "",
@@ -68,13 +71,13 @@ def reject_split_leakage(
         nodes_by_split[split] = nodes
 
     groups = _UnionFind(physical_nodes)
-    by_uri: dict[str, list[_Node]] = {}
-    by_sha: dict[str, list[_Node]] = {}
-    by_basename: dict[tuple[str, str], list[_Node]] = {}
+    by_uri: dict[str, list[_PhysicalSourceKey]] = {}
+    by_sha: dict[str, list[_PhysicalSourceKey]] = {}
+    by_basename: dict[tuple[str, str], list[_PhysicalSourceKey]] = {}
     legacy_datasets = {
-        node[0]
-        for node, source_sha in sha_by_physical.items()
-        if source_sha is None and node[0]
+        dataset
+        for (dataset, _), source_sha in sha_by_physical.items()
+        if source_sha is None and dataset
     }
     for node in physical_nodes:
         dataset, source_uri = node
@@ -84,7 +87,10 @@ def reject_split_leakage(
             by_sha.setdefault(source_sha, []).append(node)
         if dataset not in legacy_datasets:
             continue
-        basename_key = (dataset, _normalized_basename(source_uri))
+        normalized_basename = _normalized_basename(source_uri)
+        if normalized_basename is None:
+            continue
+        basename_key = (dataset, normalized_basename)
         by_basename.setdefault(basename_key, []).append(node)
     for matches in (
         *by_uri.values(),
@@ -109,10 +115,11 @@ def reject_split_leakage(
 
 
 def _source_sample(
-    physical_nodes: collections.abc.Iterable[_Node],
+    physical_nodes: collections.abc.Iterable[_PhysicalSourceKey],
     groups: _UnionFind,
-    overlap: collections.abc.Set[object],
+    overlap: collections.abc.Set[_PhysicalSourceKey],
 ) -> str:
+    """Format representative physical sources from overlapping groups."""
     matches = sorted(
         node for node in physical_nodes if groups.root(node) in overlap
     )[:5]
@@ -128,6 +135,19 @@ def _source_uri(
     split: str,
     row_index: int,
 ) -> str:
+    """Return the best available physical-source locator for a manifest row.
+
+    Args:
+        row: Canonical manifest row.
+        split: Split name used in validation errors.
+        row_index: Zero-based row index used in validation errors.
+
+    Returns:
+        The first nonblank source locator in precedence order.
+
+    Raises:
+        ValueError: If the row has no usable physical-source locator.
+    """
     candidates: list[object] = [row.get("original_audio_uri")]
     source_audio = row.get("source_audio")
     if isinstance(source_audio, collections.abc.Mapping):
@@ -148,6 +168,17 @@ def _source_uri(
 def _dataset_name(
     row: collections.abc.Mapping[str, typing.Any],
 ) -> str | None:
+    """Return a validated dataset name when the row provides one.
+
+    Args:
+        row: Canonical manifest row.
+
+    Returns:
+        The stripped dataset name, or None when absent.
+
+    Raises:
+        ValueError: If a provided dataset name is not a nonblank string.
+    """
     dataset = row.get("dataset")
     value = (
         dataset.get("name")
@@ -168,6 +199,19 @@ def _source_sha(
     split: str,
     row_index: int,
 ) -> str | None:
+    """Return a validated physical-source SHA-256 when available.
+
+    Args:
+        row: Canonical manifest row.
+        split: Split name used in validation errors.
+        row_index: Zero-based row index used in validation errors.
+
+    Returns:
+        The lowercase SHA-256, or None when lineage metadata omits it.
+
+    Raises:
+        ValueError: If the provided SHA-256 is malformed.
+    """
     source_lineage = row.get("source_lineage")
     if not isinstance(source_lineage, collections.abc.Mapping):
         return None
@@ -183,59 +227,80 @@ def _source_sha(
     return value
 
 
-def _normalized_basename(source_uri: str) -> str:
+def _normalized_basename(source_uri: str) -> str | None:
+    """Return optional basename evidence for a supported GCS audio object.
+
+    Args:
+        source_uri: Physical-source locator.
+
+    Returns:
+        A normalized filename stem, or None when it cannot be derived safely.
+    """
     stem = _filename_stem(source_uri)
+    if stem is None:
+        return None
     normalized = " ".join(
         unicodedata.normalize("NFKC", stem).casefold().split()
     )
-    if not normalized:
-        msg = "original physical source has a blank filename stem"
-        raise ValueError(msg)
-    return normalized
+    return normalized or None
 
 
-def _filename_stem(source_uri: str) -> str:
-    parsed = urllib.parse.urlsplit(source_uri)
+def _filename_stem(source_uri: str) -> str | None:
+    """Extract a known audio filename stem without narrowing valid locators.
+
+    Args:
+        source_uri: Physical-source locator.
+
+    Returns:
+        The decoded filename stem for a supported GCS audio object, or None
+        when the locator is unsuitable for conservative basename matching.
+    """
+    try:
+        parsed = urllib.parse.urlsplit(source_uri)
+    except ValueError:
+        return None
     if (
         parsed.scheme != "gs"
         or not parsed.netloc
         or not parsed.path
         or parsed.path.endswith("/")
     ):
-        msg = "original physical source must be a single-object gs:// URI"
-        raise ValueError(msg)
+        return None
     encoded_name = parsed.path.rsplit("/", maxsplit=1)[-1]
     try:
         filename = urllib.parse.unquote(encoded_name, errors="strict")
-    except UnicodeDecodeError as exc:
-        msg = "original physical source filename is not valid UTF-8"
-        raise ValueError(msg) from exc
+    except UnicodeDecodeError:
+        return None
     lowered = filename.casefold()
     suffix = next(
         (value for value in _AUDIO_SUFFIXES if lowered.endswith(value)),
         None,
     )
     if suffix is None:
-        msg = "original physical source has an unsupported audio suffix"
-        raise ValueError(msg)
+        return None
     stem = filename[: -len(suffix)]
-    if not stem:
-        msg = "original physical source has a blank filename stem"
-        raise ValueError(msg)
-    return stem
+    return stem or None
 
 
 class _UnionFind:
-    def __init__(self, values: collections.abc.Iterable[object]) -> None:
+    """Track transitive physical-source aliases."""
+
+    def __init__(
+        self,
+        values: collections.abc.Iterable[_PhysicalSourceKey],
+    ) -> None:
         self._parent = {value: value for value in values}
 
-    def root(self, value: object) -> object:
+    def root(self, value: _PhysicalSourceKey) -> _PhysicalSourceKey:
         parent = self._parent[value]
         if parent != value:
             self._parent[value] = self.root(parent)
         return self._parent[value]
 
-    def merge_all(self, values: collections.abc.Sequence[object]) -> None:
+    def merge_all(
+        self,
+        values: collections.abc.Sequence[_PhysicalSourceKey],
+    ) -> None:
         if not values:
             return
         first = values[0]
