@@ -34,20 +34,21 @@ BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
 
 
 def _gemini_attempt_events(
-    mock_log: MagicMock,
+    *mock_logs: MagicMock,
 ) -> list[dict[str, object]]:
     """Return structured Gemini-attempt fields from captured logger calls."""
     events = []
-    for log_call in mock_log.call_args_list:
-        extra = log_call.kwargs.get("extra")
-        if not isinstance(extra, dict):
-            continue
-        fields = extra.get("json_fields")
-        if (
-            isinstance(fields, dict)
-            and fields.get("event_type") == "gemini_inference_attempt"
-        ):
-            events.append(fields)
+    for mock_log in mock_logs:
+        for log_call in mock_log.call_args_list:
+            extra = log_call.kwargs.get("extra")
+            if not isinstance(extra, dict):
+                continue
+            fields = extra.get("json_fields")
+            if (
+                isinstance(fields, dict)
+                and fields.get("event_type") == "gemini_inference_attempt"
+            ):
+                events.append(fields)
     return events
 
 
@@ -1041,7 +1042,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             ) as mock_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
-            ) as mock_log,
+            ) as mock_info,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.warning"
+            ) as mock_warning,
         ):
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
@@ -1124,7 +1128,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
             )
 
-            events = _gemini_attempt_events(mock_log)
+            warning_events = _gemini_attempt_events(mock_warning)
+            info_events = _gemini_attempt_events(mock_info)
+            self.assertEqual(len(warning_events), 3)
+            self.assertEqual(len(info_events), 1)
+            events = warning_events + info_events
             self.assertEqual(
                 [
                     (
@@ -1188,7 +1196,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             ) as mock_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
-            ) as mock_log,
+            ) as mock_info,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.warning"
+            ) as mock_warning,
         ):
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
@@ -1223,8 +1234,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "")
-            events = _gemini_attempt_events(mock_log)
+            events = _gemini_attempt_events(mock_warning)
             self.assertEqual(len(events), 1)
+            self.assertEqual(_gemini_attempt_events(mock_info), [])
             self.assertEqual(events[0]["finish_reason"], "STOP")
             self.assertEqual(events[0]["response_text"], "")
 
@@ -1238,7 +1250,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             ) as mock_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
-            ) as mock_log,
+            ) as mock_info,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.warning"
+            ) as mock_warning,
         ):
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
@@ -1266,8 +1281,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
 
-            events = _gemini_attempt_events(mock_log)
+            events = _gemini_attempt_events(mock_warning)
             self.assertEqual(len(events), 1)
+            self.assertEqual(_gemini_attempt_events(mock_info), [])
             self.assertIsNone(events[0]["response_id"])
             self.assertEqual(
                 events[0]["exception_type"],
@@ -1287,7 +1303,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             ) as mock_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
-            ) as mock_log,
+            ) as mock_info,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.warning"
+            ) as mock_warning,
         ):
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
@@ -1324,7 +1343,8 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "Tuned model succeeded")
-            self.assertEqual(_gemini_attempt_events(mock_log), [])
+            self.assertEqual(_gemini_attempt_events(mock_info), [])
+            self.assertEqual(_gemini_attempt_events(mock_warning), [])
 
     async def test_gemini_transcriber_fallback_records_fallback_status(
         self,
