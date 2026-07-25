@@ -1,8 +1,3 @@
-variable "project_id" {
-  description = "The GCP project ID."
-  type        = string
-}
-
 variable "region" {
   description = "The GCP region for all resources."
   type        = string
@@ -49,8 +44,5 @@ variable "notification_channel_id" {
   default     = null
 }
 
-variable "project_number" {
-  type        = string
-  description = "GCP Project Number"
-}
+
 

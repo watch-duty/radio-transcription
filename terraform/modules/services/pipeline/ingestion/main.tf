@@ -166,10 +166,8 @@ module "broadcastify_credential_rotation" {
 module "oldest_feed_publisher" {
   source = "./oldest_feed_publisher"
 
-  project_id                      = local.project_id
   region                          = var.region
   environment                     = var.environment
-  project_number                  = local.project_number
   network_name                    = var.network_name
   subnet_name                     = var.subnet_name
   alloydb_primary_instance_ip     = var.alloydb_primary_instance_ip

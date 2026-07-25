@@ -23,7 +23,7 @@
 # slack_critical in prod, alert remains visible in the GCP Console either way.
 
 resource "google_monitoring_alert_policy" "publisher_metric_absent" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "oldest-feed-publisher metric absent (${var.environment})"
   combiner     = "OR"
   enabled      = true

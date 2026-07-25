@@ -1,3 +1,10 @@
+data "google_project" "project" {}
+
+locals {
+  project_id     = data.google_project.project.project_id
+  project_number = data.google_project.project.number
+}
+
 # =============================================================================
 # OLDEST-FEED PUBLISHER (Cloud Run v2 + Cloud Scheduler)
 # =============================================================================
@@ -40,7 +47,7 @@ resource "google_project_iam_member" "publisher_roles" {
     "roles/cloudtrace.agent",
   ])
 
-  project = var.project_id
+  project = local.project_id
   role    = each.key
   member  = "serviceAccount:${google_service_account.oldest_feed_publisher.email}"
 }
@@ -49,7 +56,7 @@ resource "google_project_iam_member" "publisher_roles" {
 # the worker password secret only (not project-wide). Secret already exists
 # (created by module.storage); we reference it by ID, do not create a new one.
 resource "google_secret_manager_secret_iam_member" "publisher_password_accessor" {
-  project   = var.project_id
+  project   = local.project_id
   secret_id = var.worker_password_secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.oldest_feed_publisher.email}"
@@ -58,7 +65,7 @@ resource "google_secret_manager_secret_iam_member" "publisher_password_accessor"
 # IAM-07: Scheduler SA gets roles/run.invoker on the Publisher Cloud Run
 # service. Service-resource-scoped (NOT project-wide) — least privilege.
 resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
-  project  = var.project_id
+  project  = local.project_id
   location = var.region
   name     = google_cloud_run_v2_service.oldest_feed_publisher.name
   role     = "roles/run.invoker"
@@ -73,7 +80,7 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
 resource "google_service_account_iam_member" "cloud_scheduler_token_creator" {
   service_account_id = google_service_account.oldest_feed_publisher_scheduler.name
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-${var.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  member             = "serviceAccount:service-${local.project_number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
 }
 
 # ---------------------------------------------------------------------------
@@ -143,7 +150,7 @@ resource "google_cloud_run_v2_service" "oldest_feed_publisher" {
 
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
-        value = var.project_id
+        value = local.project_id
       }
       env {
         name  = "IS_GCP"
@@ -194,7 +201,7 @@ resource "google_cloud_run_v2_service" "oldest_feed_publisher" {
 # add cost without benefit at 60s cadence).
 resource "google_cloud_scheduler_job" "oldest_feed_publisher" {
   name             = "oldest-feed-publisher-${var.environment}"
-  project          = var.project_id
+  project          = local.project_id
   region           = var.region
   schedule         = "* * * * *" # every minute
   time_zone        = "UTC"
