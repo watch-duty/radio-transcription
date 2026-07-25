@@ -13,7 +13,7 @@ locals {
 }
 
 module "collector_mig" {
-  source = "../../../container_mig"
+  source = "./container_mig"
 
   project_id            = local.project_id
   region                = var.region
