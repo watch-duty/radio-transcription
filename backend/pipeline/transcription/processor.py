@@ -177,10 +177,7 @@ class TranscriptionEventProcessor:
         """Invokes the active transcriber, handles empty transcripts, and returns the text."""
         duration_ms = self._get_duration_ms(claim)
         audio_uri = claim.transcription_audio_uri or claim.canonical_audio_uri
-        context = base.TranscriptionContext(
-            segment_id=claim.segment_id,
-            feed_id=claim.feed_id,
-        )
+        context = base.TranscriptionContext(segment_id=claim.segment_id)
 
         record_pipeline_stage(
             "transcription_status", TranscriptionStatus.ATTEMPTS

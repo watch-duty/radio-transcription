@@ -1095,10 +1095,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             result = await transcriber.transcribe(
                 uri="gs://audio/transcription.flac",
                 duration_ms=1000,
-                context=base.TranscriptionContext(
-                    segment_id="segment-1",
-                    feed_id="feed-1",
-                ),
+                context=base.TranscriptionContext(segment_id="segment-1"),
             )
 
             # Asserts
@@ -1164,6 +1161,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             for event in events:
                 for removed_field in (
                     "duration_ms",
+                    "feed_id",
                     "location",
                     "max_attempts",
                     "model_role",
@@ -1182,7 +1180,6 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "fallback-success-id",
             )
             self.assertEqual(events[-1]["segment_id"], "segment-1")
-            self.assertEqual(events[-1]["feed_id"], "feed-1")
             self.assertEqual(
                 events[-1]["audio_uri"],
                 "gs://audio/transcription.flac",
@@ -1228,10 +1225,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             result = await transcriber.transcribe(
                 uri="gs://audio/transcription.flac",
                 duration_ms=1000,
-                context=base.TranscriptionContext(
-                    segment_id="segment-1",
-                    feed_id="feed-1",
-                ),
+                context=base.TranscriptionContext(segment_id="segment-1"),
             )
 
             self.assertEqual(result, "")
@@ -1277,10 +1271,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 await transcriber.transcribe(
                     uri="gs://audio/transcription.flac",
                     duration_ms=1000,
-                    context=base.TranscriptionContext(
-                        segment_id="segment-1",
-                        feed_id="feed-1",
-                    ),
+                    context=base.TranscriptionContext(segment_id="segment-1"),
                 )
 
             events = _gemini_attempt_events(mock_warning)
@@ -1339,10 +1330,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             result = await transcriber.transcribe(
                 uri="gs://audio/transcription.flac",
                 duration_ms=1000,
-                context=base.TranscriptionContext(
-                    segment_id="segment-1",
-                    feed_id="feed-1",
-                ),
+                context=base.TranscriptionContext(segment_id="segment-1"),
             )
 
             self.assertEqual(result, "Tuned model succeeded")

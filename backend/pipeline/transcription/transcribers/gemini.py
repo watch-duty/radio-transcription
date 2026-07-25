@@ -178,7 +178,6 @@ def _log_inference_attempt(
             "segment_id": (
                 attempt.context.segment_id if attempt.context else None
             ),
-            "feed_id": attempt.context.feed_id if attempt.context else None,
             "audio_uri": attempt.audio_uri,
             "model": attempt.model,
             "call_stage": attempt.call_stage,

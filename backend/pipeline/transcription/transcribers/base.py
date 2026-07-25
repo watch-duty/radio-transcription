@@ -9,7 +9,6 @@ class TranscriptionContext:
     """Segment metadata available to transcriber diagnostics."""
 
     segment_id: str
-    feed_id: str
 
 
 class Transcriber(abc.ABC):
