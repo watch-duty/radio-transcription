@@ -286,6 +286,31 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
         self.assertIn("gs://fake/2.flac", self.ctx.contributing_audio_uris)
 
+    def test_end_audio_offset_anchored_to_last_contributing_file(self) -> None:
+        """Verifies end_audio_offset_ms is computed relative to the LAST contributing
+        file's own start time, matching how start_audio_offset_ms is relative to the
+        FIRST contributing file -- rather than as a bare segment duration, which
+        previously left the two offsets in different, incomparable reference frames.
+        """
+        self.ctx.transmission_start_time_ms = 1000
+        self.ctx.buffer_start_time_ms = 1000
+        self.ctx.start_audio_offset_ms = 1000
+        self.ctx.buffer_duration_ms = 17000
+        self.ctx.last_segment_end_time_ms = 18000
+        self.ctx.speech_segments = [TimeRange(start_ms=1000, end_ms=18000)]
+        self.ctx.add_contributing_chunk("gs://fake/1.flac", 0)
+        self.ctx.add_contributing_chunk("gs://fake/2.flac", 15000)
+
+        flush = self.state_machine._flush_current_transmission(
+            reason="test", ctx=self.ctx
+        )
+
+        # Relative to the FIRST contributing file (starts at 0).
+        self.assertEqual(flush.start_audio_offset_ms, 1000)
+        # Relative to the LAST contributing file (starts at 15000), not the
+        # segment's own 17000ms duration and not an offset from the first file.
+        self.assertEqual(flush.end_audio_offset_ms, 3000)
+
     def test_late_chunk_excessive_speech_duration_split(self) -> None:
         """Verifies that an isolated late-arriving chunk containing speech exceeding
         max_transmission_duration_ms is force-split internally without corrupting main timeline.

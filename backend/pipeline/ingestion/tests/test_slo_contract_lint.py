@@ -11,7 +11,8 @@ Two invariants protected here:
    ``# SLO: chunk_ingested emit`` marker exist under
    ``backend/pipeline/ingestion/`` (excluding tests). The
    ``call_download_failed`` marker lives in the shared telemetry helper;
-   zero emits are allowed in icecast or echo.
+   the chunk-ingested marker lives in the helper shared by the Feed and SID
+   Calls pipelines.
 """
 
 from __future__ import annotations
@@ -64,13 +65,13 @@ class TestReceiptTimeStampMarkerCount(unittest.TestCase):
 
 
 class TestEmitMarkerCount(unittest.TestCase):
-    """Phase 2: emit-site invariant (D-18 + chunk_ingested single site).
+    """Phase 2: emit-site invariant (D-18 + chunk_ingested sites).
 
     Enforces exactly 1 call-download-failed SLO marker (in the
     shared telemetry helper) and exactly 1 `# SLO: chunk_ingested emit`
-    marker (inline in collector_runtime._process_feed). A collector that
-    needs call_download_failed telemetry must call the helper instead of
-    adding a new emit marker.
+    marker shared by legacy Feed grants and SID Calls batches. A collector
+    that needs either event must call its shared helper instead of adding a
+    new emit marker.
 
     Also asserts ZERO call_download_failed markers in bcfy_feeds/icecast
     (SLO spec: no discrete download step) and echo (pre-existing Cloud Run
@@ -127,8 +128,8 @@ class TestEmitMarkerCount(unittest.TestCase):
                 f"'# SLO: chunk_ingested emit' marker under "
                 f"{_INGESTION_DIR.relative_to(_REPO_ROOT)} (excluding tests/), "
                 f"found {count}. Files: {found_files}. "
-                "The emit lives in collector_runtime._process_feed strictly "
-                "after the fenced bookmark and Pub/Sub publish both succeed."
+                "The emits live after the corresponding progress and Pub/Sub "
+                "publication obligations settle."
             ),
         )
 
