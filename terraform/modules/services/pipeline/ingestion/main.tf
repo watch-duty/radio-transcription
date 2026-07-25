@@ -106,6 +106,80 @@ module "collector_mig" {
   ]
 }
 
+# =============================================================================
+# ECHO AUDIO INGESTION
+# =============================================================================
+
+module "echo" {
+  source = "./echo"
+
+  region                          = var.region
+  environment                     = var.environment
+  echo_recordings_bucket_name     = var.echo_recordings_bucket_name
+  dev_recordings_bucket_name      = var.dev_recordings_bucket_name
+  prod_project_id                 = var.prod_project_id
+  network_name                    = var.network_name
+  subnet_name                     = var.subnet_name
+  alloydb_primary_instance_ip     = var.alloydb_primary_instance_ip
+  alloydb_connection_pooling_port = var.alloydb_connection_pooling_port
+  alloydb_database_name           = var.alloydb_database_name
+  ingestion_staging_bucket_name   = var.ingestion_staging_bucket_name
+  topic_segmented_audio_id        = var.topic_segmented_audio_id
+  topic_segmented_audio_name      = var.topic_segmented_audio_name
+  worker_password_secret_id       = var.worker_password_secret_id
+  echo_ingestion_max_instances   = var.echo_ingestion_max_instances
+}
+
+# =============================================================================
+# BROADCASTIFY CREDENTIAL ROTATION
+# =============================================================================
+
+module "broadcastify_credential_rotation" {
+  source = "./broadcastify_credential_rotation"
+
+  project_id              = local.project_id
+  region                  = var.region
+  environment             = var.environment
+  project_number          = local.project_number
+  broadcastify_api_key    = var.broadcastify_api_key
+  broadcastify_api_key_id = var.broadcastify_api_key_id
+  broadcastify_api_app_id = var.broadcastify_api_app_id
+  broadcastify_username   = var.broadcastify_username
+  broadcastify_password   = var.broadcastify_password
+  notification_channel_id = var.slack_critical_notification_channel_id
+}
+
+# =============================================================================
+# OLDEST-FEED PUBLISHER (Cloud Run v2 + Cloud Scheduler — Phase 2 PUB-01)
+# =============================================================================
+# Publishes custom.googleapis.com/feeds/unclaimed_count every 60s; consumed
+# by the Phase 3 autoscaler as the primary scaling signal. The metric
+# descriptor lives in this file (next to quarantine_events) per METRIC-01.
+#
+# NOTE on naming: the directory and Cloud Run service name still say
+# "oldest-feed-publisher" — semantic mismatch with the new metric. Renaming
+# would force destroy + recreate of the Cloud Run service, scheduler, and
+# IAM bindings. A follow-up PR will likely add the latency metric back as a
+# second write from this same service (driving an SLO alert), at which point
+# either name fits or rename becomes a deliberate cleanup.
+
+module "oldest_feed_publisher" {
+  source = "./oldest_feed_publisher"
+
+  project_id                      = local.project_id
+  region                          = var.region
+  environment                     = var.environment
+  project_number                  = local.project_number
+  network_name                    = var.network_name
+  subnet_name                     = var.subnet_name
+  alloydb_primary_instance_ip     = var.alloydb_primary_instance_ip
+  alloydb_connection_pooling_port = var.alloydb_connection_pooling_port
+  alloydb_database_name           = var.alloydb_database_name
+  worker_password_secret_id       = var.worker_password_secret_id
+
+  notification_channel_id = var.slack_critical_notification_channel_id
+}
+
 # Two-signal MAX policy on TWO ADDITIVE metrics. The autoscaler scales on
 # whichever signal demands more capacity; both must be under target for
 # scale-in.
@@ -216,6 +290,20 @@ resource "google_compute_region_autoscaler" "collector" {
       time_window_sec = 300
     }
   }
+}
+
+
+# =============================================================================
+# MONITORING (LOG-BASED METRICS + SLOS)
+# =============================================================================
+
+module "monitoring" {
+  count  = var.enable_monitoring ? 1 : 0
+  source = "./monitoring"
+
+  region                  = var.region
+  environment             = var.environment
+  notification_channel_id = var.slack_critical_notification_channel_id
 }
 
 
@@ -344,10 +432,6 @@ resource "google_project_iam_member" "collector_trace_writer" {
 }
 
 
-
-
-
-
 # Publish audio storage trigger messages to continuous-audio topic
 resource "google_pubsub_topic_iam_member" "collector_publisher" {
   project = local.project_id
@@ -371,94 +455,4 @@ resource "google_secret_manager_secret_iam_member" "collector_broadcastify_jwt_a
   role       = "roles/secretmanager.secretAccessor"
   member     = "serviceAccount:${google_service_account.audio_ingestion_worker.email}"
   depends_on = [module.broadcastify_credential_rotation]
-}
-
-# Service account for device uploads via HMAC keys
-# =============================================================================
-# ECHO AUDIO INGESTION
-# =============================================================================
-
-module "echo" {
-  source = "./echo"
-
-  region                          = var.region
-  environment                     = var.environment
-  echo_recordings_bucket_name     = var.echo_recordings_bucket_name
-  dev_recordings_bucket_name      = var.dev_recordings_bucket_name
-  prod_project_id                 = var.prod_project_id
-  network_name                    = var.network_name
-  subnet_name                     = var.subnet_name
-  alloydb_primary_instance_ip     = var.alloydb_primary_instance_ip
-  alloydb_connection_pooling_port = var.alloydb_connection_pooling_port
-  alloydb_database_name           = var.alloydb_database_name
-  ingestion_staging_bucket_name   = var.ingestion_staging_bucket_name
-  topic_segmented_audio_id        = var.topic_segmented_audio_id
-  topic_segmented_audio_name      = var.topic_segmented_audio_name
-  worker_password_secret_id       = var.worker_password_secret_id
-  echo_ingestion_max_instances   = var.echo_ingestion_max_instances
-}
-
-# =============================================================================
-# BROADCASTIFY CREDENTIAL ROTATION
-# =============================================================================
-
-module "broadcastify_credential_rotation" {
-  source = "./broadcastify_credential_rotation"
-
-  project_id              = local.project_id
-  region                  = var.region
-  environment             = var.environment
-  project_number          = local.project_number
-  broadcastify_api_key    = var.broadcastify_api_key
-  broadcastify_api_key_id = var.broadcastify_api_key_id
-  broadcastify_api_app_id = var.broadcastify_api_app_id
-  broadcastify_username   = var.broadcastify_username
-  broadcastify_password   = var.broadcastify_password
-  notification_channel_id = var.slack_critical_notification_channel_id
-}
-
-# =============================================================================
-# OLDEST-FEED PUBLISHER (Cloud Run v2 + Cloud Scheduler — Phase 2 PUB-01)
-# =============================================================================
-# Publishes custom.googleapis.com/feeds/unclaimed_count every 60s; consumed
-# by the Phase 3 autoscaler as the primary scaling signal. The metric
-# descriptor lives in this file (next to quarantine_events) per METRIC-01.
-#
-# NOTE on naming: the directory and Cloud Run service name still say
-# "oldest-feed-publisher" — semantic mismatch with the new metric. Renaming
-# would force destroy + recreate of the Cloud Run service, scheduler, and
-# IAM bindings. A follow-up PR will likely add the latency metric back as a
-# second write from this same service (driving an SLO alert), at which point
-# either name fits or rename becomes a deliberate cleanup.
-
-module "oldest_feed_publisher" {
-  source = "./oldest_feed_publisher"
-
-  project_id                      = local.project_id
-  region                          = var.region
-  environment                     = var.environment
-  project_number                  = local.project_number
-  network_name                    = var.network_name
-  subnet_name                     = var.subnet_name
-  alloydb_primary_instance_ip     = var.alloydb_primary_instance_ip
-  alloydb_connection_pooling_port = var.alloydb_connection_pooling_port
-  alloydb_database_name           = var.alloydb_database_name
-  worker_password_secret_id       = var.worker_password_secret_id
-
-  notification_channel_id = var.slack_critical_notification_channel_id
-}
-
-
-# =============================================================================
-# MONITORING (LOG-BASED METRICS + SLOS)
-# =============================================================================
-
-module "monitoring" {
-  count  = var.enable_monitoring ? 1 : 0
-  source = "./monitoring"
-
-  project_id              = local.project_id
-  region                  = var.region
-  environment             = var.environment
-  notification_channel_id = var.slack_critical_notification_channel_id
 }

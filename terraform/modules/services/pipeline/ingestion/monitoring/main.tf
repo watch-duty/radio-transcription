@@ -1,4 +1,7 @@
+data "google_project" "project" {}
+
 locals {
+  project_id                 = data.google_project.project.project_id
   metric_name_suffix         = "_${var.environment}"
   resolved_echo_service_name = coalesce(var.echo_service_name, "echo-audio-ingestion-${var.environment}")
 
@@ -40,7 +43,7 @@ locals {
 }
 
 resource "google_logging_metric" "chunk_ingested" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_chunk_ingested${local.metric_name_suffix}"
   description = "Successful chunk-ingest events from the ingestion MIG. Drives the download SLO's good filter."
   filter      = <<-EOT
@@ -71,7 +74,7 @@ resource "google_logging_metric" "chunk_ingested" {
 }
 
 resource "google_logging_metric" "chunk_latency" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_chunk_latency${local.metric_name_suffix}"
   description = "Per-chunk processing latency distribution from the ingestion MIG. Drives per-source latency alerting in the follow-up alerts project."
   # Clock-skew negatives would corrupt the distribution; filter at ingest.
@@ -112,7 +115,7 @@ resource "google_logging_metric" "chunk_latency" {
 }
 
 resource "google_logging_metric" "call_download_failed" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_call_download_failed${local.metric_name_suffix}"
   description = "Audio download failures from polling collectors. Drives the download SLO's bad filter."
   filter      = <<-EOT
@@ -142,7 +145,7 @@ resource "google_logging_metric" "call_download_failed" {
 }
 
 resource "google_logging_metric" "feed_quarantined" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_feed_quarantine_with_labels${local.metric_name_suffix}"
   description = "Feed quarantine events. Drives the quarantine alert in the follow-up alerts project."
   filter      = <<-EOT
@@ -184,7 +187,7 @@ resource "google_logging_metric" "feed_quarantined" {
 }
 
 resource "google_logging_metric" "collector_log_activity" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_collector_log_activity${local.metric_name_suffix}"
   description = "Any log emission from the ingestion logger. Drives the fleet-silent alert in the follow-up alerts project. Unlabeled on purpose (fleet aggregate)."
   filter      = <<-EOT
@@ -204,13 +207,13 @@ resource "google_logging_metric" "collector_log_activity" {
 }
 
 resource "google_monitoring_custom_service" "ingestion" {
-  project      = var.project_id
+  project      = local.project_id
   service_id   = "ingestion-${var.environment}"
   display_name = "Audio ingestion (MIG fleet) — ${var.environment}"
 }
 
 resource "google_monitoring_service" "echo" {
-  project      = var.project_id
+  project      = local.project_id
   service_id   = "echo-${var.environment}"
   display_name = "Echo audio ingestion (Cloud Run) — ${var.environment}"
 
@@ -224,7 +227,7 @@ resource "google_monitoring_service" "echo" {
 }
 
 resource "google_monitoring_slo" "download_success" {
-  project             = var.project_id
+  project             = local.project_id
   service             = google_monitoring_custom_service.ingestion.service_id
   slo_id              = "download-success-${var.environment}"
   display_name        = "Download success rate — ${var.environment}"
@@ -241,7 +244,7 @@ resource "google_monitoring_slo" "download_success" {
 }
 
 resource "google_monitoring_slo" "echo_availability" {
-  project             = var.project_id
+  project             = local.project_id
   service             = google_monitoring_service.echo.service_id
   slo_id              = "echo-availability-${var.environment}"
   display_name        = "Echo availability — ${var.environment}"
@@ -294,7 +297,7 @@ resource "google_monitoring_slo" "echo_availability" {
 # =============================================================================
 
 resource "google_monitoring_alert_policy" "download_burn_rate" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Download SLO burn-rate (${var.environment})"
   combiner     = "AND"
   enabled      = true
@@ -360,7 +363,7 @@ resource "google_monitoring_alert_policy" "download_burn_rate" {
 }
 
 resource "google_monitoring_alert_policy" "echo_burn_rate" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Echo SLO burn-rate (${var.environment})"
   combiner     = "AND"
   enabled      = true
@@ -430,7 +433,7 @@ resource "google_monitoring_alert_policy" "echo_burn_rate" {
 # =============================================================================
 
 resource "google_monitoring_alert_policy" "feed_quarantine" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Feed quarantine event (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -475,7 +478,7 @@ resource "google_monitoring_alert_policy" "feed_quarantine" {
 }
 
 resource "google_monitoring_alert_policy" "fleet_silent" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Ingestion fleet silent — no log activity (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -520,7 +523,7 @@ resource "google_monitoring_alert_policy" "fleet_silent" {
 # =============================================================================
 
 resource "google_monitoring_alert_policy" "chunk_latency_bcfy_feeds" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Per-source latency: bcfy_feeds P95 > 45s (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -564,7 +567,7 @@ resource "google_monitoring_alert_policy" "chunk_latency_bcfy_feeds" {
 }
 
 resource "google_monitoring_alert_policy" "chunk_latency_openmhz" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Per-source latency: openmhz P95 > 60s (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -608,7 +611,7 @@ resource "google_monitoring_alert_policy" "chunk_latency_openmhz" {
 }
 
 resource "google_monitoring_alert_policy" "chunk_latency_bcfy_calls" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Per-source latency: bcfy_calls P95 > 60s (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -652,7 +655,7 @@ resource "google_monitoring_alert_policy" "chunk_latency_bcfy_calls" {
 }
 
 resource "google_monitoring_alert_policy" "echo_request_latency" {
-  project      = var.project_id
+  project      = local.project_id
   display_name = "Echo Cloud Run request latency P95 > 60s (${var.environment})"
   combiner     = "OR"
   enabled      = true
@@ -697,7 +700,7 @@ resource "google_monitoring_alert_policy" "echo_request_latency" {
 }
 
 resource "google_logging_metric" "active_feed_count" {
-  project     = var.project_id
+  project     = local.project_id
   name        = "${var.log_metric_name_prefix}_active_feed_count${local.metric_name_suffix}"
   description = "Active feed leases processed by MIG ingestion workers. Extracted from collector_runtime logs."
 
@@ -729,7 +732,7 @@ resource "google_logging_metric" "active_feed_count" {
 
 # Custom metric: quarantine event signal (emitted by collector runtime)
 resource "google_monitoring_metric_descriptor" "quarantine_events" {
-  project      = var.project_id
+  project      = local.project_id
   type         = "custom.googleapis.com/feeds/quarantine_events"
   metric_kind  = "GAUGE"
   value_type   = "INT64"
@@ -762,7 +765,7 @@ resource "google_monitoring_metric_descriptor" "quarantine_events" {
 # custom.googleapis.com/feeds/* metric in this codebase). unit "1"
 # (dimensionless count). No labels — fleet-wide signal.
 resource "google_monitoring_metric_descriptor" "unclaimed_count" {
-  project      = var.project_id
+  project      = local.project_id
   type         = "custom.googleapis.com/feeds/unclaimed_count"
   metric_kind  = "GAUGE"
   value_type   = "INT64"
