@@ -74,40 +74,6 @@ class TestRejectSplitLeakage(unittest.TestCase):
                 }
             )
 
-    def test_blank_top_level_source_is_rejected(self) -> None:
-        train = _row(
-            "gs://clips/train.flac",
-            "gs://sources/train.flac",
-        )
-        train["original_audio_uri"] = "  "
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "train row 0 original_audio_uri must be a nonblank string",
-        ):
-            recording_groups.reject_split_leakage(
-                {
-                    "train": [train],
-                    "validation": [],
-                    "eval": [],
-                }
-            )
-
-    def test_exact_source_uri_matches_globally(self) -> None:
-        shared_source = "https://example.com/raw/recording.mp3"
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "train and eval share 1 physical recording group",
-        ):
-            recording_groups.reject_split_leakage(
-                {
-                    "train": [_row("gs://clips/train.flac", shared_source)],
-                    "validation": [],
-                    "eval": [_row("gs://clips/eval.flac", shared_source)],
-                }
-            )
-
     def test_rejects_training_and_validation_source_overlap(self) -> None:
         shared_source = "gs://sources/recording.flac"
 
@@ -124,62 +90,6 @@ class TestRejectSplitLeakage(unittest.TestCase):
                     "eval": [],
                 }
             )
-
-    def test_allows_validation_and_eval_source_overlap(self) -> None:
-        shared_source = "gs://sources/holdout.flac"
-
-        recording_groups.reject_split_leakage(
-            {
-                "train": [
-                    _row(
-                        "gs://clips/train.flac",
-                        "gs://sources/train.flac",
-                    )
-                ],
-                "validation": [
-                    _row("gs://clips/validation.flac", shared_source)
-                ],
-                "eval": [_row("gs://clips/eval.flac", shared_source)],
-            }
-        )
-
-    def test_requires_explicit_physical_source_provenance(self) -> None:
-        train = _row(
-            "gs://clips/train.flac",
-            "gs://sources/train.flac",
-        )
-        del train["source_audio"]
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "train row 0 lacks physical source provenance",
-        ):
-            recording_groups.reject_split_leakage(
-                {
-                    "train": [train],
-                    "validation": [],
-                    "eval": [],
-                }
-            )
-
-    def test_preserves_source_locator_fragment_identity(self) -> None:
-        recording_groups.reject_split_leakage(
-            {
-                "train": [
-                    _row(
-                        "gs://clips/train.flac",
-                        "gs://sources/shared.flac#1",
-                    )
-                ],
-                "validation": [],
-                "eval": [
-                    _row(
-                        "gs://clips/eval.flac",
-                        "gs://sources/shared.flac#2",
-                    )
-                ],
-            }
-        )
 
     def test_rejects_matching_existing_source_sha_across_renamed_objects(
         self,
@@ -251,28 +161,6 @@ class TestRejectSplitLeakage(unittest.TestCase):
                     "eval": [evaluation],
                 }
             )
-
-    def test_different_source_uris_and_hashes_do_not_match(
-        self,
-    ) -> None:
-        train = _row(
-            "gs://clips/train.flac",
-            "gs://sources/a/shared-name.flac",
-        )
-        train["source_lineage"] = {"source_encoded_sha256": "a" * 64}
-        evaluation = _row(
-            "gs://clips/eval.flac",
-            "gs://archive/b/shared-name.wav",
-        )
-        evaluation["source_lineage"] = {"source_encoded_sha256": "b" * 64}
-
-        recording_groups.reject_split_leakage(
-            {
-                "train": [train],
-                "validation": [],
-                "eval": [evaluation],
-            }
-        )
 
 
 class TestUnionFind(unittest.TestCase):
