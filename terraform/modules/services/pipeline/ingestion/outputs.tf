@@ -10,12 +10,12 @@ output "collector_instance_group" {
 
 output "echo_recordings_uploader_hmac_access_id" {
   description = "The HMAC access ID for uploading Echo recordings."
-  value       = google_storage_hmac_key.echo_recordings_uploader.access_id
+  value       = module.echo.echo_recordings_uploader_hmac_access_id
 }
 
 output "echo_recordings_uploader_hmac_secret" {
   description = "The HMAC secret for uploading Echo recordings."
-  value       = google_storage_hmac_key.echo_recordings_uploader.secret
+  value       = module.echo.echo_recordings_uploader_hmac_secret
   sensitive   = true
 }
 
@@ -56,5 +56,5 @@ output "monitoring_resolved_echo_service_name" {
 
 output "echo_service_name" {
   description = "The name of the deployed echo ingestion Cloud Run service."
-  value       = google_cloud_run_v2_service.echo_ingestion.name
+  value       = module.echo.echo_ingestion_service_name
 }

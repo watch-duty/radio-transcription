@@ -727,3 +727,32 @@ resource "google_logging_metric" "active_feed_count" {
   }
 }
 
+# Custom metric: quarantine event signal (emitted by collector runtime)
+resource "google_monitoring_metric_descriptor" "quarantine_events" {
+  project      = var.project_id
+  type         = "custom.googleapis.com/feeds/quarantine_events"
+  metric_kind  = "GAUGE"
+  value_type   = "INT64"
+  description  = "Emitted when a feed transitions to quarantined status."
+  display_name = "Feed Quarantine Events"
+
+  labels {
+    key         = "feed_id"
+    value_type  = "STRING"
+    description = "UUID of the quarantined feed."
+  }
+
+  labels {
+    key         = "feed_name"
+    value_type  = "STRING"
+    description = "Human-readable name of the feed."
+  }
+
+  labels {
+    key         = "source_type"
+    value_type  = "STRING"
+    description = "Feed source type slug (e.g. bcfy_feeds)."
+  }
+}
+
+
