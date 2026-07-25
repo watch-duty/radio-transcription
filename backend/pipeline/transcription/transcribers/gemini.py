@@ -135,7 +135,7 @@ def _response_log_fields(
             "response_id": None,
             "candidate_count": None,
             "finish_reason": None,
-            "response_text": None,
+            "response_text_length": None,
         }
 
     candidates = response.candidates or []
@@ -156,7 +156,7 @@ def _response_log_fields(
         ),
         "candidate_count": len(candidates),
         "finish_reason": finish_reason,
-        "response_text": _response_text(response),
+        "response_text_length": len(_response_text(response)),
     }
 
 

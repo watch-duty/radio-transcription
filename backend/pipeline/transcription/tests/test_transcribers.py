@@ -1167,14 +1167,15 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     "location",
                     "max_attempts",
                     "model_role",
+                    "response_text",
                 ):
                     self.assertNotIn(removed_field, event)
             self.assertEqual(events[0]["response_id"], "tuned-failed-id")
             self.assertIsNone(events[0]["finish_reason"])
-            self.assertEqual(events[0]["response_text"], "")
+            self.assertEqual(events[0]["response_text_length"], 0)
             self.assertEqual(
-                events[-1]["response_text"],
-                "Fallback succeeded text",
+                events[-1]["response_text_length"],
+                len("Fallback succeeded text"),
             )
             self.assertEqual(
                 events[-1]["response_id"],
@@ -1238,7 +1239,8 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(events), 1)
             self.assertEqual(_gemini_attempt_events(mock_info), [])
             self.assertEqual(events[0]["finish_reason"], "STOP")
-            self.assertEqual(events[0]["response_text"], "")
+            self.assertEqual(events[0]["response_text_length"], 0)
+            self.assertNotIn("response_text", events[0])
 
     async def test_gemini_transcriber_logs_tuned_error_code(self) -> None:
         """Records provider error facts and preserves the raised exception."""
@@ -1285,6 +1287,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(events), 1)
             self.assertEqual(_gemini_attempt_events(mock_info), [])
             self.assertIsNone(events[0]["response_id"])
+            self.assertIsNone(events[0]["response_text_length"])
             self.assertEqual(
                 events[0]["exception_type"],
                 "CodedInferenceError",
