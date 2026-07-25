@@ -29,6 +29,7 @@ def reject_split_leakage(
         None after all split pairs pass validation.
 
     Raises:
+        TypeError: If source-lineage metadata has the wrong type.
         ValueError: If source metadata is invalid or a training recording also
             appears in validation or eval.
     """
@@ -174,11 +175,15 @@ def _source_sha(
         The lowercase SHA-256, or None when lineage metadata omits it.
 
     Raises:
-        ValueError: If the provided SHA-256 is malformed.
+        TypeError: If provided lineage metadata is not an object.
+        ValueError: If a provided source SHA-256 is malformed.
     """
     source_lineage = row.get("source_lineage")
-    if not isinstance(source_lineage, collections.abc.Mapping):
+    if source_lineage is None:
         return None
+    if not isinstance(source_lineage, collections.abc.Mapping):
+        msg = f"{split} row {row_index} source_lineage must be an object"
+        raise TypeError(msg)
     value = source_lineage.get("source_encoded_sha256")
     if value is None:
         return None
