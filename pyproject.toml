@@ -241,6 +241,9 @@ known-first-party = ["backend", "local_dev"]
 "model/scripts/sft/build_bcfy_calls_oversampled_manifest.py" = [
   "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
 ]
+"model/scripts/sft/merge_bcfy_calls_oversampled_into_canonical.py" = [
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
 "scripts/**/*.py" = ["E501"]
 "backend/pipeline/common/clients/audio_segments_client.py" = ["E501"]
 "backend/pipeline/common/clients/session_helper.py" = ["E501"]
