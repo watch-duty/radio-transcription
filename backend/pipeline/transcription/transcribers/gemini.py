@@ -3,8 +3,8 @@
 import asyncio
 import dataclasses
 import mimetypes
-import random
 import re
+import secrets
 import typing
 
 import httpx
@@ -256,7 +256,7 @@ class GeminiTranscriber(base.Transcriber):
             self.config.retry_initial_delay
             * (self.config.retry_multiplier ** (attempt - 1)),
         )
-        jittered = raw_delay * random.uniform(0.5, 1.5)  # noqa: S311
+        jittered = raw_delay * secrets.SystemRandom().uniform(0.5, 1.5)
         return min(self.config.retry_max_delay, jittered)
 
     def _get_concurrency_semaphore(self) -> asyncio.Semaphore:
