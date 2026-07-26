@@ -12,7 +12,7 @@ from google.cloud.speech_v2 import SpeechAsyncClient
 from backend.pipeline.common import constants
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.utils import ConfigBase
-from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers import base
 
 # Default paths to the packaged prompt and phrase hints configuration text assets.
 DEFAULT_PHRASE_HINTS_FILE_PATH = (
@@ -91,7 +91,7 @@ class ChirpConfig(ConfigBase):
     retry_deadline: float = DEFAULT_RETRY_DEADLINE
 
 
-class GoogleChirpV3Transcriber(Transcriber):
+class GoogleChirpV3Transcriber(base.Transcriber):
     """Transcriber implementation using Google Cloud Speech-to-Text V2 API
 
     with the 'chirp_3' model.
@@ -148,6 +148,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
+        context: base.TranscriptionContext | None = None,
     ) -> str | None:
         """Transcribes the given audio payload using GCP Speech V2 API."""
         client = self.client

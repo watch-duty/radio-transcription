@@ -345,4 +345,4 @@ def get_task_logger(
 ) -> logging.LoggerAdapter[logging.Logger]:
     """Returns a LoggerAdapter wrapping the configured JSON logger with contextual attributes."""
     logger = get_logger(name)
-    return logging.LoggerAdapter(logger, extra)
+    return logging.LoggerAdapter(logger, extra, merge_extra=True)
