@@ -1,9 +1,9 @@
-"""Unit tests for the audio transcription plugins."""
-
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
+import pydantic
 import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import errors as genai_errors
@@ -1588,6 +1588,97 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 mock_client_instance.aio.models.generate_content.call_count, 4
             )
+
+    async def test_gemini_transcriber_concurrency_limit_config(self) -> None:
+        """Verifies that gemini_concurrency_limit setting populates the internal asyncio.Semaphore."""
+        transcriber = GeminiTranscriber(
+            "test-project",
+            GeminiConfig(gemini_concurrency_limit=5),
+        )
+        transcriber.setup()
+        self.assertEqual(transcriber.config.gemini_concurrency_limit, 5)
+        sem = transcriber._get_concurrency_semaphore()
+        self.assertEqual(sem._value, 5)
+
+    def test_gemini_transcriber_concurrency_limit_validation(self) -> None:
+        """Verifies that gemini_concurrency_limit <= 0 raises a ValidationError / ValueError."""
+        with self.assertRaises((ValueError, pydantic.ValidationError)):
+            GeminiConfig.from_json('{"gemini_concurrency_limit": 0}')
+
+        with self.assertRaises((ValueError, pydantic.ValidationError)):
+            GeminiConfig.from_json('{"gemini_concurrency_limit": -1}')
+
+    async def test_gemini_transcriber_semaphore_limits_parallel_execution(
+        self,
+    ) -> None:
+        """Verifies that concurrent transcribe() calls respect the concurrency limit."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            active_calls = 0
+            max_active = 0
+
+            async def mock_generate_content(*args, **kwargs):
+                nonlocal active_calls, max_active
+                active_calls += 1
+                max_active = max(max_active, active_calls)
+                await asyncio.sleep(0.05)
+                active_calls -= 1
+
+                mock_response = MagicMock()
+                mock_candidate = MagicMock()
+                mock_candidate.finish_reason = types.FinishReason.STOP
+                mock_candidate.content.parts = [MagicMock(text="Hello")]
+                mock_response.candidates = [mock_candidate]
+                mock_response.text = "Hello"
+                return mock_response
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=mock_generate_content
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"gemini_concurrency_limit": 2}',
+            )
+            transcriber.setup()
+
+            # Fire 6 parallel transcribe tasks with a concurrency cap of 2
+            tasks = [
+                transcriber.transcribe(
+                    audio_data=b"\x00" * 100, duration_ms=1000
+                )
+                for _ in range(6)
+            ]
+            results = await asyncio.gather(*tasks)
+
+            self.assertEqual(len(results), 6)
+            self.assertTrue(all(r == "Hello" for r in results))
+            self.assertLessEqual(max_active, 2)
+
+    def test_gemini_transcriber_get_retry_delay_jitter(self) -> None:
+        """Verifies that _get_retry_delay calculates exponential backoff with randomized jitter."""
+        transcriber = GeminiTranscriber(
+            "test-project",
+            GeminiConfig(
+                retry_initial_delay=2.0,
+                retry_max_delay=10.0,
+                retry_multiplier=2.0,
+            ),
+        )
+        # Attempt 1: base delay = 2.0s -> jitter range 1.0s to 3.0s
+        delay1 = transcriber._get_retry_delay(1)
+        self.assertGreaterEqual(delay1, 1.0)
+        self.assertLessEqual(delay1, 3.0)
+
+        # Attempt 3: base delay = 2.0 * 2^2 = 8.0s -> jitter range 4.0s to 12.0s
+        delay3 = transcriber._get_retry_delay(3)
+        self.assertGreaterEqual(delay3, 4.0)
+        self.assertLessEqual(delay3, 12.0)
 
     async def test_gemini_transcriber_tuned_model_fallback_both_fail(
         self,
