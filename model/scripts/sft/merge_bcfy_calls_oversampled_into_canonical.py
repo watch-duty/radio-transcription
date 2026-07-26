@@ -12,6 +12,17 @@ and appends the new oversampled/holdout rows in their place, tagging each
 appended row with dataset = {"family": "bcfy_calls", "name": "bcfy_calls"}
 for consistency with the rest of the file.
 
+gemini_sft's strict canonical validator (common.manifest.
+strict_canonical_rows_from_manifest, used by gemini-sft prepare) requires
+literal example_id/segment_id fields on every raw row -- the "derive from
+the audio filename" fallback documented on rows_from_manifest only
+applies to a different, more lenient conversion path prepare does not
+use. The per-dataset schema build_bcfy_calls_oversampled_manifest.py
+reads from never sets those fields, so this script also synthesizes them
+here: example_id from the (now-unique, per the GCS-copy fix) audio
+filename stem, segment_id fixed at "001", matching that documented
+fallback's own semantics.
+
 validation.jsonl is intentionally left out of scope: a leakage check
 (source_group overlap between the new oversampled train recordings and
 validation.jsonl's existing bcfy_calls rows) found zero overlap, so the
@@ -44,6 +55,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from pathlib import Path
 
 from google.cloud import storage
 
@@ -94,20 +106,26 @@ def _is_bcfy_calls(row: dict) -> bool:
 
 
 def _tag_bcfy_calls(row: dict) -> dict:
-    """Return a copy of row with an explicit bcfy_calls dataset tag.
+    """Return a copy of row with fields the strict canonical validator needs.
 
     Args:
         row: A row produced by build_bcfy_calls_oversampled_manifest.py,
             which does not set the nested dataset.family/dataset.name
-            fields the production canonical manifest uses.
+            fields the production canonical manifest uses, nor the
+            example_id/segment_id fields the strict validator requires.
 
     Returns:
         A copy of row carrying dataset = {"family": "bcfy_calls",
-        "name": "bcfy_calls"}, preserving any dataset field it already
-        had otherwise.
+        "name": "bcfy_calls"} (preserving any dataset field it already
+        had otherwise), plus example_id/segment_id derived from the row's
+        own audio_filepath -- unique per row, since
+        build_bcfy_calls_oversampled_manifest.py gives every duplicate its
+        own distinct GCS object.
     """
     tagged = dict(row)
     tagged["dataset"] = {**BCFY_CALLS_DATASET, **(row.get("dataset") or {})}
+    tagged.setdefault("example_id", Path(row["audio_filepath"]).stem)
+    tagged.setdefault("segment_id", "001")
     return tagged
 
 
