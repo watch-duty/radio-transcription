@@ -211,6 +211,8 @@ class GeminiConfig(utils.ConfigBase):
     retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
+    concurrency_limit: int = 12
+
     fallback_model: str | None = DEFAULT_GEMINI_MODEL
     fallback_location: str = DEFAULT_GEMINI_LOCATION
     fallback_retry_attempts: int = 2
@@ -233,6 +235,7 @@ class GeminiTranscriber(base.Transcriber):
         self.location = location or config.location
         self.fallback_location = fallback_location or config.fallback_location
         self._clients: dict[str, genai.Client] = {}
+        self._concurrency_semaphore: asyncio.Semaphore | None = None
 
     def _resolve_location(self, model: str, default_location: str) -> str:
         """Resolves the location/region for a model.
@@ -244,6 +247,14 @@ class GeminiTranscriber(base.Transcriber):
         if match:
             return match.group(1)
         return default_location
+
+    def _get_concurrency_semaphore(self) -> asyncio.Semaphore:
+        """Gets or creates the in-flight request concurrency semaphore."""
+        if self._concurrency_semaphore is None:
+            self._concurrency_semaphore = asyncio.Semaphore(
+                self.config.concurrency_limit
+            )
+        return self._concurrency_semaphore
 
     def _get_client(self, location: str) -> genai.Client:
         """Gets or creates a cached genai.Client for the given location."""
@@ -274,6 +285,9 @@ class GeminiTranscriber(base.Transcriber):
     def setup(self) -> None:
         """Instantiates client caching and warms up the primary client."""
         self._clients.clear()
+        self._concurrency_semaphore = asyncio.Semaphore(
+            self.config.concurrency_limit
+        )
         primary_location = self._resolve_location(
             self.config.model, self.location
         )
@@ -352,12 +366,13 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        return await self._transcribe_tuned(
-            contents,
-            generation_config,
-            context=context,
-            audio_uri=uri,
-        )
+        async with self._get_concurrency_semaphore():
+            return await self._transcribe_tuned(
+                contents,
+                generation_config,
+                context=context,
+                audio_uri=uri,
+            )
 
     async def _execute_transcribe_attempt(
         self,

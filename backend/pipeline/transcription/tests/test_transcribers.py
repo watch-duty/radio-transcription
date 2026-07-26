@@ -1,5 +1,6 @@
 """Unit tests for the audio transcription plugins."""
 
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -1588,6 +1589,69 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 mock_client_instance.aio.models.generate_content.call_count, 4
             )
+
+    async def test_gemini_transcriber_concurrency_limit_config(self) -> None:
+        """Verifies that concurrency_limit setting populates the internal asyncio.Semaphore."""
+        transcriber = GeminiTranscriber(
+            "test-project",
+            GeminiConfig(concurrency_limit=5),
+        )
+        transcriber.setup()
+        self.assertEqual(transcriber.config.concurrency_limit, 5)
+        sem = transcriber._get_concurrency_semaphore()
+        self.assertEqual(sem._value, 5)
+
+    async def test_gemini_transcriber_semaphore_limits_parallel_execution(
+        self,
+    ) -> None:
+        """Verifies that concurrent transcribe() calls respect the concurrency limit."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            active_calls = 0
+            max_active = 0
+
+            async def mock_generate_content(*args, **kwargs):
+                nonlocal active_calls, max_active
+                active_calls += 1
+                max_active = max(max_active, active_calls)
+                await asyncio.sleep(0.05)
+                active_calls -= 1
+
+                mock_response = MagicMock()
+                mock_candidate = MagicMock()
+                mock_candidate.finish_reason = types.FinishReason.STOP
+                mock_candidate.content.parts = [MagicMock(text="Hello")]
+                mock_response.candidates = [mock_candidate]
+                mock_response.text = "Hello"
+                return mock_response
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=mock_generate_content
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"concurrency_limit": 2}',
+            )
+            transcriber.setup()
+
+            # Fire 6 parallel transcribe tasks with a concurrency cap of 2
+            tasks = [
+                transcriber.transcribe(
+                    audio_data=b"\x00" * 100, duration_ms=1000
+                )
+                for _ in range(6)
+            ]
+            results = await asyncio.gather(*tasks)
+
+            self.assertEqual(len(results), 6)
+            self.assertTrue(all(r == "Hello" for r in results))
+            self.assertLessEqual(max_active, 2)
 
     async def test_gemini_transcriber_tuned_model_fallback_both_fail(
         self,
