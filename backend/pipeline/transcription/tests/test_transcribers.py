@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import requests
 from google.api_core.retry_async import AsyncRetry
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from backend.pipeline.common.exceptions import (
@@ -50,12 +51,6 @@ def _gemini_attempt_events(
             ):
                 events.append(fields)
     return events
-
-
-class CodedInferenceError(RuntimeError):
-    """Test inference exception carrying an HTTP-like provider code."""
-
-    code = 499
 
 
 class TestTranscribers(unittest.IsolatedAsyncioTestCase):
@@ -1264,7 +1259,16 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
     async def test_gemini_transcriber_logs_tuned_error_code(self) -> None:
         """Records provider error facts and preserves the raised exception."""
         tuned_model = "projects/123/locations/us/endpoints/456"
-        error = CodedInferenceError("client cancelled request")
+        error = genai_errors.ClientError(
+            499,
+            {
+                "error": {
+                    "code": 499,
+                    "message": "client cancelled request",
+                    "status": "CANCELLED",
+                }
+            },
+        )
         with (
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
@@ -1290,7 +1294,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             transcriber.setup()
 
             with self.assertRaisesRegex(
-                CodedInferenceError,
+                genai_errors.ClientError,
                 "client cancelled request",
             ):
                 await transcriber.transcribe(
@@ -1306,12 +1310,12 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(events[0]["response_text_length"])
             self.assertEqual(
                 events[0]["exception_type"],
-                "CodedInferenceError",
+                "ClientError",
             )
             self.assertEqual(events[0]["error_code"], 499)
             self.assertEqual(
                 events[0]["error_message"],
-                "client cancelled request",
+                str(error),
             )
 
     async def test_gemini_transcriber_does_not_log_tuned_success(self) -> None:

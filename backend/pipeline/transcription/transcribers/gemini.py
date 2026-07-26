@@ -9,6 +9,7 @@ from typing import Literal
 import httpx
 import pydantic
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from backend.pipeline.common import exceptions, log_helper, utils
@@ -147,13 +148,7 @@ def _response_log_fields(
         )
     response_id = response.response_id
     return {
-        "response_id": (
-            response_id
-            if isinstance(response_id, str)
-            else str(response_id)
-            if response_id is not None
-            else None
-        ),
+        "response_id": str(response_id) if response_id is not None else None,
         "candidate_count": len(candidates),
         "finish_reason": finish_reason,
         "response_text_length": len(_response_text(response)),
@@ -167,12 +162,9 @@ def _log_inference_attempt(
 ) -> None:
     """Emit best-effort structured facts for one relevant Gemini call."""
     try:
-        error_code = getattr(error, "code", None) if error else None
-        if error_code is not None and not isinstance(
-            error_code,
-            (str, int, float, bool),
-        ):
-            error_code = str(error_code)
+        error_code = (
+            error.code if isinstance(error, genai_errors.APIError) else None
+        )
         fields: dict[str, object | None] = {
             "event_type": "gemini_inference_attempt",
             "segment_id": (
@@ -183,9 +175,11 @@ def _log_inference_attempt(
             "call_stage": attempt.call_stage,
             "attempt": attempt.attempt,
             **_response_log_fields(response),
-            "exception_type": type(error).__name__ if error else None,
+            "exception_type": (
+                type(error).__name__ if error is not None else None
+            ),
             "error_code": error_code,
-            "error_message": str(error) if error else None,
+            "error_message": str(error) if error is not None else None,
         }
         log_attempt = logger.warning if error is not None else logger.info
         log_attempt(
