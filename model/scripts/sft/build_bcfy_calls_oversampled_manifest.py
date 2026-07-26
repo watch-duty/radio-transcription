@@ -5,10 +5,19 @@ at DIFFERENT rates for 8kHz vs. everything else -- since 8kHz bcfy_calls
 segments fail at ~87.5% vs. ~44.9% for 16kHz -- plus a held-out eval
 manifest.
 
-No audio augmentation, no new audio files generated -- duplicate rows all
-reference the same existing audio_filepath/derived_audio_uri. This is a
-manifest-only transformation, chosen to fit a 5-day timeline; see the
-proposal doc for the overfitting-risk trade-off this accepts.
+No audio augmentation -- every duplicate is a plain, unmodified copy of its
+source row's audio. Each duplicate still needs its own distinct GCS object,
+though: gemini_sft's canonical manifest validator
+(common.manifest.validate_canonical_manifest) hard-rejects any row that
+shares an audio_filepath with an earlier row in the same manifest
+(duplicate_audio_filepath), so simply repeating the same audio_filepath
+across duplicate rows fails validation before a run can even be prepared.
+This script performs a server-side GCS copy_blob for each duplicate --
+cheap, no bytes transferred through this process -- to a distinct object
+under --dest-prefix, and points that duplicate's audio_filepath (and the
+mirrored derived_audio_uri/model_ready_audio_uri fields) at the copy. See
+the proposal doc for the overfitting-risk trade-off this still accepts by
+not varying the audio itself.
 
 Duplicate rows are given a unique synthetic original_audio_uri instead of
 inheriting the source row's value. gemini_sft's prior-context builder
@@ -34,6 +43,7 @@ Usage:
       --train gs://BUCKET/.../per_dataset/bcfy_calls/train.jsonl \
       --eval gs://BUCKET/.../per_dataset/bcfy_calls/eval.jsonl \
       --project <gcp-project> \
+      --dest-prefix gs://BUCKET/.../audio/derived_oversampled/bcfy_calls \
       --out-train bcfy_calls_oversampled_train.jsonl \
       --out-eval bcfy_calls_holdout_eval.jsonl
 
@@ -171,7 +181,27 @@ async def _measure_all_sample_rates(
     return results
 
 
-def _duplicate_row(row: dict, dup_idx: int, rate: int | None) -> dict:
+def _duplicate_blob_uri(source_uri: str, dup_idx: int, dest_prefix: str) -> str:
+    """Build a distinct destination gs:// URI for one duplicate's audio copy.
+
+    Args:
+        source_uri: gs:// URI of the native row's audio being duplicated.
+        dup_idx: Zero-based index of this duplicate among its siblings.
+        dest_prefix: gs:// prefix under which duplicate audio copies are
+            written.
+
+    Returns:
+        A gs:// URI distinct from source_uri and from every other
+        duplicate's URI.
+    """
+    name = Path(source_uri[len("gs://") :]).name
+    stem, _, suffix = name.rpartition(".")
+    return f"{dest_prefix.rstrip('/')}/{stem}_dup{dup_idx}.{suffix}"
+
+
+def _duplicate_row(
+    row: dict, dup_idx: int, rate: int | None, dest_prefix: str
+) -> dict:
     """Build one duplicate training row isolated from real episode context.
 
     Args:
@@ -179,12 +209,17 @@ def _duplicate_row(row: dict, dup_idx: int, rate: int | None) -> dict:
         dup_idx: Zero-based index of this duplicate among its siblings.
         rate: Measured sample rate in Hz for the source row's audio, or
             None if measurement failed.
+        dest_prefix: gs:// prefix under which duplicate audio copies are
+            written.
 
     Returns:
-        A copy of row with a unique row_index and a synthetic
+        A copy of row with a unique row_index, a synthetic
         original_audio_uri so gemini_sft's prior-context builder treats
         this duplicate as its own singleton episode instead of grouping it
-        with the real segments from the same source recording.
+        with the real segments from the same source recording, and
+        audio_filepath/derived_audio_uri/model_ready_audio_uri repointed at
+        a not-yet-created per-duplicate GCS copy (see _copy_all_duplicate_
+        audio, which must run before the manifest is written).
     """
     dup_row = dict(row)
     dup_row["row_index"] = f"{row['row_index']}_dup{dup_idx}"
@@ -193,7 +228,89 @@ def _duplicate_row(row: dict, dup_idx: int, rate: int | None) -> dict:
     dup_row["original_audio_uri"] = (
         f"{base_episode_key}#oversample_dup{dup_idx}"
     )
+    dest_uri = _duplicate_blob_uri(row["audio_filepath"], dup_idx, dest_prefix)
+    for field in (
+        "audio_filepath",
+        "derived_audio_uri",
+        "model_ready_audio_uri",
+    ):
+        if field in dup_row:
+            dup_row[field] = dest_uri
     return dup_row
+
+
+def _copy_blob(project: str | None, source_uri: str, dest_uri: str) -> bool:
+    """Server-side copy one audio blob to a new distinct GCS object.
+
+    Args:
+        project: GCP project used for GCS access.
+        source_uri: gs:// URI of the blob to copy.
+        dest_uri: gs:// URI of the destination object.
+
+    Returns:
+        True on success (including when the destination already exists,
+        which makes reruns idempotent); False on failure.
+    """
+    try:
+        client = _thread_local_storage_client(project)
+        src_bucket_name, src_blob_name = source_uri[len("gs://") :].split(
+            "/", 1
+        )
+        dst_bucket_name, dst_blob_name = dest_uri[len("gs://") :].split("/", 1)
+        dst_bucket = client.bucket(dst_bucket_name)
+        if dst_bucket.blob(dst_blob_name).exists():
+            return True
+        src_bucket = client.bucket(src_bucket_name)
+        src_blob = src_bucket.blob(src_blob_name)
+        src_bucket.copy_blob(src_blob, dst_bucket, dst_blob_name)
+    except (
+        Exception
+    ) as exc:  # per-copy failures are logged and counted, not fatal
+        logger.warning(
+            "failed to copy %s -> %s: %s: %s",
+            source_uri,
+            dest_uri,
+            type(exc).__name__,
+            exc,
+        )
+        return False
+    else:
+        return True
+
+
+async def _copy_all_duplicate_audio(
+    project: str | None,
+    copies: list[tuple[str, str]],
+    concurrency: int,
+) -> int:
+    """Copy every (source_uri, dest_uri) pair concurrently.
+
+    Args:
+        project: GCP project used for GCS access.
+        copies: Pairs of (source gs:// URI, destination gs:// URI).
+        concurrency: Maximum concurrent copy operations.
+
+    Returns:
+        The number of copies that failed.
+    """
+    sem = asyncio.Semaphore(concurrency)
+    n_done = 0
+    n_failed = 0
+
+    async def worker(source_uri: str, dest_uri: str) -> None:
+        nonlocal n_done, n_failed
+        async with sem:
+            ok = await asyncio.to_thread(
+                _copy_blob, project, source_uri, dest_uri
+            )
+            n_done += 1
+            if not ok:
+                n_failed += 1
+            if n_done % 200 == 0:
+                logger.info("copied %s/%s", n_done, len(copies))
+
+    await asyncio.gather(*(worker(s, d) for s, d in copies))
+    return n_failed
 
 
 def _parse_args() -> argparse.Namespace:
@@ -206,6 +323,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--project", default=None, help="GCP project for GCS access"
+    )
+    parser.add_argument(
+        "--dest-prefix",
+        required=True,
+        help=(
+            "gs:// prefix to write each duplicate's server-side audio copy "
+            "under. Required because gemini_sft's canonical manifest "
+            "validator rejects rows that share an audio_filepath, so every "
+            "duplicate needs its own distinct GCS object."
+        ),
     )
     parser.add_argument(
         "--eval-recordings",
@@ -306,6 +433,7 @@ def main() -> None:
         )
 
     oversampled_train_rows = []
+    copies: list[tuple[str, str]] = []
     n_narrowband = 0
     for i, row in enumerate(native_train_rows):
         rate = rates.get(i)
@@ -313,7 +441,9 @@ def main() -> None:
         n_narrowband += is_narrowband
         dup_n = args.dup_8khz if is_narrowband else args.dup_other
         for dup_idx in range(dup_n):
-            oversampled_train_rows.append(_duplicate_row(row, dup_idx, rate))
+            dup_row = _duplicate_row(row, dup_idx, rate, args.dest_prefix)
+            oversampled_train_rows.append(dup_row)
+            copies.append((row["audio_filepath"], dup_row["audio_filepath"]))
 
     logger.info(
         "Native rows: %s narrowband (<%sHz, %sx) + %s other (%sx)",
@@ -327,6 +457,23 @@ def main() -> None:
         "After weighted duplication: %s training rows",
         len(oversampled_train_rows),
     )
+
+    # Every duplicate needs its own real GCS object -- gemini_sft's
+    # canonical manifest validator rejects rows that share an
+    # audio_filepath, so this must run and succeed before the manifest is
+    # written, not after.
+    logger.info("Copying %s duplicate audio objects...", len(copies))
+    n_copy_failed = asyncio.run(
+        _copy_all_duplicate_audio(args.project, copies, args.concurrency)
+    )
+    if n_copy_failed:
+        msg = (
+            f"{n_copy_failed} of {len(copies)} duplicate audio copies "
+            "failed; not writing a manifest that references missing "
+            "objects. Re-run to retry -- successful copies are skipped "
+            "idempotently."
+        )
+        raise SystemExit(msg)
 
     write_jsonl(oversampled_train_rows, args.out_train)
     write_jsonl(new_eval_rows, args.out_eval)
