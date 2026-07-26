@@ -259,6 +259,39 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
+    def test_validation_and_eval_splits_are_mutually_compatible(self) -> None:
+        cases = [
+            ("eval row loaded as validation", "eval", "validation"),
+            ("validation row loaded as eval", "validation", "eval"),
+        ]
+
+        for name, split, expected_split in cases:
+            with self.subTest(name=name):
+                issues = manifest_lib.validate_canonical_manifest(
+                    [_canonical_row(split=split)],
+                    expected_split=expected_split,
+                )
+
+                self.assertEqual(issues, [])
+
+    def test_train_split_is_not_compatible_with_validation_or_eval(
+        self,
+    ) -> None:
+        cases = [
+            ("train row loaded as validation", "train", "validation"),
+            ("train row loaded as eval", "train", "eval"),
+            ("eval row loaded as train", "eval", "train"),
+        ]
+
+        for name, split, expected_split in cases:
+            with self.subTest(name=name):
+                issues = manifest_lib.validate_canonical_manifest(
+                    [_canonical_row(split=split)],
+                    expected_split=expected_split,
+                )
+
+                self.assertHasIssue(issues, "split_mismatch", "split")
+
     def test_explicit_null_optional_metadata_is_absent(self) -> None:
         issues = manifest_lib.validate_canonical_manifest(
             [

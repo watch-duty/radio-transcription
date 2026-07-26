@@ -41,6 +41,13 @@ _CANONICAL_REQUIRED_STRING_FIELDS = (
     "example_id",
     "segment_id",
 )
+# Validation and eval may intentionally share one manifest (a documented,
+# supported gemini_sft pattern -- see gemini_sft.artifacts.prepare_artifacts,
+# which allows train_manifest_uri/validation_manifest_uri/eval_manifest_uri
+# to overlap between validation and eval but never with train), so a row's
+# split field of "eval" is accepted when expected_split is "validation" and
+# vice versa.
+_VALIDATION_EVAL_REUSE_SPLITS = frozenset({"validation", "eval"})
 
 
 @dataclass(frozen=True)
@@ -196,6 +203,29 @@ def require_canonical_manifest(
     raise ValueError(msg)
 
 
+def _splits_compatible(split: str, expected_split: str) -> bool:
+    """Return whether a row's split satisfies an expected split.
+
+    Args:
+        split: The row's own (non-empty, stripped) split value.
+        expected_split: The split the enclosing manifest is being loaded
+            as.
+
+    Returns:
+        True when split matches expected_split exactly, or when both are
+        "validation"/"eval" -- the one intentional, documented reuse
+        pairing. Any other mismatch, notably a "train"-labeled row
+        appearing where validation or eval is expected (or vice versa),
+        is not compatible.
+    """
+    if split == expected_split:
+        return True
+    return (
+        split in _VALIDATION_EVAL_REUSE_SPLITS
+        and expected_split in _VALIDATION_EVAL_REUSE_SPLITS
+    )
+
+
 def _required_identity_value(value: Any, field: str) -> str:
     text = _stripped_string(value)
     if not text:
@@ -302,7 +332,9 @@ def _validate_metadata(
                 "split",
                 "split must be a non-empty string",
             )
-        elif expected_split is not None and split != expected_split:
+        elif expected_split is not None and not _splits_compatible(
+            split, expected_split
+        ):
             _add_issue(
                 issues,
                 "split_mismatch",
