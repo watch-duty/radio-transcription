@@ -1041,6 +1041,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
             ) as mock_client_cls,
             patch(
+                "backend.pipeline.transcription.transcribers.gemini.asyncio.sleep"
+            ) as mock_sleep,
+            patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
             ) as mock_info,
             patch(
@@ -1058,24 +1061,38 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_1.candidates = [mock_candidate_1]
             mock_response_1.response_id = "tuned-failed-id"
 
-            # Mock second response: foundation model succeeds
-            mock_response_2 = MagicMock()
-            mock_candidate_2 = MagicMock()
-            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            # Mock first fallback response: foundation model returns blank text
+            mock_response_2 = MagicMock(
+                candidates=[
+                    MagicMock(
+                        finish_reason=types.FinishReason.STOP,
+                        content=MagicMock(parts=[]),
+                    )
+                ],
+                response_id="fallback-empty-id",
+            )
 
-            mock_part = MagicMock()
-            mock_part.text = "Fallback succeeded text"
-            mock_candidate_2.content.parts = [mock_part]
-            mock_response_2.candidates = [mock_candidate_2]
-            mock_response_2.response_id = "fallback-success-id"
+            # Mock second fallback response: foundation model succeeds
+            mock_response_3 = MagicMock(
+                candidates=[
+                    MagicMock(
+                        finish_reason=types.FinishReason.STOP,
+                        content=MagicMock(
+                            parts=[MagicMock(text="Fallback succeeded text")]
+                        ),
+                    )
+                ],
+                response_id="fallback-success-id",
+            )
 
-            # AsyncMock to return response 1 on first three calls, response 2 on fourth
+            # Return three tuned failures, one blank fallback, then success.
             mock_client_instance.aio.models.generate_content = AsyncMock(
                 side_effect=[
                     mock_response_1,
                     mock_response_1,
                     mock_response_1,
                     mock_response_2,
+                    mock_response_3,
                 ]
             )
 
@@ -1101,8 +1118,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             # Asserts
             self.assertEqual(result, "Fallback succeeded text")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 4
+                mock_client_instance.aio.models.generate_content.call_count, 5
             )
+            self.assertEqual(mock_sleep.await_count, 3)
 
             # Check arguments of the first call (tuned endpoint)
             first_call_args = (
@@ -1115,20 +1133,21 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "projects/123/locations/us/endpoints/456",
             )
 
-            # Check arguments of the fourth call (foundation fallback model)
-            fourth_call_args = (
+            # Check both fallback calls use the foundation model.
+            fallback_call_args = (
                 mock_client_instance.aio.models.generate_content.call_args_list[
-                    3
+                    3:
                 ]
             )
             self.assertEqual(
-                fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
+                [args.kwargs["model"] for args in fallback_call_args],
+                [DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL],
             )
 
             warning_events = _gemini_attempt_events(mock_warning)
             info_events = _gemini_attempt_events(mock_info)
             self.assertEqual(len(warning_events), 3)
-            self.assertEqual(len(info_events), 1)
+            self.assertEqual(len(info_events), 2)
             events = warning_events + info_events
             self.assertEqual(
                 [
@@ -1156,6 +1175,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                         3,
                     ),
                     (DEFAULT_GEMINI_MODEL, "fallback", 1),
+                    (DEFAULT_GEMINI_MODEL, "fallback", 2),
                 ],
             )
             for event in events:
@@ -1171,6 +1191,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(events[0]["response_id"], "tuned-failed-id")
             self.assertIsNone(events[0]["finish_reason"])
             self.assertEqual(events[0]["response_text_length"], 0)
+            self.assertEqual(
+                events[-2]["response_id"],
+                "fallback-empty-id",
+            )
+            self.assertEqual(events[-2]["response_text_length"], 0)
             self.assertEqual(
                 events[-1]["response_text_length"],
                 len("Fallback succeeded text"),

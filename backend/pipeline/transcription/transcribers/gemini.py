@@ -390,12 +390,17 @@ class GeminiTranscriber(base.Transcriber):
                 _log_inference_attempt(attempt, response, error)
             raise
 
-        # If we get a valid transcript, or if this is the foundation
-        # model (which returns empty transcripts legitimately for
-        # silent audio), we return the result immediately.
+        if attempt.call_stage == "fallback":
+            # Record every parsed fallback response, including blank responses.
+            # _fallback_transcribe owns whether the response is accepted or
+            # retried.
+            _log_inference_attempt(attempt, response, None)
+            return transcript, response
+
+        # A foundation model used as the primary may legitimately return empty
+        # text for silent audio. A tuned primary instead treats empty text as
+        # transient.
         if transcript.strip() or not attempt.is_tuned_primary:
-            if attempt.call_stage == "fallback":
-                _log_inference_attempt(attempt, response, None)
             return transcript, response
 
         # SFT model returned empty transcript: treat as transient.
