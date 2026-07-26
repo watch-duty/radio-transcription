@@ -1,10 +1,9 @@
-"""Unit tests for the audio transcription plugins."""
-
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
+import pydantic
 import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import errors as genai_errors
@@ -1591,15 +1590,23 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_gemini_transcriber_concurrency_limit_config(self) -> None:
-        """Verifies that concurrency_limit setting populates the internal asyncio.Semaphore."""
+        """Verifies that gemini_concurrency_limit setting populates the internal asyncio.Semaphore."""
         transcriber = GeminiTranscriber(
             "test-project",
-            GeminiConfig(concurrency_limit=5),
+            GeminiConfig(gemini_concurrency_limit=5),
         )
         transcriber.setup()
-        self.assertEqual(transcriber.config.concurrency_limit, 5)
+        self.assertEqual(transcriber.config.gemini_concurrency_limit, 5)
         sem = transcriber._get_concurrency_semaphore()
         self.assertEqual(sem._value, 5)
+
+    def test_gemini_transcriber_concurrency_limit_validation(self) -> None:
+        """Verifies that gemini_concurrency_limit <= 0 raises a ValidationError / ValueError."""
+        with self.assertRaises((ValueError, pydantic.ValidationError)):
+            GeminiConfig.from_json('{"gemini_concurrency_limit": 0}')
+
+        with self.assertRaises((ValueError, pydantic.ValidationError)):
+            GeminiConfig.from_json('{"gemini_concurrency_limit": -1}')
 
     async def test_gemini_transcriber_semaphore_limits_parallel_execution(
         self,
@@ -1636,7 +1643,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             transcriber = get_transcriber(
                 TranscriberType.GEMINI,
                 "test-project",
-                '{"concurrency_limit": 2}',
+                '{"gemini_concurrency_limit": 2}',
             )
             transcriber.setup()
 

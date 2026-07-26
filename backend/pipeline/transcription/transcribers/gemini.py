@@ -212,7 +212,7 @@ class GeminiConfig(utils.ConfigBase):
     retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
-    concurrency_limit: int = 12
+    gemini_concurrency_limit: int = pydantic.Field(default=12, gt=0)
 
     fallback_model: str | None = DEFAULT_GEMINI_MODEL
     fallback_location: str = DEFAULT_GEMINI_LOCATION
@@ -251,18 +251,19 @@ class GeminiTranscriber(base.Transcriber):
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculates exponential backoff delay with jitter."""
-        delay = min(
+        raw_delay = min(
             self.config.retry_max_delay,
             self.config.retry_initial_delay
             * (self.config.retry_multiplier ** (attempt - 1)),
         )
-        return delay * random.uniform(0.5, 1.5)  # noqa: S311
+        jittered = raw_delay * random.uniform(0.5, 1.5)  # noqa: S311
+        return min(self.config.retry_max_delay, jittered)
 
     def _get_concurrency_semaphore(self) -> asyncio.Semaphore:
         """Gets or creates the in-flight request concurrency semaphore."""
         if self._concurrency_semaphore is None:
             self._concurrency_semaphore = asyncio.Semaphore(
-                self.config.concurrency_limit
+                self.config.gemini_concurrency_limit
             )
         return self._concurrency_semaphore
 
@@ -296,7 +297,7 @@ class GeminiTranscriber(base.Transcriber):
         """Instantiates client caching and warms up the primary client."""
         self._clients.clear()
         self._concurrency_semaphore = asyncio.Semaphore(
-            self.config.concurrency_limit
+            self.config.gemini_concurrency_limit
         )
         primary_location = self._resolve_location(
             self.config.model, self.location
@@ -376,13 +377,12 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        async with self._get_concurrency_semaphore():
-            return await self._transcribe_tuned(
-                contents,
-                generation_config,
-                context=context,
-                audio_uri=uri,
-            )
+        return await self._transcribe_tuned(
+            contents,
+            generation_config,
+            context=context,
+            audio_uri=uri,
+        )
 
     async def _execute_transcribe_attempt(
         self,
@@ -395,11 +395,12 @@ class GeminiTranscriber(base.Transcriber):
         """Executes a single transcription attempt and parses results."""
         response = None
         try:
-            response = await client.aio.models.generate_content(
-                model=attempt.model,
-                contents=contents,
-                config=generation_config,
-            )
+            async with self._get_concurrency_semaphore():
+                response = await client.aio.models.generate_content(
+                    model=attempt.model,
+                    contents=contents,
+                    config=generation_config,
+                )
             transcript = self._parse_response(response)
         except Exception as error:
             if attempt.is_tuned_primary or attempt.call_stage == "fallback":
