@@ -1653,6 +1653,26 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(r == "Hello" for r in results))
             self.assertLessEqual(max_active, 2)
 
+    def test_gemini_transcriber_get_retry_delay_jitter(self) -> None:
+        """Verifies that _get_retry_delay calculates exponential backoff with randomized jitter."""
+        transcriber = GeminiTranscriber(
+            "test-project",
+            GeminiConfig(
+                retry_initial_delay=2.0,
+                retry_max_delay=10.0,
+                retry_multiplier=2.0,
+            ),
+        )
+        # Attempt 1: base delay = 2.0s -> jitter range 1.0s to 3.0s
+        delay1 = transcriber._get_retry_delay(1)
+        self.assertGreaterEqual(delay1, 1.0)
+        self.assertLessEqual(delay1, 3.0)
+
+        # Attempt 3: base delay = 2.0 * 2^2 = 8.0s -> jitter range 4.0s to 12.0s
+        delay3 = transcriber._get_retry_delay(3)
+        self.assertGreaterEqual(delay3, 4.0)
+        self.assertLessEqual(delay3, 12.0)
+
     async def test_gemini_transcriber_tuned_model_fallback_both_fail(
         self,
     ) -> None:

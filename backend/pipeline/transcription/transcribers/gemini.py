@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 import mimetypes
+import random
 import re
 import typing
 
@@ -248,6 +249,15 @@ class GeminiTranscriber(base.Transcriber):
             return match.group(1)
         return default_location
 
+    def _get_retry_delay(self, attempt: int) -> float:
+        """Calculates exponential backoff delay with jitter."""
+        delay = min(
+            self.config.retry_max_delay,
+            self.config.retry_initial_delay
+            * (self.config.retry_multiplier ** (attempt - 1)),
+        )
+        return delay * random.uniform(0.5, 1.5)  # noqa: S311
+
     def _get_concurrency_semaphore(self) -> asyncio.Semaphore:
         """Gets or creates the in-flight request concurrency semaphore."""
         if self._concurrency_semaphore is None:
@@ -473,7 +483,7 @@ class GeminiTranscriber(base.Transcriber):
                 return transcript
 
             if attempt < attempts:
-                await asyncio.sleep(1)
+                await asyncio.sleep(self._get_retry_delay(attempt))
 
         # Fallback to foundation model on SFT-specific empty transcript /
         # NONE / no-candidates outcomes, whether the primary model is the
@@ -599,7 +609,7 @@ class GeminiTranscriber(base.Transcriber):
                 attempts,
                 e,
             )
-            await asyncio.sleep(1)
+            await asyncio.sleep(self._get_retry_delay(attempt))
 
         return ""
 
