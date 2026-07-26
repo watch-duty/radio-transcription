@@ -105,7 +105,7 @@ def _is_bcfy_calls(row: dict) -> bool:
     return isinstance(dataset, dict) and dataset.get("family") == "bcfy_calls"
 
 
-def _tag_bcfy_calls(row: dict) -> dict:
+def _tag_bcfy_calls(row: dict, *, split: str) -> dict:
     """Return a copy of row with fields the strict canonical validator needs.
 
     Args:
@@ -113,19 +113,27 @@ def _tag_bcfy_calls(row: dict) -> dict:
             which does not set the nested dataset.family/dataset.name
             fields the production canonical manifest uses, nor the
             example_id/segment_id fields the strict validator requires.
+            Its split field, if present, reflects the per-dataset source
+            manifest's original split and may not match where this
+            script's own recording-level re-split actually placed the
+            row (a row's recording can move from the source eval split
+            into this script's new train split, or vice versa).
+        split: The split this row is being written into ("train" or
+            "eval"), which overrides any stale split value on row.
 
     Returns:
         A copy of row carrying dataset = {"family": "bcfy_calls",
         "name": "bcfy_calls"} (preserving any dataset field it already
-        had otherwise), plus example_id/segment_id derived from the row's
-        own audio_filepath -- unique per row, since
-        build_bcfy_calls_oversampled_manifest.py gives every duplicate its
-        own distinct GCS object.
+        had otherwise), example_id/segment_id derived from the row's own
+        audio_filepath -- unique per row, since
+        build_bcfy_calls_oversampled_manifest.py gives every duplicate
+        its own distinct GCS object -- and split set to the given value.
     """
     tagged = dict(row)
     tagged["dataset"] = {**BCFY_CALLS_DATASET, **(row.get("dataset") or {})}
     tagged.setdefault("example_id", Path(row["audio_filepath"]).stem)
     tagged.setdefault("segment_id", "001")
+    tagged["split"] = split
     return tagged
 
 
@@ -141,7 +149,8 @@ def _merge_split(
     n_removed = sum(1 for row in source_rows if _is_bcfy_calls(row))
     kept_rows = [row for row in source_rows if not _is_bcfy_calls(row)]
     new_rows = [
-        _tag_bcfy_calls(row) for row in read_jsonl(client, new_rows_path)
+        _tag_bcfy_calls(row, split=split_label)
+        for row in read_jsonl(client, new_rows_path)
     ]
 
     merged_rows = kept_rows + new_rows
