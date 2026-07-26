@@ -9,17 +9,13 @@ import datetime
 import logging
 import typing
 
-import aiohttp
-from google.api_core import exceptions as google_exceptions
-from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
-
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.ingestion import (
+    audio_pipeline,
     grant_control,
     models,
     retry,
     settings,
-    slo_contract,
 )
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -41,21 +37,6 @@ logger = logging.getLogger(__name__)
 _GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PUBLISH_AFTER_BOOKMARK_FAILED = (
     feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-)
-_GCS_RETRYABLE = (
-    aiohttp.ClientError,
-    asyncio.TimeoutError,
-    OSError,
-)
-_PUBSUB_RETRYABLE = (
-    google_exceptions.Aborted,
-    google_exceptions.DeadlineExceeded,
-    google_exceptions.InternalServerError,
-    google_exceptions.ResourceExhausted,
-    google_exceptions.ServiceUnavailable,
-    google_exceptions.Unknown,
-    google_exceptions.Cancelled,
-    pubsub_exceptions.PublishToPausedOrderingKeyException,
 )
 
 
@@ -82,6 +63,7 @@ class FeedBatch:
         session_id: Stable logical session for this Feed and SID grant.
         starting_sequence: First create-only GCS sequence for this batch.
         calls: Provider calls in execution order.
+        grant_lost: Exact parent authority-loss signal for pre-bookmark work.
     """
 
     grant: ingestion_lease_contracts.LeaseGrant
@@ -89,6 +71,7 @@ class FeedBatch:
     session_id: str
     starting_sequence: int
     calls: tuple[CallWork, ...]
+    grant_lost: asyncio.Event
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -110,6 +93,7 @@ class FeedBatchResult:
     terminal: (
         failure_classification.ItemFailure
         | ingestion_lease_contracts.GrantRejected
+        | grant_control.RunLost
         | None
     )
 
@@ -131,91 +115,6 @@ def _leased_feed(
         source_feed_id=member.identity.source_feed_id,
         tags=None,
     )
-
-
-def _mime_staging_parameters(
-    mime_type: models.AudioMimeType | None,
-) -> tuple[str, str]:
-    """Return the existing staged-audio extension and content type."""
-    mime_map = {
-        models.AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
-        models.AudioMimeType.AAC: ("aac", "audio/aac"),
-        models.AudioMimeType.WAV: ("wav", "audio/x-wav"),
-        models.AudioMimeType.FLAC: ("flac", "audio/flac"),
-        models.AudioMimeType.MP4: ("m4a", "audio/mp4"),
-        models.AudioMimeType.OGG: ("ogg", "audio/ogg"),
-    }
-    if mime_type is None:
-        return ("flac", "audio/flac")
-    return mime_map.get(mime_type, ("flac", "audio/flac"))
-
-
-async def _settle_postcommit_publish(
-    operation: collections.abc.Coroutine[object, object, str],
-) -> str:
-    """Settle a committed publication before propagating cancellation.
-
-    Args:
-        operation: Publication coroutine that must settle after progress
-            commits.
-
-    Returns:
-        The downstream publication identifier.
-
-    Raises:
-        asyncio.CancelledError: The caller was cancelled while publishing.
-        Exception: The publication operation failed.
-    """
-    task = asyncio.create_task(operation)
-    cancellation: asyncio.CancelledError | None = None
-
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            if cancellation is None:
-                cancellation = error
-            if task.done():
-                break
-        except Exception:
-            break
-
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancellation is not None:
-            logger.exception(
-                "Post-commit publication failed while caller was cancelled",
-            )
-            raise cancellation from error
-        raise
-
-    if cancellation is not None:
-        raise cancellation
-    return result
-
-
-def _log_chunk_ingested(
-    member: ingestion_lease_contracts.LeaseMember,
-    chunk: models.CapturedChunk,
-) -> None:
-    """Emit the existing SLO event after a successful publication."""
-    payload: dict[str, object] = {
-        "event_type": slo_contract.EVENT_TYPE_CHUNK_INGESTED,
-        "feed_id": str(member.identity.feed_id),
-        "source_type": member.identity.source_type,
-    }
-    if chunk.receipt_time is not None:
-        raw_latency_sec = (
-            datetime.datetime.now(datetime.UTC) - chunk.receipt_time
-        ).total_seconds()
-        payload["processing_latency_sec"] = max(
-            0.0,
-            round(raw_latency_sec, 2),
-        )
-        if raw_latency_sec < 0:
-            payload["latency_clamped"] = True
-    logger.info("Chunk ingested", extra={"json_fields": payload})
 
 
 class BcfyCallsFeedBatchExecutor:
@@ -240,7 +139,10 @@ class BcfyCallsFeedBatchExecutor:
         self._topic_path = topic_path
         self._actor_id = actor_id
 
-    async def execute(self, batch: FeedBatch) -> FeedBatchResult:
+    async def execute(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        batch: FeedBatch,
+    ) -> FeedBatchResult:
         """Execute one Feed batch in call order."""
         outcome = failure_classification.ItemBatchOutcome()
         published_count = 0
@@ -250,20 +152,44 @@ class BcfyCallsFeedBatchExecutor:
         feed = _leased_feed(batch)
 
         for call in batch.calls:
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             outcome.record_attempt()
             sequence = next_sequence
             next_sequence += 1
 
-            chunk_result = await (
-                bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
-            )(
-                dict(call.payload),
-                call.audio_url,
-                no_stop,
-                batch.session_id,
-                datetime.datetime.now(datetime.UTC),
-                self._calls_provider,
-            )
+            try:
+                chunk_result = await (
+                    bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
+                )(
+                    dict(call.payload),
+                    call.audio_url,
+                    batch.grant_lost,
+                    batch.session_id,
+                    datetime.datetime.now(datetime.UTC),
+                    self._calls_provider,
+                )
+            except asyncio.CancelledError:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
+                raise
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             if chunk_result.failure is not None:
                 logger.error(
                     "Broadcastify Calls item failed for %s: %s",
@@ -283,11 +209,33 @@ class BcfyCallsFeedBatchExecutor:
                     chunk,
                     sequence,
                     batch.grant.fencing_token,
+                    batch.grant_lost,
                     no_stop,
                 )
+            except retry.LeaseExpiredError:
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
+                )
             except asyncio.CancelledError:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
                 raise
             except Exception:
+                if batch.grant_lost.is_set():
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
                 logger.exception(
                     "GCS upload failed for Broadcastify Calls item %s",
                     call.audio_url,
@@ -301,6 +249,13 @@ class BcfyCallsFeedBatchExecutor:
                         feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                         _GCS_UPLOAD_FAILED,
                     ),
+                )
+            if batch.grant_lost.is_set():
+                return self._lost_authority_result(
+                    outcome,
+                    published_count,
+                    next_sequence,
+                    committed_urls,
                 )
 
             commit_result = await self._commit_progress(
@@ -341,7 +296,7 @@ class BcfyCallsFeedBatchExecutor:
 
             committed_urls.append(call.audio_url)
             try:
-                message_id = await self._publish(
+                await self._publish(
                     batch.member,
                     chunk,
                     gcs_uri,
@@ -366,14 +321,8 @@ class BcfyCallsFeedBatchExecutor:
                     ),
                 )
 
-            logger.info(
-                "Published message %s for feed %s",
-                message_id,
-                batch.member.name,
-            )
             published_count += 1
             outcome.record_chunk_produced()
-            _log_chunk_ingested(batch.member, chunk)
 
         return self._result(
             outcome,
@@ -389,26 +338,24 @@ class BcfyCallsFeedBatchExecutor:
         chunk: models.CapturedChunk,
         sequence: int,
         fencing_token: int,
+        grant_lost: asyncio.Event,
         no_stop: asyncio.Event,
     ) -> str:
-        extension, content_type = _mime_staging_parameters(chunk.mime_type)
-        return await retry.retry_with_lease_check(
+        extension, content_type = audio_pipeline.staging_parameters(
+            chunk.mime_type
+        )
+        return await audio_pipeline.upload_staged_audio_with_retry(
             gcp_helper.upload_staged_audio,
-            self._gcs_client,
-            chunk.audio_bytes,
-            feed,
-            self._settings.audio_staging_bucket,
-            sequence,
-            fencing_token,
-            extension,
-            content_type,
-            lease_lost=no_stop,
+            gcs_client=self._gcs_client,
+            chunk=chunk,
+            feed=feed,
+            settings=self._settings,
+            sequence=sequence,
+            fencing_token=fencing_token,
+            extension=extension,
+            content_type=content_type,
+            lease_lost=grant_lost,
             shutdown=no_stop,
-            max_retries=self._settings.gcs_upload_max_retries,
-            base_delay_sec=(self._settings.gcs_upload_retry_base_delay_sec),
-            max_delay_sec=self._settings.gcs_upload_retry_max_delay_sec,
-            retryable=_GCS_RETRYABLE,
-            operation_name="GCS upload",
         )
 
     async def _commit_progress(
@@ -464,31 +411,20 @@ class BcfyCallsFeedBatchExecutor:
         gcs_uri: str,
         no_stop: asyncio.Event,
     ) -> str:
-        duration_ms = int(
-            (chunk.chunk_end_time - chunk.chunk_start_time).total_seconds()
-            * 1000
-        )
-        operation = retry.retry_with_lease_check(
+        return await audio_pipeline.publish_audio_chunk_after_bookmark(
             gcp_helper.publish_audio_chunk,
-            self._pubsub_client,
-            self._topic_path,
-            str(member.identity.feed_id),
-            member.name,
-            gcs_uri,
-            chunk.session_id,
-            chunk.chunk_start_time,
-            duration_ms,
-            member.identity.source_type,
-            chunk.external_audio_segment_id,
+            pubsub_client=self._pubsub_client,
+            topic_path=self._topic_path,
+            feed_id=member.identity.feed_id,
+            feed_name=member.name,
+            source_type=member.identity.source_type,
+            gcs_uri=gcs_uri,
+            chunk=chunk,
+            settings=self._settings,
             lease_lost=no_stop,
             shutdown=no_stop,
-            max_retries=self._settings.pubsub_publish_max_retries,
-            base_delay_sec=(self._settings.pubsub_publish_retry_base_delay_sec),
-            max_delay_sec=self._settings.pubsub_publish_retry_max_delay_sec,
-            retryable=_PUBSUB_RETRYABLE,
-            operation_name="Pub/Sub publish",
+            event_logger=logger,
         )
-        return await _settle_postcommit_publish(operation)
 
     def _result(
         self,
@@ -499,6 +435,7 @@ class BcfyCallsFeedBatchExecutor:
         terminal: (
             failure_classification.ItemFailure
             | ingestion_lease_contracts.GrantRejected
+            | grant_control.RunLost
             | None
         ),
     ) -> FeedBatchResult:
@@ -508,4 +445,20 @@ class BcfyCallsFeedBatchExecutor:
             next_sequence=next_sequence,
             committed_urls=tuple(committed_urls),
             terminal=terminal,
+        )
+
+    def _lost_authority_result(
+        self,
+        outcome: failure_classification.ItemBatchOutcome,
+        published_count: int,
+        next_sequence: int,
+        committed_urls: list[str],
+    ) -> FeedBatchResult:
+        """Return definitive pre-bookmark authority-loss evidence."""
+        return self._result(
+            outcome,
+            published_count,
+            next_sequence,
+            committed_urls,
+            grant_control.RunLost(),
         )

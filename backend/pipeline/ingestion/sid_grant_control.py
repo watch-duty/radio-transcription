@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import typing
 
+import asyncpg
+
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
@@ -14,6 +16,41 @@ if typing.TYPE_CHECKING:
 _STATUS_INELIGIBLE = (
     ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE
 )
+_TRANSIENT_BACKEND_ERRORS = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
+    OSError,
+)
+
+
+async def _store_call[ResultT](
+    awaitable: typing.Awaitable[ResultT],
+    operation: str,
+) -> ResultT:
+    """Translate only retryable transport I/O at the adapter boundary.
+
+    Args:
+        awaitable: Issued storage operation.
+        operation: Human-readable operation name for failure context.
+
+    Returns:
+        The storage operation result.
+
+    Raises:
+        grant_control.GrantControlBackendUnavailable: The operation encounters
+            a classified transient backend failure.
+        BaseException: Any unclassified operation failure.
+    """
+    try:
+        return await awaitable
+    except _TRANSIENT_BACKEND_ERRORS as error:
+        message = f"{operation} backend is unavailable"
+        raise grant_control.GrantControlBackendUnavailable(message) from error
 
 
 def _finalize_disposition(
@@ -108,17 +145,23 @@ class SidGrantControl:
             return ()
 
         if mode is grant_control.ClaimMode.PRIMARY:
-            claims = await self._data_store.claim_unclaimed(
-                self._source_type,
-                owner_worker_id,
-                limit,
+            claims = await _store_call(
+                self._data_store.claim_unclaimed(
+                    self._source_type,
+                    owner_worker_id,
+                    limit,
+                ),
+                "SID claim",
             )
         else:
-            claims = await self._data_store.claim_recoverable(
-                self._source_type,
-                owner_worker_id,
-                limit,
-                self._abandonment_window,
+            claims = await _store_call(
+                self._data_store.claim_recoverable(
+                    self._source_type,
+                    owner_worker_id,
+                    limit,
+                    self._abandonment_window,
+                ),
+                "SID claim",
             )
         if len(claims) > limit:
             msg = "SID claim returned more grants than requested"
@@ -165,7 +208,10 @@ class SidGrantControl:
                 cardinality, identity, order, or disposition.
         """
         grants = tuple(grants)
-        results = await self._heartbeat_store.renew_heartbeats(grants)
+        results = await _store_call(
+            self._heartbeat_store.renew_heartbeats(grants),
+            "SID heartbeat",
+        )
         if len(results) != len(grants):
             msg = "SID heartbeat result cardinality mismatch"
             raise grant_control.GrantControlIntegrityError(msg)
@@ -224,7 +270,10 @@ class SidGrantControl:
                 invalid result or a non-budgeted failure quarantines.
         """
         if isinstance(terminal, grant_control.NeutralRelease):
-            result = await self._data_store.release(grant)
+            result = await _store_call(
+                self._data_store.release(grant),
+                "SID finalization",
+            )
             disposition = _finalize_disposition(result.disposition)
             return grant_control.FinalizeResult(grant, disposition)
 
@@ -245,12 +294,15 @@ class SidGrantControl:
             msg = "terminal must be a closed TerminalDecision"
             raise TypeError(msg)
 
-        result = await self._data_store.finalize_failure(
-            grant,
-            action,
-            terminal.status_reason,
-            actor_id=self._actor_id,
-            reason=terminal.reason,
+        result = await _store_call(
+            self._data_store.finalize_failure(
+                grant,
+                action,
+                terminal.status_reason,
+                actor_id=self._actor_id,
+                reason=terminal.reason,
+            ),
+            "SID finalization",
         )
         if isinstance(treatment, failure_policy.RetryWithoutBudget) and (
             result.final_status is feed_store.FeedStatus.QUARANTINED
