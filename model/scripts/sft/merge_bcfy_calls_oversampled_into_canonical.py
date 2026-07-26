@@ -23,11 +23,21 @@ here: example_id from the (now-unique, per the GCS-copy fix) audio
 filename stem, segment_id fixed at "001", matching that documented
 fallback's own semantics.
 
-validation.jsonl is intentionally left out of scope: a leakage check
+validation.jsonl's bcfy_calls rows are left out of scope: a leakage check
 (source_group overlap between the new oversampled train recordings and
-validation.jsonl's existing bcfy_calls rows) found zero overlap, so the
-original validation.jsonl can be referenced unmodified in the eventual
-run_config.toml.
+validation.jsonl's existing bcfy_calls rows) found zero overlap, so
+nothing needs replacing there. Its split field does need correcting,
+though: the production validation.jsonl is intentionally the same
+manifest reused for both validation and eval (a documented, supported
+gemini_sft pattern), so every row's split field literally reads "eval" --
+which the strict validator rejects when the manifest is loaded as
+validation (expected_split="validation"). This is a pre-existing gap
+between that documented reuse pattern and the current validator, not
+something this script's changes caused; it would block any fresh prepare
+run reusing this exact validation manifest. Since split is an optional
+field, this script copies validation.jsonl into the same output prefix
+with split corrected to "validation" on every row, leaving the original
+production file untouched.
 
 Output is written under a distinct round prefix rather than overwriting
 anything in the production round's own manifests/canonical/ path -- see
@@ -44,10 +54,15 @@ Usage:
       --new-train bcfy_calls_oversampled_train.jsonl \
       --new-eval bcfy_calls_holdout_eval.jsonl \
       --project <gcp-project> \
+      --source-validation gs://wd-transcription-data/sft/runs/\
+20260712-gemini31-flash-lite-a16-lr05-e14-r3/manifests/canonical/\
+validation.jsonl \
       --out-train-uri gs://wd-transcription-data/sft/runs/\
 2026-07-26-bcfy-calls-8khz-oversample/manifests/canonical/train.jsonl \
       --out-eval-uri gs://wd-transcription-data/sft/runs/\
-2026-07-26-bcfy-calls-8khz-oversample/manifests/canonical/eval.jsonl
+2026-07-26-bcfy-calls-8khz-oversample/manifests/canonical/eval.jsonl \
+      --out-validation-uri gs://wd-transcription-data/sft/runs/\
+2026-07-26-bcfy-calls-8khz-oversample/manifests/canonical/validation.jsonl
 """
 
 from __future__ import annotations
@@ -137,6 +152,30 @@ def _tag_bcfy_calls(row: dict, *, split: str) -> dict:
     return tagged
 
 
+def _copy_validation_split_fixed(
+    client: storage.Client, *, source_uri: str, out_uri: str
+) -> None:
+    """Copy validation.jsonl with a corrected split field on every row.
+
+    Args:
+        client: Storage client used for gs:// reads/writes.
+        source_uri: Production canonical validation.jsonl (gs:// or
+            local), whose rows carry split="eval" since it is
+            intentionally the same manifest reused for both eval and
+            validation.
+        out_uri: Destination for the corrected copy.
+    """
+    rows = read_jsonl(client, source_uri)
+    fixed_rows = [{**row, "split": "validation"} for row in rows]
+    write_jsonl(client, fixed_rows, out_uri)
+    logger.info(
+        "validation: copied %s rows from %s with split corrected -> %s",
+        len(fixed_rows),
+        source_uri,
+        out_uri,
+    )
+
+
 def _merge_split(
     client: storage.Client,
     *,
@@ -190,6 +229,19 @@ def _parse_args() -> argparse.Namespace:
         help="Output of build_bcfy_calls_oversampled_manifest.py --out-eval.",
     )
     parser.add_argument(
+        "--source-validation",
+        default=(
+            "gs://wd-transcription-data/sft/runs/"
+            "20260712-gemini31-flash-lite-a16-lr05-e14-r3/manifests/"
+            "canonical/validation.jsonl"
+        ),
+        help=(
+            "Production canonical validation.jsonl (gs:// or local), "
+            "copied with its split field corrected -- see module "
+            "docstring."
+        ),
+    )
+    parser.add_argument(
         "--project", default=None, help="GCP project for GCS access"
     )
     parser.add_argument(
@@ -209,6 +261,15 @@ def _parse_args() -> argparse.Namespace:
             "eval.jsonl"
         ),
         help="Destination for the merged canonical eval.jsonl.",
+    )
+    parser.add_argument(
+        "--out-validation-uri",
+        default=(
+            "gs://wd-transcription-data/sft/runs/"
+            "2026-07-26-bcfy-calls-8khz-oversample/manifests/canonical/"
+            "validation.jsonl"
+        ),
+        help="Destination for the split-corrected validation.jsonl copy.",
     )
     return parser.parse_args()
 
@@ -231,6 +292,11 @@ def main() -> None:
         new_rows_path=args.new_eval,
         out_uri=args.out_eval_uri,
         split_label="eval",
+    )
+    _copy_validation_split_fixed(
+        client,
+        source_uri=args.source_validation,
+        out_uri=args.out_validation_uri,
     )
 
 
