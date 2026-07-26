@@ -6,7 +6,11 @@ import dataclasses
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TranscriptionContext:
-    """Segment metadata available to transcriber diagnostics."""
+    """Segment metadata available to transcriber diagnostics.
+
+    Attributes:
+        segment_id: Stable identifier for the segment being transcribed.
+    """
 
     segment_id: str
 

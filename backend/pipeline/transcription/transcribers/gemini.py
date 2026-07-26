@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 import mimetypes
 import re
-from typing import Literal
+import typing
 
 import httpx
 import pydantic
@@ -101,7 +101,7 @@ class _GeminiAttempt:
     context: base.TranscriptionContext | None
     audio_uri: str | None
     model: str
-    call_stage: Literal["primary", "fallback"]
+    call_stage: typing.Literal["primary", "fallback"]
     attempt: int
 
     @property
@@ -111,8 +111,8 @@ class _GeminiAttempt:
 
 
 def _is_tuned_model(model: str) -> bool:
-    """Return whether the model uses the existing tuned-endpoint form."""
-    return "projects/" in model
+    """Return whether the model uses a tuned-endpoint resource path."""
+    return "/endpoints/" in model
 
 
 def _response_text(response: types.GenerateContentResponse) -> str:
@@ -142,10 +142,7 @@ def _response_log_fields(
     candidates = response.candidates or []
     finish_reason = None
     if candidates and candidates[0].finish_reason is not None:
-        reason_name = candidates[0].finish_reason.name
-        finish_reason = (
-            reason_name if isinstance(reason_name, str) else str(reason_name)
-        )
+        finish_reason = candidates[0].finish_reason.name
     response_id = response.response_id
     return {
         "response_id": str(response_id) if response_id is not None else None,
@@ -563,7 +560,10 @@ class GeminiTranscriber(base.Transcriber):
                     f"(Response ID: {resp_id})"
                 )
                 e = GeminiTransientTranscriptionError(msg)
-            except GeminiTransientTranscriptionError as exc:
+            except (
+                GeminiTransientTranscriptionError,
+                GeminiNoCandidatesError,
+            ) as exc:
                 e = exc
 
             if attempt == attempts:
