@@ -119,6 +119,20 @@ export function isOverlapWithOfflineWindows(
   return false;
 }
 
+/**
+ * Compares two audio segments chronologically by startTimestamp (ascending),
+ * using segment ID as a tie-breaker.
+ */
+export function compareAudioSegments(
+  a: RenderableAudioSegment,
+  b: RenderableAudioSegment
+): number {
+  return (
+    Date.parse(a.startTimestamp) - Date.parse(b.startTimestamp) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
 export function consolidateAudioSegments(
   segments: AudioSegment[],
   audioSource?: SourceType,
@@ -133,11 +147,7 @@ export function consolidateAudioSegments(
     : [];
 
   // Sort chronologically (ascending) to group consecutive segments in time order
-  const chronologicalSegments = [...segments].sort(
-    (a, b) =>
-      Date.parse(a.startTimestamp) - Date.parse(b.startTimestamp) ||
-      a.id.localeCompare(b.id)
-  );
+  const chronologicalSegments = [...segments].sort(compareAudioSegments);
 
   const consolidated: RenderableAudioSegment[] = [];
   let activeSilenceBundle: RenderableAudioSegment | null = null;
@@ -210,11 +220,7 @@ export function consolidateAudioSegments(
   flushSilenceBundle();
 
   // Return sorted descending (newest at the top)
-  return consolidated.sort(
-    (a, b) =>
-      Date.parse(b.startTimestamp) - Date.parse(a.startTimestamp) ||
-      b.id.localeCompare(a.id)
-  );
+  return consolidated.reverse();
 }
 
 function extendOrCreateSilenceBundle(
