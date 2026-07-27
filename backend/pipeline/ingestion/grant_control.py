@@ -46,6 +46,10 @@ class GrantControlIntegrityError(RuntimeError):
     """Raised when a typed store response cannot be correlated exactly."""
 
 
+class GrantControlBackendUnavailable(RuntimeError):
+    """Raised when a domain adapter observes retryable backend transport I/O."""
+
+
 class ExactGrant[UnitKeyT: typing.Hashable](typing.Protocol):
     """Complete immutable authority for one ownership generation.
 

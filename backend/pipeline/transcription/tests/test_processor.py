@@ -40,6 +40,7 @@ from backend.pipeline.transcription.processor import (
     TranscriptionEventProcessor,
     is_transient_exception,
 )
+from backend.pipeline.transcription.transcribers import base
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
     GeminiTransientTranscriptionError,
@@ -125,6 +126,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_transcriber.transcribe.assert_called_once_with(
             uri="gs://bucket/normalized.flac",
             duration_ms=5001,  # (1005 * 1000 + 2) - (1000 * 1000 + 1) = 5001 ms
+            context=base.TranscriptionContext(segment_id="tx-1111"),
         )
 
         # Verify final egress publishing was called with correctly serialized TranscribedAudio proto

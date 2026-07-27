@@ -19,9 +19,9 @@ _LOCAL_FALLBACK_THREADS = 16
 # throttling
 _MIN_THREADS = 4
 
-# Maximum threads capped to prevent connection pool exhaustion and memory bloat
-# on dense VMs
-_MAX_THREADS = 32
+# Maximum threads capped to prevent connection pool exhaustion and memory
+# bloat on dense VMs (scaled up to 64 following container min_ram 16GB)
+_MAX_THREADS = 64
 
 
 class ConfigBase(pydantic.BaseModel):

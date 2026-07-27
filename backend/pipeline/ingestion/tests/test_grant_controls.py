@@ -12,6 +12,8 @@ import unittest
 import uuid
 from unittest import mock
 
+import asyncpg
+
 from backend.pipeline.ingestion import (
     failure_policy,
     feed_grant_control,
@@ -27,6 +29,13 @@ _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _NOW = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
 _ABANDONMENT = datetime.timedelta(seconds=60)
 _ACTOR_ID = "service_account:gcp:grant-control-tests"
+_TRANSIENT_POSTGRES_ERRORS = (
+    asyncpg.TooManyConnectionsError,
+    asyncpg.AdminShutdownError,
+    asyncpg.CrashShutdownError,
+    asyncpg.CannotConnectNowError,
+    asyncpg.QueryCanceledError,
+)
 
 
 def _leased_feed(
@@ -438,6 +447,63 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.heartbeat_store.renew_grant_heartbeats.assert_awaited_once()
 
+    async def test_transient_store_io_is_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        operations = (
+            (
+                self.data_store.count_held_by_type,
+                self.control.claim(
+                    grant_control.ClaimMode.PRIMARY,
+                    _OWNER_ID,
+                    1,
+                ),
+            ),
+            (
+                self.heartbeat_store.renew_grant_heartbeats,
+                self.control.heartbeat((grant,)),
+            ),
+            (
+                self.data_store.release_feed,
+                self.control.finalize(
+                    grant,
+                    payload,
+                    grant_control.NeutralRelease(),
+                ),
+            ),
+        )
+
+        for store_call, operation in operations:
+            with self.subTest(store_call=store_call._mock_name):
+                failure = OSError("connection reset")
+                store_call.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await operation
+                self.assertIs(raised.exception.__cause__, failure)
+                store_call.side_effect = None
+
+    async def test_transient_postgres_errors_are_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _feed_grant()
+
+        for failure_type in _TRANSIENT_POSTGRES_ERRORS:
+            with self.subTest(failure_type=failure_type.__name__):
+                failure = failure_type("backend temporarily unavailable")
+                self.heartbeat_store.renew_grant_heartbeats.side_effect = (
+                    failure
+                )
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await self.control.heartbeat((grant,))
+                self.assertIs(raised.exception.__cause__, failure)
+                self.heartbeat_store.renew_grant_heartbeats.side_effect = None
+
     async def test_neutral_release_uses_exact_feed_release(self) -> None:
         grant = _feed_grant()
         self.data_store.release_feed.return_value = True
@@ -569,6 +635,81 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
                 _budgeted_plan(),
             )
         self.data_store.report_feed_failure.assert_awaited_once()
+
+    async def test_failure_finalization_emits_legacy_policy_event(self) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        plan = _budgeted_plan()
+        self.data_store.report_feed_failure.return_value = "failing"
+
+        with self.assertLogs(feed_grant_control.logger, level="INFO") as logs:
+            result = await self.control.finalize(grant, payload, plan)
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        records = [
+            typing.cast("dict[str, object]", record.__dict__["json_fields"])
+            for record in logs.records
+        ]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(
+            records[0],
+            {
+                "event_type": "feed_failure_policy_decision",
+                "feed_id": str(grant.feed_id),
+                "source_type": feed_store.SourceType.BCFY_CALLS.value,
+                "reason": plan.reason,
+                "status_reason": plan.status_reason.value,
+                "replay_missing": False,
+                "data_gap_known": False,
+                "executed_action": "increment_feed_failure_budget",
+            },
+        )
+
+    async def test_publish_gap_emits_policy_and_gap_events(self) -> None:
+        grant = _feed_grant()
+        payload = _feed_payload_for_grant(grant)
+        retry_after = _NOW + datetime.timedelta(minutes=8)
+        plan = failure_policy.FailurePersistencePlan(
+            status_reason=(
+                feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            ),
+            reason="publish failed",
+            treatment=failure_policy.RetryWithoutBudget(retry_after),
+        )
+        self.data_store.release_non_budgeted_failure.return_value = "failing"
+
+        with self.assertLogs(feed_grant_control.logger, level="INFO") as logs:
+            result = await self.control.finalize(grant, payload, plan)
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        records = [
+            typing.cast("dict[str, object]", record.__dict__["json_fields"])
+            for record in logs.records
+        ]
+        self.assertEqual(
+            [record["event_type"] for record in records],
+            [
+                "feed_failure_policy_decision",
+                "post_bookmark_publish_failure",
+            ],
+        )
+        for record in records:
+            self.assertEqual(record["feed_id"], str(grant.feed_id))
+            self.assertEqual(record["status_reason"], plan.status_reason.value)
+            self.assertTrue(record["replay_missing"])
+            self.assertTrue(record["data_gap_known"])
+            self.assertEqual(
+                record["executed_action"],
+                "record_post_bookmark_publish_gap",
+            )
+        self.assertEqual(records[0]["retry_after"], retry_after.isoformat())
+        self.assertNotIn("retry_after", records[1])
 
     async def test_quarantine_observer_runs_after_exact_commit(self) -> None:
         async def observe(*_args: object) -> None:
@@ -985,6 +1126,60 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             await self.control.heartbeat((grant,))
 
         self.heartbeat_store.renew_heartbeats.assert_awaited_once()
+
+    async def test_transient_store_io_is_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _lease_grant()
+        operations = (
+            (
+                self.data_store.claim_unclaimed,
+                self.control.claim(
+                    grant_control.ClaimMode.PRIMARY,
+                    _OWNER_ID,
+                    1,
+                ),
+            ),
+            (
+                self.heartbeat_store.renew_heartbeats,
+                self.control.heartbeat((grant,)),
+            ),
+            (
+                self.data_store.release,
+                self.control.finalize(
+                    grant,
+                    grant_control.ClaimMode.PRIMARY,
+                    grant_control.NeutralRelease(),
+                ),
+            ),
+        )
+
+        for store_call, operation in operations:
+            with self.subTest(store_call=store_call._mock_name):
+                failure = OSError("connection reset")
+                store_call.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await operation
+                self.assertIs(raised.exception.__cause__, failure)
+                store_call.side_effect = None
+
+    async def test_transient_postgres_errors_are_classified_for_supervision(
+        self,
+    ) -> None:
+        grant = _lease_grant()
+
+        for failure_type in _TRANSIENT_POSTGRES_ERRORS:
+            with self.subTest(failure_type=failure_type.__name__):
+                failure = failure_type("backend temporarily unavailable")
+                self.heartbeat_store.renew_heartbeats.side_effect = failure
+                with self.assertRaises(
+                    grant_control.GrantControlBackendUnavailable
+                ) as raised:
+                    await self.control.heartbeat((grant,))
+                self.assertIs(raised.exception.__cause__, failure)
+                self.heartbeat_store.renew_heartbeats.side_effect = None
 
     async def test_neutral_release_maps_to_exact_lease_release(
         self,

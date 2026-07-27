@@ -17,6 +17,7 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.storage import (
+    connection,
     feed_change_notifications,
     feed_lifecycle,
     feed_queries,
@@ -318,6 +319,8 @@ class FeedStore:
             are never leased here). ``CollectorRuntime`` passes
             ``list(settings.caps.keys())`` so the SQL shape and the
             runtime's per-type budgets are seeded from the same set.
+        heartbeat_timeout_sec: Optional total timeout for heartbeat pool
+            checkout, query execution, and connection release.
 
     """
 
@@ -325,8 +328,11 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         claim_types: collections.abc.Sequence[SourceType] | None = None,
+        *,
+        heartbeat_timeout_sec: float | None = None,
     ) -> None:
         self._pool = pool
+        self._heartbeat_timeout_sec = heartbeat_timeout_sec
         if claim_types is None:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
@@ -602,12 +608,14 @@ class FeedStore:
             enumerate(grants),
             key=lambda item: item[1].feed_id.int,
         )
-        rows = await self._pool.fetch(
+        rows = await connection.fetch_with_timeout_budget(
+            self._pool,
             feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             [grant.feed_id for _, grant in ordered],
             [grant.owner_worker_id for _, grant in ordered],
             [grant.fencing_token for _, grant in ordered],
             [ordinal for ordinal, _ in ordered],
+            timeout_sec=self._heartbeat_timeout_sec,
         )
 
         expected_by_ordinal = dict(enumerate(grants))

@@ -569,6 +569,105 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 mock_publisher.resume_publish.assert_called_once()
                 self.assertEqual(mock_publisher.publish.call_count, 1)
 
+    def test_uses_receipt_time_for_timestamp_ms_attribute_when_provided(
+        self,
+    ) -> None:
+        start_ts = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+        receipt_ts = datetime.datetime(
+            2026, 3, 5, 12, 0, 10, tzinfo=datetime.UTC
+        )
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-receipt"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-42",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-1",
+            start_timestamp=start_ts,
+            duration_ms=15000,
+            receipt_time=receipt_ts,
+        )
+
+        publish_args, publish_kwargs = mock_publisher.publish.call_args
+        self.assertEqual(
+            publish_kwargs["timestamp_ms"],
+            str(int(start_ts.timestamp() * 1000)),
+        )
+        chunk = ContinuousAudio()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(
+            chunk.start_timestamp.seconds,
+            int(start_ts.timestamp()),
+        )
+        self.assertEqual(
+            chunk.receipt_timestamp.seconds,
+            int(receipt_ts.timestamp()),
+        )
+
+    def test_omitted_receipt_time_leaves_proto_receipt_timestamp_unpopulated(
+        self,
+    ) -> None:
+        start_ts = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-no-receipt"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-42",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-1",
+            start_timestamp=start_ts,
+            duration_ms=15000,
+            receipt_time=None,
+        )
+
+        publish_args, _ = mock_publisher.publish.call_args
+        chunk = ContinuousAudio()
+        chunk.ParseFromString(publish_args[1])
+        self.assertFalse(chunk.HasField("receipt_timestamp"))
+
+    def test_segmented_audio_populates_receipt_timestamp_when_provided(
+        self,
+    ) -> None:
+        start_ts = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+        receipt_ts = datetime.datetime(
+            2026, 3, 5, 12, 0, 5, tzinfo=datetime.UTC
+        )
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-segmented"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/segmented",
+            feed_id="feed-42",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-1",
+            start_timestamp=start_ts,
+            duration_ms=15000,
+            receipt_time=receipt_ts,
+        )
+
+        publish_args, _ = mock_publisher.publish.call_args
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(publish_args[1])
+        self.assertTrue(chunk.HasField("receipt_timestamp"))
+        self.assertEqual(
+            chunk.receipt_timestamp.seconds,
+            int(receipt_ts.timestamp()),
+        )
+
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
@@ -635,6 +734,11 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
+        self.assertIsNone(publish_kwargs["retry"])
+        self.assertEqual(
+            publish_kwargs["timeout"],
+            gcp_helper._ORDERED_PUBLISH_ATTEMPT_TIMEOUT_SEC,
+        )
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
         """PublishToPausedOrderingKeyException triggers resume_publish and retries publish once."""
