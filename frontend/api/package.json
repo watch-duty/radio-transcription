@@ -13,7 +13,7 @@
     "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
     "test": "vitest",
     "generate-routes": "yarn run tsoa routes",
-    "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js",
+    "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js && prettier --ignore-path ../../.prettierignore --write openapi.yaml",
     "verify-spec": "yarn generate-spec && git diff --exit-code openapi.yaml",
     "typecheck": "tsc --noEmit"
   },

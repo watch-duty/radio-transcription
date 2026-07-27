@@ -14,7 +14,7 @@ components:
     Scope:
       properties:
         level:
-          $ref: '#/components/schemas/ScopeLevel'
+          $ref: "#/components/schemas/ScopeLevel"
         targetFeeds:
           items:
             type: string
@@ -37,7 +37,7 @@ components:
             - KEYWORD_MATCH
           nullable: false
         operator:
-          $ref: '#/components/schemas/LogicalOperator'
+          $ref: "#/components/schemas/LogicalOperator"
         keywords:
           items:
             type: string
@@ -76,7 +76,7 @@ components:
             - RULE_GROUP
           nullable: false
         operator:
-          $ref: '#/components/schemas/LogicalOperator'
+          $ref: "#/components/schemas/LogicalOperator"
         childRuleIds:
           items:
             type: string
@@ -89,9 +89,9 @@ components:
       additionalProperties: false
     RuleConditions:
       anyOf:
-        - $ref: '#/components/schemas/KeywordConditions'
-        - $ref: '#/components/schemas/RegexConditions'
-        - $ref: '#/components/schemas/GroupConditions'
+        - $ref: "#/components/schemas/KeywordConditions"
+        - $ref: "#/components/schemas/RegexConditions"
+        - $ref: "#/components/schemas/GroupConditions"
     Tag:
       properties:
         key:
@@ -127,15 +127,15 @@ components:
         isActive:
           type: boolean
         scope:
-          $ref: '#/components/schemas/Scope'
+          $ref: "#/components/schemas/Scope"
         conditions:
-          $ref: '#/components/schemas/RuleConditions'
+          $ref: "#/components/schemas/RuleConditions"
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
         metadata:
-          $ref: '#/components/schemas/RuleMetadata'
+          $ref: "#/components/schemas/RuleMetadata"
       required:
         - ruleId
         - ruleName
@@ -163,12 +163,12 @@ components:
         isActive:
           type: boolean
         scope:
-          $ref: '#/components/schemas/Scope'
+          $ref: "#/components/schemas/Scope"
         conditions:
-          $ref: '#/components/schemas/RuleConditions'
+          $ref: "#/components/schemas/RuleConditions"
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       required:
         - ruleName
@@ -185,12 +185,12 @@ components:
         isActive:
           type: boolean
         scope:
-          $ref: '#/components/schemas/Scope'
+          $ref: "#/components/schemas/Scope"
         conditions:
-          $ref: '#/components/schemas/RuleConditions'
+          $ref: "#/components/schemas/RuleConditions"
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       type: object
       additionalProperties: false
@@ -220,7 +220,7 @@ components:
           type: string
         matchedSpans:
           items:
-            $ref: '#/components/schemas/TextMatchSpan'
+            $ref: "#/components/schemas/TextMatchSpan"
           type: array
       required:
         - audioSegmentId
@@ -239,7 +239,7 @@ components:
           format: double
         examples:
           items:
-            $ref: '#/components/schemas/DryRunMatchExample'
+            $ref: "#/components/schemas/DryRunMatchExample"
           type: array
       required:
         - hitCount
@@ -250,7 +250,7 @@ components:
     DryRunRequest:
       properties:
         rule:
-          $ref: '#/components/schemas/RuleCreate'
+          $ref: "#/components/schemas/RuleCreate"
         maxExamples:
           type: number
           format: double
@@ -309,7 +309,7 @@ components:
         name:
           type: string
         sourceType:
-          $ref: '#/components/schemas/SourceType'
+          $ref: "#/components/schemas/SourceType"
         id:
           type: string
         sourceFeedId:
@@ -319,18 +319,18 @@ components:
         archiveUrl:
           type: string
         status:
-          $ref: '#/components/schemas/FeedStatus'
+          $ref: "#/components/schemas/FeedStatus"
         substatus:
-          $ref: '#/components/schemas/BackendFeedStatus'
+          $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
           type: number
           format: double
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
         statusReason:
-          $ref: '#/components/schemas/BackendFeedStatusReason'
+          $ref: "#/components/schemas/BackendFeedStatusReason"
         lastSpeechSegmentTimestamp:
           type: number
           format: double
@@ -348,7 +348,7 @@ components:
       properties:
         feeds:
           items:
-            $ref: '#/components/schemas/Feed'
+            $ref: "#/components/schemas/Feed"
           type: array
         nextToken:
           type: string
@@ -388,7 +388,7 @@ components:
       properties:
         sourceTypes:
           items:
-            $ref: '#/components/schemas/SourceType'
+            $ref: "#/components/schemas/SourceType"
           type: array
         statuses:
           items:
@@ -396,7 +396,7 @@ components:
           type: array
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       required:
         - sourceTypes
@@ -411,9 +411,9 @@ components:
         name:
           type: string
         sourceType:
-          $ref: '#/components/schemas/SourceType'
+          $ref: "#/components/schemas/SourceType"
         status:
-          $ref: '#/components/schemas/BackendFeedStatus'
+          $ref: "#/components/schemas/BackendFeedStatus"
         failureCount:
           type: number
           format: double
@@ -421,7 +421,7 @@ components:
           type: string
         statusReason:
           allOf:
-            - $ref: '#/components/schemas/BackendFeedStatusReason'
+            - $ref: "#/components/schemas/BackendFeedStatusReason"
           nullable: true
         statusReasonUpdatedAt:
           type: string
@@ -434,7 +434,7 @@ components:
           type: string
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       type: object
       additionalProperties: false
@@ -455,9 +455,9 @@ components:
           type: number
           format: double
         beforeValues:
-          $ref: '#/components/schemas/AuditTrailValues'
+          $ref: "#/components/schemas/AuditTrailValues"
         afterValues:
-          $ref: '#/components/schemas/AuditTrailValues'
+          $ref: "#/components/schemas/AuditTrailValues"
       required:
         - id
         - feedId
@@ -473,7 +473,7 @@ components:
       properties:
         historyEvents:
           items:
-            $ref: '#/components/schemas/FeedHistoryEvent'
+            $ref: "#/components/schemas/FeedHistoryEvent"
           type: array
         nextToken:
           type: string
@@ -505,12 +505,12 @@ components:
         name:
           type: string
         sourceType:
-          $ref: '#/components/schemas/SourceType'
+          $ref: "#/components/schemas/SourceType"
         sourceFeedId:
           type: string
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       required:
         - name
@@ -524,7 +524,7 @@ components:
           type: string
         tags:
           items:
-            $ref: '#/components/schemas/Tag'
+            $ref: "#/components/schemas/Tag"
           type: array
       required:
         - name
@@ -591,7 +591,7 @@ components:
       properties:
         textMatch:
           items:
-            $ref: '#/components/schemas/TextMatchSpan'
+            $ref: "#/components/schemas/TextMatchSpan"
           type: array
       type: object
       additionalProperties: false
@@ -599,7 +599,7 @@ components:
       properties: {}
       type: object
       additionalProperties:
-        $ref: '#/components/schemas/RuleAnnotation'
+        $ref: "#/components/schemas/RuleAnnotation"
     EvaluationAnnotationData:
       properties:
         decisions:
@@ -611,7 +611,7 @@ components:
             type: string
           type: array
         ruleAnnotations:
-          $ref: '#/components/schemas/RuleAnnotationMap'
+          $ref: "#/components/schemas/RuleAnnotationMap"
       required:
         - decisions
         - errors
@@ -636,26 +636,26 @@ components:
       additionalProperties: false
     TranscriptFeedbackAnnotationData:
       properties:
-        userIds:
+        flaggedByUserIds:
           items:
             type: string
           type: array
       required:
-        - userIds
+        - flaggedByUserIds
       type: object
       additionalProperties: false
     Annotation:
       properties:
         type:
-          $ref: '#/components/schemas/AnnotationType'
+          $ref: "#/components/schemas/AnnotationType"
         createdAt:
           type: string
         data:
           anyOf:
-            - $ref: '#/components/schemas/TranscriptAnnotationData'
-            - $ref: '#/components/schemas/EvaluationAnnotationData'
-            - $ref: '#/components/schemas/WaveformAnnotationData'
-            - $ref: '#/components/schemas/TranscriptFeedbackAnnotationData'
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
+            - $ref: "#/components/schemas/WaveformAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFeedbackAnnotationData"
       required:
         - type
         - createdAt
@@ -669,7 +669,7 @@ components:
         feedId:
           type: string
         classification:
-          $ref: '#/components/schemas/AudioClassification'
+          $ref: "#/components/schemas/AudioClassification"
         startTimestamp:
           type: string
         endTimestamp:
@@ -696,7 +696,7 @@ components:
           type: string
         annotations:
           items:
-            $ref: '#/components/schemas/Annotation'
+            $ref: "#/components/schemas/Annotation"
           type: array
       required:
         - id
@@ -737,29 +737,29 @@ components:
     Pick_Annotation.Exclude_keyofAnnotation.createdAt__:
       properties:
         type:
-          $ref: '#/components/schemas/AnnotationType'
+          $ref: "#/components/schemas/AnnotationType"
         data:
           anyOf:
-            - $ref: '#/components/schemas/TranscriptAnnotationData'
-            - $ref: '#/components/schemas/EvaluationAnnotationData'
-            - $ref: '#/components/schemas/WaveformAnnotationData'
-            - $ref: '#/components/schemas/TranscriptFeedbackAnnotationData'
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
+            - $ref: "#/components/schemas/WaveformAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFeedbackAnnotationData"
       required:
         - type
         - data
       type: object
       description: From T, pick a set of properties whose keys are in the union K
     Omit_Annotation.createdAt_:
-      $ref: '#/components/schemas/Pick_Annotation.Exclude_keyofAnnotation.createdAt__'
+      $ref: "#/components/schemas/Pick_Annotation.Exclude_keyofAnnotation.createdAt__"
       description: Construct a type with the properties of T except for those in type K.
     AddAnnotationRequest:
-      $ref: '#/components/schemas/Omit_Annotation.createdAt_'
+      $ref: "#/components/schemas/Omit_Annotation.createdAt_"
   securitySchemes:
     google_id_token:
       type: oauth2
       flows:
         implicit:
-          authorizationUrl: ''
+          authorizationUrl: ""
           scopes: {}
       x-google-auth:
         issuer: https://accounts.google.com
@@ -775,15 +775,15 @@ paths:
     get:
       operationId: ListRules
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/Rule'
+                  $ref: "#/components/schemas/Rule"
                 type: array
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -794,7 +794,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -805,7 +805,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -833,13 +833,13 @@ paths:
     post:
       operationId: CreateRule
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
-        '401':
+                $ref: "#/components/schemas/Rule"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -850,7 +850,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -861,7 +861,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -882,19 +882,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RuleCreate'
+              $ref: "#/components/schemas/RuleCreate"
       x-google-backend: radio-transcription-api
   /api/v1/rules/{ruleId}:
     get:
       operationId: GetRule
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
-        '401':
+                $ref: "#/components/schemas/Rule"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -905,7 +905,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -916,7 +916,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -927,7 +927,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -952,13 +952,13 @@ paths:
     put:
       operationId: UpdateRule
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Rule'
-        '401':
+                $ref: "#/components/schemas/Rule"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -969,7 +969,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -980,7 +980,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -991,7 +991,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1017,14 +1017,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RuleUpdate'
+              $ref: "#/components/schemas/RuleUpdate"
       x-google-backend: radio-transcription-api
     delete:
       operationId: DeleteRule
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1035,7 +1035,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1046,7 +1046,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1057,7 +1057,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1083,13 +1083,13 @@ paths:
     post:
       operationId: DryRunRule
       responses:
-        '200':
+        "200":
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DryRunResponse'
-        '401':
+                $ref: "#/components/schemas/DryRunResponse"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1100,7 +1100,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1111,7 +1111,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1132,23 +1132,23 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DryRunRequest'
+              $ref: "#/components/schemas/DryRunRequest"
       x-google-backend: radio-transcription-api
   /api/v1/feeds:
     get:
       operationId: ListFeeds
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
                 anyOf:
-                  - $ref: '#/components/schemas/ListFeedsResponse'
+                  - $ref: "#/components/schemas/ListFeedsResponse"
                   - items:
-                      $ref: '#/components/schemas/Feed'
+                      $ref: "#/components/schemas/Feed"
                     type: array
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1159,7 +1159,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1170,7 +1170,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1231,13 +1231,13 @@ paths:
     post:
       operationId: CreateFeed
       responses:
-        '201':
+        "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Feed'
-        '401':
+                $ref: "#/components/schemas/Feed"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1248,7 +1248,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1259,7 +1259,7 @@ paths:
                 required:
                   - message
                 type: object
-        '409':
+        "409":
           description: Conflict
           content:
             application/json:
@@ -1270,7 +1270,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1291,19 +1291,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/FeedCreate'
+              $ref: "#/components/schemas/FeedCreate"
       x-google-backend: radio-transcription-api
   /api/v1/feeds/search-options:
     get:
       operationId: GetFeedSearchOptions
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FeedSearchOptionsResponse'
-        '401':
+                $ref: "#/components/schemas/FeedSearchOptionsResponse"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1314,7 +1314,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1325,7 +1325,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1346,13 +1346,13 @@ paths:
     get:
       operationId: GetFeed
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Feed'
-        '401':
+                $ref: "#/components/schemas/Feed"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1363,7 +1363,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1374,7 +1374,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1385,7 +1385,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1410,13 +1410,13 @@ paths:
     put:
       operationId: UpdateFeed
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Feed'
-        '401':
+                $ref: "#/components/schemas/Feed"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1427,7 +1427,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1438,7 +1438,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1449,7 +1449,7 @@ paths:
                 required:
                   - message
                 type: object
-        '409':
+        "409":
           description: Conflict
           content:
             application/json:
@@ -1460,7 +1460,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1489,14 +1489,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/FeedUpdate'
+              $ref: "#/components/schemas/FeedUpdate"
       x-google-backend: radio-transcription-api
     delete:
       operationId: DeleteFeed
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1507,7 +1507,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1518,7 +1518,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1529,7 +1529,7 @@ paths:
                 required:
                   - message
                 type: object
-        '409':
+        "409":
           description: Conflict
           content:
             application/json:
@@ -1540,7 +1540,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1569,13 +1569,13 @@ paths:
     get:
       operationId: ListFeedHistory
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ListFeedHistoryResponse'
-        '401':
+                $ref: "#/components/schemas/ListFeedHistoryResponse"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1586,7 +1586,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1597,7 +1597,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1608,7 +1608,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1654,13 +1654,13 @@ paths:
     post:
       operationId: ResetFeed
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Feed'
-        '401':
+                $ref: "#/components/schemas/Feed"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1671,7 +1671,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1682,7 +1682,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1693,7 +1693,7 @@ paths:
                 required:
                   - message
                 type: object
-        '409':
+        "409":
           description: Conflict
           content:
             application/json:
@@ -1704,7 +1704,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1730,9 +1730,9 @@ paths:
     post:
       operationId: DeactivateFeed
       responses:
-        '204':
+        "204":
           description: No Content
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1743,7 +1743,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -1754,7 +1754,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -1765,7 +1765,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1794,13 +1794,13 @@ paths:
     get:
       operationId: GetSpec
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/OpenApiSpec'
+                  - $ref: "#/components/schemas/OpenApiSpec"
                 nullable: true
       tags:
         - Docs
@@ -1812,13 +1812,13 @@ paths:
     post:
       operationId: Login
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
           description: Bad Request
           content:
             application/json:
@@ -1829,7 +1829,7 @@ paths:
                 required:
                   - message
                 type: object
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1840,7 +1840,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1860,19 +1860,19 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: "#/components/schemas/LoginRequest"
       x-google-backend: radio-transcription-api
   /api/v1/auth/session:
     get:
       operationId: Refresh
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
           description: Bad Request
           content:
             application/json:
@@ -1883,7 +1883,7 @@ paths:
                 required:
                   - message
                 type: object
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1894,7 +1894,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1914,7 +1914,7 @@ paths:
     post:
       operationId: Logout
       responses:
-        '204':
+        "204":
           description: No content
       tags:
         - Auth
@@ -1925,13 +1925,13 @@ paths:
     get:
       operationId: GetUserInfo
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResponse'
-        '401':
+                $ref: "#/components/schemas/UserResponse"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1942,7 +1942,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -1963,7 +1963,7 @@ paths:
     get:
       operationId: ListAudioSegments
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
@@ -1973,12 +1973,12 @@ paths:
                     type: string
                   segments:
                     items:
-                      $ref: '#/components/schemas/AudioSegment'
+                      $ref: "#/components/schemas/AudioSegment"
                     type: array
                 required:
                   - segments
                 type: object
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -1989,7 +1989,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -2000,7 +2000,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -2011,7 +2011,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -2077,13 +2077,13 @@ paths:
     post:
       operationId: AddAnnotation
       responses:
-        '200':
+        "200":
           description: Ok
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Annotation'
-        '401':
+                $ref: "#/components/schemas/Annotation"
+        "401":
           description: Unauthorized
           content:
             application/json:
@@ -2094,7 +2094,7 @@ paths:
                 required:
                   - message
                 type: object
-        '403':
+        "403":
           description: Forbidden
           content:
             application/json:
@@ -2105,7 +2105,7 @@ paths:
                 required:
                   - message
                 type: object
-        '404':
+        "404":
           description: Not Found
           content:
             application/json:
@@ -2116,7 +2116,7 @@ paths:
                 required:
                   - message
                 type: object
-        '500':
+        "500":
           description: Internal Server Error
           content:
             application/json:
@@ -2142,7 +2142,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AddAnnotationRequest'
+              $ref: "#/components/schemas/AddAnnotationRequest"
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
