@@ -173,14 +173,25 @@ export function TranscriptRow({
 
   const flagMutation = useMutation({
     mutationFn: async () => {
-      if (!user || !token || hasUserFlagged) return;
-      const userIds = feedbackData
-        ? [...feedbackData.flaggedByUserIds, user.email]
-        : [user.email];
+      if (!user || !token) return;
+
+      let userIds: string[];
+      if (hasUserFlagged) {
+        userIds = feedbackData!.flaggedByUserIds.filter(
+          (id) => id !== user.email
+        );
+      } else {
+        userIds = feedbackData
+          ? [...feedbackData.flaggedByUserIds, user.email]
+          : [user.email];
+      }
+
       await addTranscriptFeedback(audioSegment.id, userIds, token);
     },
     onSuccess: () => {
-      triggerSnackbar('Transcript flagged as incorrect');
+      triggerSnackbar(
+        hasUserFlagged ? 'Flag removed' : 'Transcript flagged as incorrect'
+      );
       // Invalidate audio segments query to refetch annotations
       queryClient.invalidateQueries({ queryKey: ['audioSegments'] });
     },
@@ -189,8 +200,9 @@ export function TranscriptRow({
     },
   });
 
-  const isFlaggedOptimistic =
-    hasUserFlagged || flagMutation.isPending || flagMutation.isSuccess;
+  const isFlaggedOptimistic = flagMutation.isPending
+    ? !hasUserFlagged
+    : hasUserFlagged;
 
   return (
     <Box
@@ -450,12 +462,12 @@ export function TranscriptRow({
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!isFlaggedOptimistic) flagMutation.mutate();
+                  flagMutation.mutate();
                 }}
-                disabled={isFlaggedOptimistic}
+                disabled={flagMutation.isPending}
                 title={
                   isFlaggedOptimistic
-                    ? 'You flagged this transcript'
+                    ? 'Remove flag'
                     : 'Flag transcript as incorrect'
                 }
                 sx={{ mr: 1 }}
