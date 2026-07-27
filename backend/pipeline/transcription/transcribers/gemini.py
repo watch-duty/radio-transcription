@@ -179,8 +179,7 @@ def _log_inference_attempt(
             "error_code": error_code,
             "error_message": str(error) if error is not None else None,
         }
-        log_attempt = logger.warning if error is not None else logger.info
-        log_attempt(
+        logger.debug(
             "Gemini inference attempt",
             extra={"json_fields": fields},
         )
