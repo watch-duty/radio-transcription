@@ -1,0 +1,84 @@
+{
+  "target": {
+    "audio-ingestion": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/audio-ingestion:latest"
+        }
+      ]
+    },
+    "audio-segments-api": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/audio-segments-api:latest"
+        }
+      ]
+    },
+    "feeds-api": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/feeds-api:latest"
+        }
+      ]
+    },
+    "frontend-api": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/frontend-api:latest"
+        }
+      ]
+    },
+    "normalization": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/normalization:latest"
+        }
+      ]
+    },
+    "notification": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/notification:latest"
+        }
+      ]
+    },
+    "rules-evaluation": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/rules-evaluation:latest"
+        }
+      ]
+    },
+    "rules-management": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/rules-management:latest"
+        }
+      ]
+    },
+    "segmentation": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/segmentation:latest"
+        }
+      ]
+    },
+    "transcription": {
+      "cache-from": [
+        {
+          "type": "registry",
+          "ref": "ghcr.io/watch-duty/radio-transcription/transcription:latest"
+        }
+      ]
+    }
+  }
+}

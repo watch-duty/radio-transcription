@@ -85,8 +85,8 @@ jobs:
       - name: Load pre-compiled microservice binaries from registry cache
         run: |
           docker buildx bake \
-            --set *.cache-from=type=registry \
             -f docker-compose.yml \
+            -f .github/docker-bake.override.json \
             --load
           docker builder prune -f
 
