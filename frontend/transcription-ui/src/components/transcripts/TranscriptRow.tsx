@@ -1,15 +1,24 @@
 import { useState } from 'react';
 
+import FlagIcon from '@mui/icons-material/Flag';
+import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  AnnotationType,
   AudioClassification,
   type TranscriptAnnotationData,
+  type TranscriptFeedbackAnnotationData,
 } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { useUserInfo } from '../../hooks/useUserInfo';
+import { addTranscriptFeedback } from '../../service/addAnnotation';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
@@ -56,6 +65,9 @@ export function TranscriptRow({
   isNarrow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { token } = useAuth();
+  const { data: user } = useUserInfo(token);
+  const queryClient = useQueryClient();
 
   const [isHovered, setIsHovered] = useState(false);
 
@@ -67,6 +79,15 @@ export function TranscriptRow({
   const transcriptAnnotation = findTranscriptAnnotationData(
     audioSegment.annotations
   );
+
+  const feedbackAnnotation = audioSegment.annotations.find(
+    (a) => a.type === AnnotationType.TRANSCRIPT_FEEDBACK
+  );
+  const feedbackData = feedbackAnnotation?.data as
+    | TranscriptFeedbackAnnotationData
+    | undefined;
+  const hasUserFlagged =
+    !!user && !!feedbackData?.flaggedByUserIds.includes(user.email);
 
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
@@ -149,6 +170,27 @@ export function TranscriptRow({
     }
     return theme.palette.primary.light;
   };
+
+  const flagMutation = useMutation({
+    mutationFn: async () => {
+      if (!user || !token || hasUserFlagged) return;
+      const userIds = feedbackData
+        ? [...feedbackData.flaggedByUserIds, user.email]
+        : [user.email];
+      await addTranscriptFeedback(audioSegment.id, userIds, token);
+    },
+    onSuccess: () => {
+      triggerSnackbar('Transcript flagged as incorrect');
+      // Invalidate audio segments query to refetch annotations
+      queryClient.invalidateQueries({ queryKey: ['audioSegments'] });
+    },
+    onError: () => {
+      triggerSnackbar('Failed to flag transcript');
+    },
+  });
+
+  const isFlaggedOptimistic =
+    hasUserFlagged || flagMutation.isPending || flagMutation.isSuccess;
 
   return (
     <Box
@@ -396,8 +438,35 @@ export function TranscriptRow({
             gridArea: { xs: 'actions', sm: 'unset' },
             flexShrink: 0,
             alignSelf: 'center',
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
+          {transcriptAnnotation &&
+            transcriptAnnotation.text &&
+            !isSilence &&
+            !isOutage && (
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!isFlaggedOptimistic) flagMutation.mutate();
+                }}
+                disabled={isFlaggedOptimistic}
+                title={
+                  isFlaggedOptimistic
+                    ? 'You flagged this transcript'
+                    : 'Flag transcript as incorrect'
+                }
+                sx={{ mr: 1 }}
+              >
+                {isFlaggedOptimistic ? (
+                  <FlagIcon fontSize="small" color="action" />
+                ) : (
+                  <FlagOutlinedIcon fontSize="small" />
+                )}
+              </IconButton>
+            )}
           <SegmentInfoPopover
             audioSegment={audioSegment}
             transcriptAnnotation={transcriptAnnotation}
