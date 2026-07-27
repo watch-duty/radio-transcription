@@ -64,8 +64,8 @@ interface WaveformAnnotationBackend extends BaseAnnotationBackend {
   };
 }
 
-interface TranscriptFeedbackAnnotationBackend extends BaseAnnotationBackend {
-  type: AnnotationType.TRANSCRIPT_FEEDBACK;
+interface TranscriptFlagAnnotationBackend extends BaseAnnotationBackend {
+  type: AnnotationType.TRANSCRIPT_FLAG;
   data: {
     flagged_by_user_ids: string[];
   };
@@ -75,7 +75,7 @@ type AnnotationBackend =
   | TranscriptAnnotationBackend
   | EvaluationAnnotationBackend
   | WaveformAnnotationBackend
-  | TranscriptFeedbackAnnotationBackend;
+  | TranscriptFlagAnnotationBackend;
 
 interface AudioSegmentBackend {
   id: string;
@@ -140,7 +140,7 @@ function convertAnnotationBackend(response: AnnotationBackend): Annotation {
     };
   }
 
-  if (response.type === AnnotationType.TRANSCRIPT_FEEDBACK) {
+  if (response.type === AnnotationType.TRANSCRIPT_FLAG) {
     return {
       type: response.type,
       createdAt: response.created_at,
@@ -256,7 +256,7 @@ export class AudioController extends Controller {
       const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
 
       let backendData: unknown = requestBody.data;
-      if (requestBody.type === AnnotationType.TRANSCRIPT_FEEDBACK) {
+      if (requestBody.type === AnnotationType.TRANSCRIPT_FLAG) {
         backendData = {
           flagged_by_user_ids: (
             requestBody.data as { flaggedByUserIds: string[] }

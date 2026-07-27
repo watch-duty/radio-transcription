@@ -572,7 +572,7 @@ components:
         - TRANSCRIPT
         - EVALUATION
         - WAVEFORM
-        - TRANSCRIPT_FEEDBACK
+        - TRANSCRIPT_FLAG
       type: string
     TranscriptAnnotationData:
       properties:
@@ -634,7 +634,7 @@ components:
         - durationSeconds
       type: object
       additionalProperties: false
-    TranscriptFeedbackAnnotationData:
+    TranscriptFlagAnnotationData:
       properties:
         flaggedByUserIds:
           items:
@@ -655,7 +655,7 @@ components:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
             - $ref: "#/components/schemas/WaveformAnnotationData"
-            - $ref: "#/components/schemas/TranscriptFeedbackAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFlagAnnotationData"
       required:
         - type
         - createdAt
@@ -743,7 +743,7 @@ components:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
             - $ref: "#/components/schemas/WaveformAnnotationData"
-            - $ref: "#/components/schemas/TranscriptFeedbackAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFlagAnnotationData"
       required:
         - type
         - data
