@@ -635,3 +635,21 @@ class TestVadEngine(unittest.TestCase):
             [(0.1, 9.9)], audio_len_sec=10.0
         )
         self.assertEqual(padded, [(0.0, 10.0)])
+
+    def test_pad_and_merge_segments_preserves_qualifying_gap(self) -> None:
+        """Verifies that a 1.024s gap preserves >= 0.8s padded gap for stitcher threshold."""
+        detector = vad.VoiceActivityDetector(
+            pad_sec=0.3, min_qualifying_gap_sec=0.8
+        )
+        raw_segments = [(1.0, 2.0), (3.024, 4.024)]
+        padded = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+        self.assertEqual(len(padded), 2)
+        # 1.024s gap: max padding into gap is (1.024 - 0.8)/2 = 0.112s
+        self.assertAlmostEqual(padded[0][0], 0.7)  # 1.0 - 0.3
+        self.assertAlmostEqual(padded[0][1], 2.112)  # 2.0 + 0.112
+        self.assertAlmostEqual(padded[1][0], 2.912)  # 3.024 - 0.112
+        self.assertAlmostEqual(padded[1][1], 4.324)  # 4.024 + 0.3
+        # Difference between padded segments is 2.912 - 2.112 = 0.8s (800ms)
+        self.assertAlmostEqual(padded[1][0] - padded[0][1], 0.8)

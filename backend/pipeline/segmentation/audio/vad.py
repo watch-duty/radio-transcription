@@ -51,6 +51,7 @@ from backend.pipeline.segmentation.constants import (
     VAD_MIN_AUDIO_OFFSET_SEC,
     VAD_NORMALIZATION_MIN_PEAK,
     VAD_NORMALIZATION_TARGET_PEAK,
+    VAD_QUALIFYING_GAP_SEC,
     VAD_SPECTRAL_MIN_TOTAL_ENERGY,
     VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
     VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
@@ -103,6 +104,7 @@ class VoiceActivityDetector:
         min_speech_duration_ms: int = VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
         min_silence_duration_ms: int = VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
         pad_sec: float = VAD_DEFAULT_PAD_SEC,
+        min_qualifying_gap_sec: float = VAD_QUALIFYING_GAP_SEC,
         priming_sec: float = VAD_DEFAULT_WARMUP_SEC,
         fallback_priming_sec: float = VAD_DEFAULT_FALLBACK_PRIMING_SEC,
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
@@ -125,6 +127,7 @@ class VoiceActivityDetector:
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
         self.pad_sec = pad_sec
+        self.min_qualifying_gap_sec = min_qualifying_gap_sec
         self.priming_sec = priming_sec
         self.fallback_priming_sec = fallback_priming_sec
         self.normalization_target_peak = normalization_target_peak
@@ -339,7 +342,15 @@ class VoiceActivityDetector:
         for i, (start, end) in enumerate(merged_raw):
             if i > 0:
                 _, prev_end = merged_raw[i - 1]
-                max_pre_pad = (start - prev_end) / VAD_GAP_MIDPOINT_DIVISOR
+                gap = start - prev_end
+                if gap >= self.min_qualifying_gap_sec:
+                    max_pre_pad = max(
+                        0.0,
+                        (gap - self.min_qualifying_gap_sec)
+                        / VAD_GAP_MIDPOINT_DIVISOR,
+                    )
+                else:
+                    max_pre_pad = gap / VAD_GAP_MIDPOINT_DIVISOR
                 p_start = max(
                     VAD_MIN_AUDIO_OFFSET_SEC,
                     start - min(self.pad_sec, max_pre_pad),
@@ -349,7 +360,15 @@ class VoiceActivityDetector:
 
             if i < len(merged_raw) - 1:
                 next_start, _ = merged_raw[i + 1]
-                max_post_pad = (next_start - end) / VAD_GAP_MIDPOINT_DIVISOR
+                gap = next_start - end
+                if gap >= self.min_qualifying_gap_sec:
+                    max_post_pad = max(
+                        0.0,
+                        (gap - self.min_qualifying_gap_sec)
+                        / VAD_GAP_MIDPOINT_DIVISOR,
+                    )
+                else:
+                    max_post_pad = gap / VAD_GAP_MIDPOINT_DIVISOR
                 p_end = min(
                     audio_len_sec, end + min(self.pad_sec, max_post_pad)
                 )
