@@ -2,33 +2,22 @@
 dataset reconstruction (PR #1127, gs://wd-transcription-data/sft/
 dataset_versions/20260724-production-shaped-reconstruction/).
 
-This supersedes the earlier bcfy_calls oversampling effort against the
-prior dataset (radio-transcription-sft-v20260528 / round
-20260712-gemini31-flash-lite-a16-lr05-e14-r3 -- see
-build_bcfy_calls_oversampled_manifest.py and
-merge_bcfy_calls_oversampled_into_canonical.py in this same directory),
-which is now expected to be superseded by this reconstruction.
+This targets only training-owned rows:
 
-Two things are simpler here than in the prior effort:
-
-1. No Track 1 (recovering eval rows into training, recording-level
-   re-split). This dataset's train/eval/validation split is a
-   deliberately constructed, independently reviewed, hash-pinned
-   "immutable" artifact, and PR #1127 explicitly instructs that any
-   future bcfy_calls weighting decision must operate only on
+1. No recording-level eval re-split. This dataset's train/eval/validation
+   split is a deliberately constructed, independently reviewed,
+   hash-pinned "immutable" artifact, and PR #1127 explicitly instructs
+   that any future bcfy_calls weighting decision must operate only on
    training-owned rows and must not draw from eval. Oversampling the
    existing 1,179 training-owned bcfy_calls rows alone already lifts
-   bcfy_calls to roughly a quarter of the resulting training set --
-   comfortably past what the prior effort's combined Track 1+2 was
-   targeting -- so there is no practical need to touch eval, and doing
-   so would silently move a benchmark another engineer designed to stay
-   fixed. This script never reads or writes eval.jsonl/validation.jsonl.
+   bcfy_calls to roughly a quarter of the resulting training set, so
+   there is no practical need to touch eval, and doing so would silently
+   move a benchmark another engineer designed to stay fixed. This script
+   never reads or writes eval.jsonl/validation.jsonl.
 
-2. No per-row sample-rate measurement. The prior dataset's manifest
-   didn't carry real sample rate anywhere, so build_bcfy_calls_
-   oversampled_manifest.py downloaded every native row's audio and
-   measured it with soundfile. This dataset's rows carry
-   source_audio.sample_rate natively, so it's a free field read instead.
+2. Sample rate is read directly from this dataset's native
+   source_audio.sample_rate field on each row -- no audio download or
+   measurement needed.
 
 Where the 12x/6x defaults come from: a July 2026 incident-window study of
 1,934 SFT-failed production segments (plus a matched succeeded sample)
