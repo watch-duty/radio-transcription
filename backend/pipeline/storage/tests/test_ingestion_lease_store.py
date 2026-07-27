@@ -369,6 +369,40 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
 class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
     """Tests for exact-grant heartbeat diagnostics."""
 
+    async def test_timeout_budget_covers_checkout_query_and_release(
+        self,
+    ) -> None:
+        grant = _grant()
+        rows = [_lease_row(caller_ordinal=0, applied=True)]
+        connection = mock.AsyncMock()
+        connection.fetch.return_value = rows
+        pool = mock.MagicMock()
+        pool.acquire = mock.AsyncMock(return_value=connection)
+        pool.release = mock.AsyncMock()
+        store = ingestion_lease_store.IngestionLeaseStore(
+            pool,
+            heartbeat_timeout_sec=18.0,
+        )
+
+        with mock.patch(
+            "backend.pipeline.storage.connection.time.monotonic",
+            side_effect=(100.0, 101.0, 105.0, 109.0),
+        ):
+            result = await store.renew_heartbeats((grant,))
+
+        self.assertEqual(result[0].grant, grant)
+        pool.acquire.assert_awaited_once_with(timeout=16.0)
+        connection.fetch.assert_awaited_once_with(
+            ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
+            ["bcfy_calls"],
+            ["123"],
+            [_OWNER_ID],
+            [7],
+            [0],
+            timeout=12.0,
+        )
+        pool.release.assert_awaited_once_with(connection, timeout=9.0)
+
     async def test_results_follow_caller_order_after_database_scramble(
         self,
     ) -> None:
@@ -404,6 +438,64 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], ["bcfy_calls", "bcfy_calls"])
         self.assertEqual(args[2], ["100", "200"])
         self.assertEqual(args[5], [1, 0])
+
+    async def test_malformed_heartbeat_correlation_fails_closed(self) -> None:
+        first = _grant("200")
+        second = _grant("100", fencing_token=8)
+        cases = (
+            (
+                "missing result",
+                (
+                    _lease_row(
+                        lease_key="200",
+                        caller_ordinal=0,
+                        applied=True,
+                    ),
+                ),
+            ),
+            (
+                "duplicate ordinal",
+                (
+                    _lease_row(
+                        lease_key="200",
+                        caller_ordinal=0,
+                        applied=True,
+                    ),
+                    _lease_row(
+                        lease_key="200",
+                        caller_ordinal=0,
+                        applied=True,
+                    ),
+                ),
+            ),
+            (
+                "wrong identity",
+                (
+                    _lease_row(
+                        lease_key="unexpected",
+                        caller_ordinal=0,
+                        applied=True,
+                    ),
+                    _lease_row(
+                        lease_key="100",
+                        fencing_token=8,
+                        caller_ordinal=1,
+                        applied=True,
+                    ),
+                ),
+            ),
+        )
+
+        for label, rows in cases:
+            with self.subTest(label=label):
+                pool = connection_util.make_mock_pool(fetch_result=list(rows))
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "heartbeat",
+                ):
+                    await store.renew_heartbeats((first, second))
 
     async def test_stale_owner_token_status_and_missing_are_typed(self) -> None:
         cases = (
@@ -451,6 +543,23 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(
             RuntimeError,
             "heartbeat did not update an exact active Lease grant",
+        ):
+            await store.renew_heartbeats((_grant(),))
+
+    async def test_malformed_missing_heartbeat_state_fails_closed(self) -> None:
+        row = _lease_row(
+            caller_ordinal=0,
+            status=None,
+            worker_id=None,
+            fencing_token=None,
+            applied=True,
+        )
+        pool = connection_util.make_mock_pool(fetch_result=[row])
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "contains current state",
         ):
             await store.renew_heartbeats((_grant(),))
 

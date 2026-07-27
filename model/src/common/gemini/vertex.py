@@ -48,11 +48,14 @@ GEMINI_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
 ]
 
 _US_BATCH_MODEL_IDS = {"gemini-3.1-flash-lite"}
 
 
+# Temporary stacked-PR bridge. PR #1003 switches every evaluation caller to
+# the prediction-only interface and removes this generic request builder.
 def build_request(
     audio_uri: str,
     *,
@@ -92,6 +95,74 @@ def build_request(
         ValueError: If ``history_mode`` is unsupported.
     """
     contents = context.build_transcription_contents(
+        audio_uri=audio_uri,
+        user_prompt=user_prompt,
+        history=history,
+        history_mode=history_mode,
+    )
+    if generation_config is None:
+        resolved_generation_config = GEMINI_GENERATION_CONFIG
+    else:
+        resolved_generation_config = generation_config
+    if safety_settings is None:
+        resolved_safety_settings = GEMINI_SAFETY_SETTINGS
+    else:
+        resolved_safety_settings = safety_settings
+    return {
+        "request": {
+            "contents": contents,
+            "systemInstruction": {
+                "role": "system",
+                "parts": [{"text": system_prompt}],
+            },
+            "generationConfig": copy.deepcopy(resolved_generation_config),
+            "safetySettings": copy.deepcopy(resolved_safety_settings),
+        }
+    }
+
+
+def build_evaluation_request(
+    audio_uri: str,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    history: collections.abc.Sequence[context.PredictedHistoryTurn]
+    | None = None,
+    history_mode: str = "text_turns",
+    generation_config: dict[str, typing.Any] | None = None,
+    safety_settings: list[dict[str, typing.Any]] | None = None,
+) -> dict[str, typing.Any]:
+    """Build one provenance-safe Vertex evaluation request.
+
+    Evaluation history must contain earlier model predictions. Labeled
+    training references are rejected at runtime, and the rendered request
+    contains exactly one audio part: the current segment. Configuration values
+    are copied so callers cannot mutate module-level defaults. Pure dictionary
+    construction does not require the ``[vertex]`` extra.
+
+    Field keys are canonical camelCase JSON (``fileData``/``fileUri``/
+    ``mimeType``/``systemInstruction``/``generationConfig``/
+    ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
+    all use the same shape.
+
+    Args:
+        audio_uri: GCS URI for the current FLAC audio segment.
+        system_prompt: System instruction included in the request.
+        user_prompt: User instruction for the current audio turn.
+        history: Earlier model predictions ordered from oldest to newest.
+        history_mode: Context encoding mode used to build request contents.
+        generation_config: Generation parameters copied into the request.
+        safety_settings: Safety settings copied into the request.
+
+    Returns:
+        A canonical batch request wrapper containing plain Python objects.
+
+    Raises:
+        TypeError: If history contains a training-reference turn.
+        ValueError: If ``history_mode`` is unsupported or the request does not
+            contain exactly the current audio part.
+    """
+    contents = context.build_evaluation_transcription_contents(
         audio_uri=audio_uri,
         user_prompt=user_prompt,
         history=history,
@@ -250,8 +321,8 @@ except ImportError as _e:
     # Keep these names bound even without the optional SDK. That lets unit tests
     # patch ``common.gemini.vertex.genai`` and lets lightweight imports fail only
     # when a caller actually uses Vertex functionality.
-    genai = None
-    types = None
+    genai = typing.cast("typing.Any", None)
+    types = typing.cast("typing.Any", None)
 else:
     _VERTEX_MISSING = None
 

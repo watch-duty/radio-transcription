@@ -30,6 +30,7 @@ resource "google_cloudfunctions2_function" "default" {
   }
 
   service_config {
+    min_instance_count    = var.min_instance_count
     max_instance_count    = 1
     available_memory      = "256M"
     timeout_seconds       = 60

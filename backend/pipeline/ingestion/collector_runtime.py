@@ -1,6 +1,10 @@
+"""Generic runtime composition for Feed and SID ingestion grants."""
+
+from __future__ import annotations
+
 import asyncio
+import collections.abc
 import concurrent.futures
-import contextlib
 import datetime
 import logging
 import os
@@ -9,16 +13,13 @@ import signal
 import socket
 import threading
 import time
-import uuid
-from collections.abc import AsyncIterator, Callable
+import uuid  # noqa: TC003 - runtime type-hint resolution
 from pathlib import Path
 
 import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
-from google.api_core import exceptions as google_exceptions
-from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.common.actor_identity import (
@@ -28,16 +29,33 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
+    audio_pipeline,
     failure_policy,
+    feed_grant_control,
+    grant_control,
+    grant_supervisor,
     health_server,
     memory_watchdog,
     quarantine_telemetry,
+    sid_grant_control,
+    source_runtime_specs,
     status_reason_detail,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline as bcfy_calls_pipeline,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    provider as bcfy_calls_provider,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    sid_runner as bcfy_calls_sid_runner,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    work_pool as bcfy_calls_work_pool,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
-    AudioMimeType,
     CapturedChunk,
     CaptureEvent,
     CaptureResources,
@@ -50,7 +68,11 @@ from backend.pipeline.ingestion.retry import (
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
 from backend.pipeline.ingestion.settings import CollectorSettings
-from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
+from backend.pipeline.storage import (
+    feed_lifecycle,
+    feed_store,
+    ingestion_lease_store,
+)
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -58,21 +80,16 @@ from backend.pipeline.storage.connection import (
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     FeedStore,
-    HeartbeatResult,
     LeasedFeed,
     SourceObservationResult,
     SourceType,
 )
 
-FeedID = uuid.UUID
-# 3-arg interface: route_capturer binds url_base internally and forwards
-# the runtime-owned CaptureResources (currently just http_session) to the
-# underlying 4-arg CollectorFn.
-# See CollectorFn in models.py for the 4-arg raw collector signature.
-CaptureFn = Callable[
+CaptureFn = collections.abc.Callable[
     [LeasedFeed, asyncio.Event, CaptureResources],
-    AsyncIterator[CaptureEvent],
+    collections.abc.AsyncIterator[CaptureEvent],
 ]
+
 logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
@@ -81,13 +98,14 @@ _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 INGESTION_IO_MAX_WORKERS = 512
 _UUID_INT_RANGE = 1 << 128
+_HEARTBEAT_COMMAND_BUDGET_FRACTION = 0.8
 
 
 def _bounded_jitter(max_sec: float) -> float:
     """Return bounded non-cryptographic scheduling jitter."""
     if max_sec <= 0.0:
         return 0.0
-    return random.uniform(0.0, max_sec)  # noqa: S311 -- scheduling jitter
+    return random.uniform(0.0, max_sec)  # noqa: S311
 
 
 def _deterministic_startup_stagger(
@@ -97,9 +115,6 @@ def _deterministic_startup_stagger(
     """Map a worker UUID into a stable delay in ``[0, max_sec)``."""
     if max_sec <= 0.0:
         return 0.0
-    # UUIDs are already uniformly distributed over the 128-bit integer range.
-    # Scaling directly keeps the delay stable without depending on a PRNG
-    # algorithm for deterministic scheduling.
     return (worker_id.int / _UUID_INT_RANGE) * max_sec
 
 
@@ -131,21 +146,43 @@ def _advance_heartbeat_tick(
     interval: float,
     now: float,
 ) -> float:
-    """Advance the heartbeat ticker without creating catch-up write storms.
-
-    One immediate catch-up tick is useful after a moderately slow cycle because
-    it preserves the intended long-term heartbeat cadence. If the loop is more
-    than one interval behind, reset from ``now`` so recovery does not spin
-    back-to-back heartbeat DB writes while trying to replay missed ticks.
-    """
+    """Advance a heartbeat ticker without catch-up write storms."""
     advanced = next_tick + interval
     if now - advanced > interval:
         return now + interval
     return advanced
 
 
+def _heartbeat_io_timeout_sec(settings: CollectorSettings) -> float:
+    """Fit serial domain heartbeats inside the process stall watchdog.
+
+    The dedicated heartbeat pool has one connection, so selected ownership
+    domains renew serially. Reserve part of the watchdog for event-loop
+    scheduling and result validation, then divide the remaining database
+    budget equally across domains. Each domain spends one shared deadline
+    across pool checkout or reconnect, query execution, and pool release.
+
+    Args:
+        settings: Validated collector and database configuration.
+
+    Returns:
+        A positive per-domain timeout bounded by the configured database
+        timeout.
+    """
+    domain_count = len(settings.worker_profile.allocations)
+    per_domain_budget = (
+        settings.heartbeat_stall_timeout_sec
+        * _HEARTBEAT_COMMAND_BUDGET_FRACTION
+        / domain_count
+    )
+    configured_timeout = settings.db.command_timeout_sec
+    if configured_timeout > 0.0:
+        return min(configured_timeout, per_domain_budget)
+    return per_domain_budget
+
+
 class _PipelineFailure(Exception):
-    """Post-capture runtime side-effect failure with a stable stage tag."""
+    """Post-capture side-effect failure with canonical evidence."""
 
     def __init__(
         self,
@@ -158,40 +195,153 @@ class _PipelineFailure(Exception):
         self.status_reason = status_reason
 
 
-class CollectorRuntime:
+class _FeedRunner:
+    """Adapt the existing Feed data plane to the common runner contract."""
+
+    def __init__(self, runtime: CollectorRuntime) -> None:
+        self._runtime = runtime
+
+    async def run(
+        self,
+        grant: feed_store.FeedGrant,
+        payload: LeasedFeed,
+        context: grant_control.RunContext,
+    ) -> grant_control.RunOutcome:
+        """Run one exact Feed ownership generation.
+
+        Args:
+            grant: Exact Feed authority held by the supervisor.
+            payload: Claimed Feed configuration for the runner.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            The runner's closed completion, loss, or failure outcome.
+        """
+        return await self._runtime._process_feed(  # noqa: SLF001
+            grant,
+            payload,
+            context,
+        )
+
+
+def _non_budgeted_retry_after() -> datetime.datetime:
+    """Return the next retry time for a non-budgeted failure.
+
+    Returns:
+        A jittered UTC retry time within the configured runtime window.
     """
-    Generic runtime orchestrator for a fleet of async feed-processing tasks.
+    jitter_sec = random.uniform(  # noqa: S311
+        _NON_BUDGETED_RETRY_MIN_SEC,
+        _NON_BUDGETED_RETRY_MAX_SEC,
+    )
+    return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        seconds=jitter_sec,
+    )
 
-    Manages the full lifecycle of feed ingestion: batch-leasing feeds from
-    the database, spawning an asyncio Task per feed, renewing heartbeats via
-    an OS daemon thread (immune to event loop starvation), and detecting fence
-    violations (immediate ``os._exit(1)`` on any lost lease).
 
-    Collector authors provide a single ``capture_fn`` async generator that
-    yields audio chunks. The runtime handles everything else.
+def _retry_without_failure_budget() -> failure_policy.RetryWithoutBudget:
+    """Return one non-budgeted retry treatment at a jittered time."""
+    return failure_policy.RetryWithoutBudget(_non_budgeted_retry_after())
 
-    Design target: 250 concurrent feeds per GCE instance on a Managed
-    Instance Group (MIG). The Stream Capturer MIG scales horizontally based
-    on Stream Utilization % (number of active streams per instance), preventing
-    data loss by ensuring fleet size is proportional to the stateful workload.
-    Composition over inheritance — the capture function is passed in, not subclassed.
 
-    INVARIANT: ``asyncio.sleep()`` and ``time.sleep()`` must not appear
-    anywhere in this file EXCEPT the single ``asyncio.sleep(0.25)``
-    SSL-teardown idiom in ``_shutdown_sequence`` (HTTP-01 / aiohttp
-    Pitfall 12 — see comment at that site). Every other wait point uses
-    ``_sleep_or_shutdown`` or ``Event.wait(timeout=)`` so it is
-    interruptible by SIGTERM for prompt graceful shutdown. The
-    teardown sleep runs after ``_shutdown`` is already set, so
-    interruptibility is moot at that point.
+def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
+    """Return whether a leased Feed carries durable failure evidence.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CaptureEvent]``.
-        settings: Runtime configuration. Defaults to ``CollectorSettings()``.
-        runtime_actor_id: Optional producer-owned audit actor. Defaults to the
-            configured runtime service actor.
+        feed: Claimed Feed payload to inspect.
 
+    Returns:
+        Whether a source observation must clear existing failure state.
     """
+    return feed["failure_count"] > 0 or feed["status_reason"] is not None
+
+
+def _advance_local_bookmark(
+    feed: LeasedFeed,
+    resume_position: datetime.datetime | None,
+) -> None:
+    """Advance the in-memory Feed bookmark monotonically.
+
+    Args:
+        feed: Mutable claimed Feed payload mirrored by the runner.
+        resume_position: Newly committed source position, if present.
+
+    Returns:
+        None.
+    """
+    if resume_position is None:
+        return
+    current = feed["last_bookmark_time"]
+    if current is None or resume_position > current:
+        feed["last_bookmark_time"] = resume_position
+
+
+def _log_feed_failure(
+    feed: LeasedFeed,
+    status_reason: FeedStatusReason,
+    reason: str,
+) -> None:
+    """Emit runner-level Feed failure evidence.
+
+    Args:
+        feed: Feed whose runner stopped.
+        status_reason: Canonical failure classification.
+        reason: Operator-facing diagnostic detail.
+
+    Returns:
+        None.
+    """
+    fields = {
+        "event_type": "feed_runner_failed",
+        "feed_id": str(feed["id"]),
+        "source_type": feed["source_type"].value,
+        "status_reason": status_reason.value,
+        "reason": reason,
+    }
+    if status_reason.owner == "source":
+        logger.warning(
+            "Feed source processing failed: %s",
+            reason,
+            extra={"json_fields": fields},
+        )
+    else:
+        logger.error(
+            "Feed processing failed: %s",
+            reason,
+            extra={"json_fields": fields},
+        )
+
+
+def _feed_media_type(source_type: SourceType) -> tuple[str, str]:
+    """Return the default staged-media representation for a source.
+
+    Args:
+        source_type: Feed source whose default media type is required.
+
+    Returns:
+        The staged file extension and HTTP content type.
+
+    Raises:
+        ValueError: The source type has no configured media representation.
+    """
+    if source_type is SourceType.OPENMHZ:
+        return ("m4a", "audio/mp4")
+    if source_type in (
+        SourceType.ECHO,
+        SourceType.FIRE_NOTIFICATIONS,
+    ):
+        return ("mp3", "audio/mpeg")
+    if source_type in (
+        SourceType.BCFY_FEEDS,
+        SourceType.BCFY_CALLS,
+    ):
+        return ("flac", "audio/flac")
+    msg = f"Unhandled source type: {source_type}"
+    raise ValueError(msg)
+
+
+class CollectorRuntime:
+    """Run all selected ownership domains through one GrantSupervisor."""
 
     def __init__(
         self,
@@ -200,8 +350,6 @@ class CollectorRuntime:
         runtime_actor_id: str | None = None,
     ) -> None:
         if settings is None:
-            from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
-
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
@@ -211,80 +359,271 @@ class CollectorRuntime:
             if runtime_actor_id is not None
             else resolve_runtime_service_actor_id()
         )
-        # threading.Event (not asyncio.Event) — the heartbeat OS thread
-        # and memory watchdog thread can't use asyncio primitives; they need a
-        # shared thread-safe stop signal.
+        self._failure_budget = failure_policy.ConsumeFailureBudget(
+            failure_threshold=settings.feed_failure_threshold,
+            backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+            backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
+        )
+
         self._thread_stop = threading.Event()
         self._memory_watchdog = memory_watchdog.MemoryWatchdog(
             settings,
             self._thread_stop,
         )
-        # These fields are initialized in _main() before any method reads them.
-        # Typed without None so the type checker doesn't require narrowing at
-        # every usage site.  Accessing before _main() is a programming error.
-        # asyncio.Event must be created inside a running event loop.
-        self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
-        # Monotonic (set-only, never cleared) signal: once this process has
-        # confirmed lease loss, retry loops must stop permanently for this
-        # runtime epoch.
-        self._lease_lost: asyncio.Event = None  # type: ignore # set in _main()
-        self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
-        # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
-        # separation). Prevents 250 bookmark/upload ops on the main pool from
-        # starving heartbeat queries, which would cause false stall detection.
-        self._heartbeat_pool: asyncpg.Pool = None  # type: ignore # set in _main()
-        self._loop: asyncio.AbstractEventLoop = None  # type: ignore # set in _main()
-        self._feed_tasks: dict[FeedID, asyncio.Task] = {}
-        # Tracks feeds currently mid-await on release_feed/record_failure.
-        # Without this, the heartbeat would see worker_id=NULL (set by the DB)
-        # while the task is not yet .done(), misinterpreting the intentional
-        # release as a fence violation and triggering os._exit(1).
-        self._releasing_feeds: set[FeedID] = set()
+        self._shutdown: asyncio.Event | None = None
+        self._data_pool: asyncpg.Pool | None = None
+        self._heartbeat_pool: asyncpg.Pool | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._heartbeat_thread: threading.Thread | None = None
-        self._store: FeedStore = None  # type: ignore # set in _main()
-        self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
-        # aiohttp ClientSession is constructed in _main() because it
-        # requires a running event loop. Lifecycle: session is closed in
-        # _shutdown_sequence after _gcs_client.close() with a 250ms
-        # SSL-teardown sleep (Pitfall 12).
-        self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
-        self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
-        # Size the aiohttp connection pool to match the feed concurrency so
-        # GCS uploads are never queued waiting for a free connection slot.
-        # Without this, the default limit of 100 means ~150 uploads always
-        # queue at the 250-feed target, adding latency and event-loop overhead.
+        self._store: FeedStore | None = None
+        self._heartbeat_store: FeedStore | None = None
+        self._sid_data_store: (
+            ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
+        self._sid_heartbeat_store: (
+            ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
+        self._sid_calls_provider: (
+            bcfy_calls_provider.CallsProviderClient | None
+        ) = None
+        self._work_pool: (
+            bcfy_calls_work_pool.BcfyCallsWorkPool[
+                bcfy_calls_pipeline.FeedBatch,
+                bcfy_calls_pipeline.FeedBatchResult,
+            ]
+            | None
+        ) = None
+        self._supervisor: grant_supervisor.GrantSupervisor | None = None
+        self._http_session: aiohttp.ClientSession | None = None
+        self._capture_resources: CaptureResources | None = None
         self._gcs_client = gcs_client.GcsClient(
-            max_connections=self._collector_settings.max_feeds_per_worker,
+            max_connections=settings.max_feeds_per_worker,
         )
         self._pubsub_client = pubsub_client.PubSubClient()
-        # Shared state published to the /healthz handler. feed_tasks is held
-        # by reference to _feed_tasks so len() reflects live leasing state.
-        self._health_state = HealthState(feed_tasks=self._feed_tasks)
+        self._health_state = HealthState(
+            active_feed_count=self._active_feed_count,
+            active_sid_count=self._active_sid_count,
+            integrity_failed=self._integrity_failed,
+            bcfy_calls_authority_mode=(
+                settings.bcfy_calls_authority_mode.value
+            ),
+        )
         self._health_runner: web.AppRunner | None = None
 
-    # -- Entry point ------------------------------------------------------
+    def _active_feed_count(self) -> int:
+        """Return the local active Feed count without storage I/O.
+
+        Returns:
+            Number of Feed grants currently supervised by this process.
+        """
+        supervisor = self._supervisor
+        if supervisor is None:
+            return 0
+        return supervisor.active_count(grant_control.DomainId.FEED)
+
+    def _active_sid_count(self) -> int:
+        """Return the local active SID count without storage I/O.
+
+        Returns:
+            Number of SID grants currently supervised by this process.
+        """
+        supervisor = self._supervisor
+        if supervisor is None:
+            return 0
+        return supervisor.active_count(grant_control.DomainId.SID)
+
+    def _integrity_failed(self) -> bool:
+        """Return whether the local supervisor has failed closed."""
+        supervisor = self._supervisor
+        return (
+            supervisor is not None
+            and supervisor.integrity_failure_event.is_set()
+        )
 
     def run(self) -> None:
-        """
-        Start the runtime. Blocks until shutdown completes.
+        """Start the runtime and block until ordered shutdown completes.
 
-        Uses uvloop as the event loop implementation. uvloop is a
-        drop-in asyncio replacement built on libuv (C extension) that
-        reduces per-callback scheduling overhead, which matters at 250
-        concurrent feed tasks each generating frequent I/O completions.
+        Returns:
+            None after the asynchronous runtime shuts down.
         """
         logger.info(
-            "Starting CollectorRuntime worker_id=%s max_feeds=%d",
+            "Starting CollectorRuntime worker_id=%s",
             self._collector_settings.worker_id,
-            self._collector_settings.max_feeds_per_worker,
         )
         setup_tracing(service_name="ingestion-service", is_ingestion=True)
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
-    # -- Async core -------------------------------------------------------
+    async def _emit_feed_quarantine(
+        self,
+        grant: feed_store.FeedGrant,
+        payload: LeasedFeed,
+        decision: failure_policy.FailurePersistencePlan,
+    ) -> None:
+        """Emit observational telemetry after durable quarantine.
+
+        Args:
+            grant: Exact Feed generation that was finalized.
+            payload: Claimed Feed configuration used for telemetry identity.
+            decision: Failure plan that produced quarantine.
+
+        Returns:
+            None after the quarantine event settles.
+        """
+        await quarantine_telemetry.emit_quarantine_event(
+            feed_id=str(grant.feed_id),
+            feed_name=payload["name"],
+            source_type=payload["source_type"].value,
+            reason=decision.reason or decision.status_reason.value,
+            status_reason=decision.status_reason.value,
+        )
+
+    async def _emit_sid_feed_quarantine(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        member: ingestion_lease_store.LeaseMember,
+        decision: failure_policy.FailurePersistencePlan,
+    ) -> None:
+        """Emit observational telemetry after durable SID child quarantine."""
+        del grant
+        await quarantine_telemetry.emit_quarantine_event(
+            feed_id=str(member.identity.feed_id),
+            feed_name=member.name,
+            source_type=member.identity.source_type.value,
+            reason=decision.reason or decision.status_reason.value,
+            status_reason=decision.status_reason.value,
+        )
+
+    async def _compose_supervisor(self) -> None:
+        """Create selected controls, runners, and the sole supervisor.
+
+        Returns:
+            None after every configured domain has been registered.
+
+        Raises:
+            RuntimeError: Required runtime resources are not initialized.
+            ValueError: The worker profile selects an unsupported domain.
+        """
+        data_pool = self._data_pool
+        heartbeat_pool = self._heartbeat_pool
+        http_session = self._http_session
+        capture_resources = self._capture_resources
+        if (
+            data_pool is None
+            or heartbeat_pool is None
+            or http_session is None
+            or capture_resources is None
+        ):
+            msg = "runtime resources must exist before composition"
+            raise RuntimeError(msg)
+
+        settings = self._collector_settings
+        abandonment = datetime.timedelta(
+            seconds=settings.abandonment_window_sec
+        )
+        heartbeat_timeout_sec = _heartbeat_io_timeout_sec(settings)
+        registrations: list[object] = []
+        for allocation in settings.worker_profile.allocations:
+            if allocation.domain_id is grant_control.DomainId.FEED:
+                self._store = FeedStore(
+                    data_pool,
+                    claim_types=list(settings.feed_claim_caps),
+                )
+                self._heartbeat_store = FeedStore(
+                    heartbeat_pool,
+                    claim_types=list(settings.feed_claim_caps),
+                    heartbeat_timeout_sec=heartbeat_timeout_sec,
+                )
+                control = feed_grant_control.FeedGrantControl(
+                    self._store,
+                    self._heartbeat_store,
+                    settings.feed_claim_caps,
+                    abandonment,
+                    actor_id=self._runtime_actor_id,
+                    on_quarantined=self._emit_feed_quarantine,
+                )
+                registrations.append(
+                    grant_supervisor.RegisteredDomain(
+                        domain_id=grant_control.DomainId.FEED,
+                        control=control,
+                        runner=_FeedRunner(self),
+                    )
+                )
+                continue
+
+            if allocation.domain_id is not grant_control.DomainId.SID:
+                msg = f"Unsupported runtime domain {allocation.domain_id}"
+                raise ValueError(msg)
+            self._sid_data_store = ingestion_lease_store.IngestionLeaseStore(
+                data_pool
+            )
+            self._sid_heartbeat_store = (
+                ingestion_lease_store.IngestionLeaseStore(
+                    heartbeat_pool,
+                    heartbeat_timeout_sec=heartbeat_timeout_sec,
+                )
+            )
+            self._sid_calls_provider = bcfy_calls_provider.CallsProviderClient(
+                http_session,
+                source_runtime_specs.url_base_for(SourceType.BCFY_CALLS),
+            )
+            executor = bcfy_calls_pipeline.BcfyCallsFeedBatchExecutor(
+                calls_provider=self._sid_calls_provider,
+                lease_store=self._sid_data_store,
+                gcs_client=self._gcs_client,
+                pubsub_client=self._pubsub_client,
+                settings=settings,
+                topic_path=resolve_topic_path(
+                    SourceType.BCFY_CALLS,
+                    settings,
+                ),
+                actor_id=self._runtime_actor_id,
+            )
+            work_pool = bcfy_calls_work_pool.BcfyCallsWorkPool(
+                executor,
+                concurrency=settings.bcfy_calls_work_concurrency,
+                queue_capacity=settings.bcfy_calls_work_queue_capacity,
+            )
+            await work_pool.start()
+            self._work_pool = work_pool
+            runner = bcfy_calls_sid_runner.BcfyCallsSidRunner(
+                self._sid_data_store,
+                self._sid_calls_provider,
+                work_pool,
+                self._plan_failure,
+                actor_id=self._runtime_actor_id,
+                on_quarantined=self._emit_sid_feed_quarantine,
+            )
+            control = sid_grant_control.SidGrantControl(
+                self._sid_data_store,
+                self._sid_heartbeat_store,
+                SourceType.BCFY_CALLS,
+                abandonment,
+                actor_id=self._runtime_actor_id,
+            )
+            registrations.append(
+                grant_supervisor.RegisteredDomain(
+                    domain_id=grant_control.DomainId.SID,
+                    control=control,
+                    runner=runner,
+                )
+            )
+
+        self._supervisor = grant_supervisor.GrantSupervisor(
+            settings.worker_profile,
+            registrations,
+            finalize_concurrency=settings.db.pool_max_size,
+            failure_planner=self._plan_terminal_failure,
+        )
 
     async def _main(self) -> None:
-        """Top-level async entry: setup, run leasing loop, then shutdown."""
+        """Initialize resources, run admission, and shut down in order.
+
+        Returns:
+            None after ordered runtime shutdown.
+
+        Raises:
+            BaseException: Startup, supervision, or shutdown fails.
+        """
         self._loop = asyncio.get_running_loop()
         self._loop.set_default_executor(
             concurrent.futures.ThreadPoolExecutor(
@@ -294,126 +633,64 @@ class CollectorRuntime:
         )
         setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
-        self._lease_lost = asyncio.Event()
 
-        def _on_signal(sig: signal.Signals) -> None:
-            if not self._shutdown.is_set():
+        def on_signal(sig: signal.Signals) -> None:
+            shutdown = self._shutdown
+            if shutdown is not None and not shutdown.is_set():
                 logger.info(
                     "Received %s -- initiating graceful shutdown",
                     sig.name,
                 )
-                self._shutdown.set()
-                self._thread_stop.set()
+                shutdown.set()
 
-        # Sets BOTH _shutdown (asyncio, for feed tasks) and _thread_stop
-        # (threading, for heartbeat thread) to prevent the heartbeat from
-        # firing a spurious os._exit(1) during the shutdown window.
         for sig in (signal.SIGTERM, signal.SIGINT):
-            self._loop.add_signal_handler(sig, _on_signal, sig)
+            self._loop.add_signal_handler(sig, on_signal, sig)
 
         settings = self._collector_settings
-        (
-            deterministic_delay,
-            random_delay,
-            total_startup_delay,
-        ) = _startup_pacing_delay(
-            settings.worker_id,
-            settings.startup_stagger_max_sec,
-            settings.startup_jitter_max_sec,
+        deterministic_delay, random_delay, startup_delay = (
+            _startup_pacing_delay(
+                settings.worker_id,
+                settings.startup_stagger_max_sec,
+                settings.startup_jitter_max_sec,
+            )
         )
-        startup_pacing_fields: dict[str, object] = {
+        startup_fields: dict[str, object] = {
             "event_type": "startup_pacing",
             "worker_id": str(settings.worker_id),
             "worker_index": settings.worker_index,
             "hostname": self._hostname,
             "deterministic_delay_sec": deterministic_delay,
             "random_delay_sec": random_delay,
-            "total_delay_sec": total_startup_delay,
-            "startup_stagger_max_sec": settings.startup_stagger_max_sec,
-            "startup_jitter_max_sec": settings.startup_jitter_max_sec,
-            "lease_admission_cycle_budget": settings.lease_admission_cycle_budget,
-            "max_feeds_per_worker": settings.max_feeds_per_worker,
+            "total_delay_sec": startup_delay,
+            "selected_domains": [
+                allocation.domain_id.value
+                for allocation in settings.worker_profile.allocations
+            ],
+            "bcfy_calls_authority_mode": (
+                settings.bcfy_calls_authority_mode.value
+            ),
             "process_id": os.getpid(),
         }
         logger.info(
             "Startup pacing before pool creation",
-            extra={"json_fields": startup_pacing_fields},
+            extra={"json_fields": startup_fields},
         )
-        if await self._sleep_or_shutdown(total_startup_delay):
-            logger.info(
-                "Startup pacing interrupted by shutdown",
-                extra={
-                    "json_fields": {
-                        **startup_pacing_fields,
-                        "event_type": "startup_pacing_interrupted",
-                    },
-                },
-            )
+        if await self._sleep_or_shutdown(startup_delay):
             return
-        logger.info(
-            "Startup pacing complete",
-            extra={
-                "json_fields": {
-                    **startup_pacing_fields,
-                    "event_type": "startup_pacing_complete",
-                },
-            },
-        )
 
-        # command_timeout: bounds query execution on established connections.
-        # timeout (connect): bounds TCP handshake — without it, a VPC subnet
-        # silently dropping packets hangs connect() for 2+ min (Linux TCP
-        # SYN-ACK timeout), starving the pool of connections.
-        self._data_pool = await create_pool_with_retry(settings.db)
-        self._store = FeedStore(
-            self._data_pool,
-            claim_types=list(settings.caps.keys()),
-        )
-
-        # Dedicated 1-connection pool ensures heartbeat queries never queue
-        # behind 250 bookmark/upload operations on the main pool. Without
-        # this, pool contention causes false stall-timeout kills.
-        hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
-        self._heartbeat_pool = await create_pool_with_retry(hb_settings)
-        # Heartbeat store doesn't claim feeds (only renews + counts), but
-        # we pass the same claim_types for symmetry — keeps both stores
-        # generated from the same set so a future divergence between
-        # caps.keys() and the FeedStore default (all SourceType minus
-        # ECHO) doesn't silently change the heartbeat store's
-        # never-called acquire SQL out of sync with the data store's.
-        self._heartbeat_store = FeedStore(
-            self._heartbeat_pool,
-            claim_types=list(settings.caps.keys()),
-        )
-
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            daemon=True,
-            name="heartbeat",
-        )
-        self._heartbeat_thread.start()
-
-        # WATCHDOG-01: cgroup-aware memory daemon thread. The watchdog owns
-        # cgroup detection and disabled-mode logging; the runtime only wires
-        # lifecycle signals.
-        self._memory_watchdog.start(self._loop, self._shutdown)
-
-        quarantine_telemetry.configure(settings.google_cloud_project)
-
-        # try/finally wraps session creation, capture_resources, and
-        # health_server.start so an exception in any of those triggers
-        # _shutdown_sequence — closes the aiohttp session and joins
-        # heartbeat/watchdog threads cleanly.
         try:
-            # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed
-            # inside _main() because the connector requires a running event
-            # loop. TCPConnector kwargs per research SUMMARY.md
-            # (limit_per_host=64 absorbs activation bursts;
-            # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
-            # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
-            # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in
-            # _shutdown_sequence AFTER _gcs_client.close(), followed by
-            # await asyncio.sleep(0.25) for SSL teardown (Pitfall 12).
+            self._data_pool = await create_pool_with_retry(settings.db)
+            heartbeat_settings = settings.db.replace(
+                pool_min_size=1,
+                pool_max_size=1,
+                command_timeout_sec=_heartbeat_io_timeout_sec(settings),
+            )
+            self._heartbeat_pool = await create_pool_with_retry(
+                heartbeat_settings
+            )
+            self._memory_watchdog.start(self._loop, self._shutdown)
+            quarantine_telemetry.configure(settings.google_cloud_project)
+
             self._http_session = aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(
                     limit=0,
@@ -423,625 +700,249 @@ class CollectorRuntime:
                 ),
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
             )
-            segment_dir = (
-                Path(settings.segment_temp_dir)
-                if settings.segment_temp_dir
-                else None
-            )
+            segment_dir = None
+            if settings.segment_temp_dir:
+                segment_dir = Path(settings.segment_temp_dir)
             self._capture_resources = CaptureResources(
                 http_session=self._http_session,
                 segment_temp_dir=segment_dir,
             )
+            await self._compose_supervisor()
 
-            # Start /healthz HTTP server. Runs on the same event loop as the
-            # leasing/heartbeat coroutines — this is load-bearing: if the
-            # loop is wedged, the handler stops responding and GCP
-            # autohealing takes over.
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                daemon=True,
+                name="heartbeat",
+            )
+            self._heartbeat_thread.start()
             self._health_runner = await health_server.start(
                 settings,
                 self._health_state,
             )
-
             await self._leasing_loop()
         finally:
             await self._shutdown_sequence()
+        self._raise_integrity_failure()
 
     async def _sleep_or_shutdown(self, seconds: float) -> bool:
-        """
-        Wait for *seconds* or until shutdown is signalled.
-
-        This is the ONLY permitted wait mechanism in this file.
-        ``asyncio.sleep()`` and ``time.sleep()`` must not appear anywhere —
-        all waits must be interruptible for prompt SIGTERM response.
-
-        Returns:
-            ``True`` if shutdown was signalled, ``False`` if the timeout
-            elapsed normally.
-
-        """
-        try:
-            await asyncio.wait_for(self._shutdown.wait(), timeout=seconds)
-        except TimeoutError:
-            return False
-        return True
-
-    # -- Leasing ----------------------------------------------------------
-
-    async def _leasing_loop(self) -> None:  # noqa: PLR0912, PLR0915
-        """
-        Continuously lease feeds in batches and spawn processing tasks.
-
-        Uses ``acquire_feeds_batch`` with ``FOR UPDATE SKIP LOCKED`` for
-        single-roundtrip batch acquisition. On startup with 250 empty slots
-        this issues ~3 queries (at batch limit 100) instead of 250 individual
-        ``LIMIT 1`` queries. During a 10-instance scale-up, this reduces
-        AlloyDB contention from 2,500 serialized lock acquisitions to ~30.
-
-        Reap latency (accepted trade-off): completed tasks are only reaped
-        at the top of each iteration, so a dead task leaves a slot vacant
-        for up to ``lease_poll_interval_sec - 1`` seconds. At 250 feeds,
-        running at 249 for ~14s is negligible.
-        """
-        while True:
-            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if the cgroup
-            # crossed the pause threshold, don't claim more feeds. Existing
-            # leases continue running (held leases are renewed by the
-            # heartbeat — pause means "stop claiming MORE", not "abandon
-            # current ones"). Use _sleep_or_shutdown so SIGTERM still
-            # interrupts the pause — PITFALLS.md Pitfall 5 ("never bare
-            # asyncio.sleep").
-            #
-            # Reap completed tasks BEFORE the pause check so a completed task
-            # that raised an exception has its error retrieved promptly even
-            # while the watchdog is paused — otherwise asyncio emits "Task
-            # exception was never retrieved" warnings and tasks linger in
-            # _feed_tasks until pause clears.
-            self._reap_completed_tasks()
-
-            if self._memory_watchdog.is_paused():
-                s = self._collector_settings
-                active_feeds = len(self._feed_tasks)
-                # Keep raw slack for telemetry: it can go negative if this
-                # worker is temporarily over target. Only the admission budget
-                # is clamped because it is the control input for DB claims.
-                total_slack = s.max_feeds_per_worker - active_feeds
-                admission_budget = min(
-                    max(0, total_slack),
-                    s.lease_admission_cycle_budget,
-                )
-                self._emit_lease_admission_cycle(
-                    active_feeds=active_feeds,
-                    max_feeds=s.max_feeds_per_worker,
-                    slack=total_slack,
-                    admission_budget=admission_budget,
-                    primary_acquired=0,
-                    recovery_acquired=0,
-                    memory_paused=True,
-                    error=None,
-                )
-                if await self._sleep_or_shutdown(
-                    self._collector_settings.rss_watchdog_poll_interval_sec,
-                ):
-                    return
-                continue
-
-            # try/except: a transient DB error (connection reset, brief
-            # AlloyDB maintenance) must not kill a worker with 200+ healthy
-            # feed tasks. Existing tasks continue uninterrupted; the leasing
-            # loop simply retries next cycle. During a full DB outage the
-            # worker survives — mass os._exit(1) across the MIG would cause
-            # a thundering herd cold-start on recovery. Since the DB is down,
-            # no other worker can steal leases either.
-            s = self._collector_settings
-            active_feeds = len(self._feed_tasks)
-            # Keep raw slack for telemetry: it can go negative if this worker
-            # is temporarily over target. The acquisition path below runs only
-            # when slack is positive; admission_budget is the bounded number of
-            # new leases this cycle may ask AlloyDB to claim.
-            total_slack = s.max_feeds_per_worker - active_feeds
-            admission_budget = 0
-            primary_acquired = 0
-            recovery_acquired = 0
-            admission_error: str | None = None
-            try:
-                if total_slack > 0:
-                    caps = s.caps
-                    admission_budget = min(
-                        total_slack,
-                        s.lease_admission_cycle_budget,
-                    )
-                    # Pull the authoritative per-type held count from the
-                    # DB before apportioning. See FeedStore.count_held_by_type
-                    # for rationale: the previous in-memory counter leaked
-                    # twice during PR review cycles (orphan-on-running +
-                    # orphan-on-done), both silent O(N) drifts. DB-truth
-                    # per cycle is structurally drift-proof and costs one
-                    # extra round-trip per lease_poll_interval_sec.
-                    held = await self._store.count_held_by_type(s.worker_id)
-                    # Apportion total_slack across the per-type CTE
-                    # branches (see _calculate_branch_limits for the
-                    # algorithm + rationale). Extracted to a pure helper
-                    # so the allocation math is unit-testable without the
-                    # surrounding asyncio loop.
-                    limits = self._calculate_branch_limits(
-                        admission_budget,
-                        caps,
-                        held,
-                    )
-                    logger.info(
-                        "Attempting to acquire feeds "
-                        "(slack=%d, admission_budget=%d, caps=%s, "
-                        "held=%s, limits=%s, total_ask=%d)",
-                        total_slack,
-                        admission_budget,
-                        {t.value: v for t, v in caps.items()},
-                        {t.value: v for t, v in held.items()},
-                        {t.value: v for t, v in limits.items()},
-                        sum(limits.values()),
-                    )
-                    primary = await self._store.acquire_feeds_batch(
-                        s.worker_id,
-                        limits,
-                    )
-                    primary_acquired = len(primary)
-                    leases: list[LeasedFeed] = list(primary)
-                    # When the primary per-type CTE underfills (caps bound
-                    # the ask below remaining slack, or there simply aren't
-                    # enough unclaimed feeds of the right types), try the
-                    # recovery path to sweep up failing-retryable +
-                    # active-abandoned rows. The pg_cron sweep reclaims most
-                    # active-abandoned rows at 30 s cadence, but this path
-                    # still earns its keep for failing-retryable and for
-                    # reclaiming slack before the next sweep tick.
-                    if len(primary) < admission_budget:
-                        try:
-                            recovery_limits = self._calculate_recovery_limits(
-                                admission_budget=admission_budget,
-                                caps=caps,
-                                held=held,
-                                primary=primary,
-                            )
-                            if sum(recovery_limits.values()) > 0:
-                                recovery = (
-                                    await self._store.acquire_feeds_recovery(
-                                        s.worker_id,
-                                        s.abandonment_window_sec,
-                                        recovery_limits,
-                                    )
-                                )
-                                recovery_acquired = len(recovery)
-                                leases.extend(recovery)
-                        except Exception as exc:
-                            admission_error = exc.__class__.__name__
-                            logger.exception(
-                                "Recovery lease acquisition failed after "
-                                "primary acquisition; admitting primary "
-                                "leases only"
-                            )
-
-                    self._emit_lease_admission_cycle(
-                        active_feeds=active_feeds,
-                        max_feeds=s.max_feeds_per_worker,
-                        slack=total_slack,
-                        admission_budget=admission_budget,
-                        primary_acquired=primary_acquired,
-                        recovery_acquired=recovery_acquired,
-                        memory_paused=False,
-                        error=admission_error,
-                    )
-
-                    for lease in leases:
-                        existing = self._feed_tasks.get(lease["id"])
-                        if existing is not None:
-                            # Whether or not `existing` is already .done(),
-                            # it's about to be overwritten in _feed_tasks
-                            # below and become unreachable from the
-                            # reaper's iteration over
-                            # self._feed_tasks.items(). We still need to
-                            # consume the old task's exception — the
-                            # reaper won't see it after the overwrite.
-                            # Branches:
-                            #   - not done: still running with an outdated
-                            #     fencing token; if left alive it would
-                            #     eventually fail a fenced write and call
-                            #     os._exit(1). Cancel it (the
-                            #     CancelledError path in _process_feed
-                            #     exits cleanly without DB writes).
-                            #   - done: task already exited between our
-                            #     last reap call and acquire_feeds_batch
-                            #     returning. Exception-consumption cleanup
-                            #     is still required for the same reason.
-                            if not existing.done():
-                                logger.warning(
-                                    "Cancelling orphaned task for feed %s "
-                                    "(re-leased with token %d)",
-                                    lease["name"],
-                                    lease["fencing_token"],
-                                )
-                                existing.cancel()
-                            else:
-                                logger.info(
-                                    "Reaping already-done task for feed %s "
-                                    "inline during re-lease (reaper won't see it "
-                                    "after overwrite)",
-                                    lease["name"],
-                                )
-                            # Consume the task's exception so asyncio
-                            # doesn't log "Task exception was never
-                            # retrieved" at GC time. For an already-done
-                            # task add_done_callback fires synchronously;
-                            # for one we just cancelled it fires after
-                            # cancel propagates. Either way the reaper
-                            # won't get to this task (it's unreachable).
-                            existing.add_done_callback(
-                                self._consume_orphan_exception,
-                            )
-                        task = asyncio.create_task(
-                            self._process_feed(lease),
-                            name=f"feed-{lease['name']}",
-                        )
-                        self._feed_tasks[lease["id"]] = task
-                    if leases:
-                        logger.info(
-                            "Acquired %d feeds (primary=%d, recovery=%d) "
-                            "— %d/%d active",
-                            len(leases),
-                            len(primary),
-                            len(leases) - len(primary),
-                            len(self._feed_tasks),
-                            self._collector_settings.max_feeds_per_worker,
-                        )
-                else:
-                    self._emit_lease_admission_cycle(
-                        active_feeds=active_feeds,
-                        max_feeds=s.max_feeds_per_worker,
-                        slack=total_slack,
-                        admission_budget=0,
-                        primary_acquired=0,
-                        recovery_acquired=0,
-                        memory_paused=False,
-                        error=None,
-                    )
-            except Exception as exc:
-                self._emit_lease_admission_cycle(
-                    active_feeds=active_feeds,
-                    max_feeds=s.max_feeds_per_worker,
-                    slack=total_slack,
-                    admission_budget=admission_budget,
-                    primary_acquired=primary_acquired,
-                    recovery_acquired=recovery_acquired,
-                    memory_paused=False,
-                    error=exc.__class__.__name__,
-                )
-                logger.exception(
-                    "Lease acquisition failed -- will retry in %.1fs",
-                    self._collector_settings.lease_poll_interval_sec,
-                )
-
-            poll_sleep_sec = _lease_poll_sleep_seconds(
-                self._collector_settings.lease_poll_interval_sec,
-                self._collector_settings.lease_poll_jitter_max_sec,
-            )
-            if await self._sleep_or_shutdown(poll_sleep_sec):
-                return
-
-    def _emit_lease_admission_cycle(
-        self,
-        *,
-        active_feeds: int,
-        max_feeds: int,
-        slack: int,
-        admission_budget: int,
-        primary_acquired: int,
-        recovery_acquired: int,
-        memory_paused: bool,
-        error: str | None,
-    ) -> None:
-        """Emit raw per-cycle lease admission telemetry."""
-        payload: dict[str, object] = {
-            "event_type": "lease_admission_cycle",
-            "worker_id": str(self._collector_settings.worker_id),
-            "worker_index": self._collector_settings.worker_index,
-            "hostname": self._hostname,
-            "active_feeds": active_feeds,
-            "max_feeds": max_feeds,
-            "slack": slack,
-            "admission_budget": admission_budget,
-            "primary_acquired": primary_acquired,
-            "recovery_acquired": recovery_acquired,
-            "total_acquired": primary_acquired + recovery_acquired,
-            "memory_paused": memory_paused,
-            "error": error,
-        }
-        logger.info("Lease admission cycle", extra={"json_fields": payload})
-
-    def _reap_completed_tasks(self) -> None:
-        """Remove completed tasks and consume their exceptions.
-
-        Must call ``task.exception()`` to retrieve the stored exception --
-        without this, asyncio logs a "Task exception was never retrieved"
-        warning at garbage collection time. ``.exception()`` on a cancelled
-        task raises ``CancelledError``, hence the guard.
-
-        The policy-routing handler in ``_process_feed`` is the primary
-        fault-response path. The reaper exists to drain
-        ``task.exception()`` so asyncio does not emit
-        "Task exception was never retrieved" warnings, and to log meta-bugs
-        where the catch handler itself raised -- which would indicate the
-        DB write or telemetry call inside the catch arm crashed. Such
-        meta-bugs surface as ERROR logs here; the lease abandonment window
-        is the recovery safety net (D-04, v1.1).
-        """
-        for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
-            task = self._feed_tasks.pop(feed_id)
-            try:
-                exc = task.exception()
-            except asyncio.CancelledError:
-                pass  # normal -- task was cancelled by shutdown
-            else:
-                if exc is not None:
-                    logger.error(
-                        "Feed task %s failed: %s",
-                        task.get_name(),
-                        exc,
-                        exc_info=exc,
-                    )
-
-    @staticmethod
-    def _calculate_branch_limits(
-        total_slack: int,
-        caps: dict[SourceType, int],
-        held: dict[SourceType, int],
-    ) -> dict[SourceType, int]:
-        """Water-filling apportion of total_slack across per-type branches.
-
-        Per-type caps bound each branch individually (16.9 MiB/feed x 240
-        bcfy_feeds rows is one worker's memory ceiling for that type). But
-        the claim query is a UNION ALL across three branches, so bounding
-        each branch by total_slack independently would let the SUM exceed
-        total_slack — e.g. at cold start with max_feeds_per_worker=250,
-        three branches of 250 each would return 740 feeds in one call,
-        blowing past the worker budget by 3x.
-
-        Algorithm: sort by ascending headroom, give each branch
-        min(headroom, fair_share) where fair_share is
-        `remaining_slack // remaining_branches`. Guarantees
-        sum(limits.values()) <= total_slack, redistributes slack that a
-        capped branch couldn't absorb to the branches behind it, and
-        avoids starving any type. O(N log N) on a 3-element dict —
-        effectively O(1). max() on per-type headroom is defensive against
-        a negative-held accounting bug (which would otherwise make
-        cap - held > cap).
+        """Wait for timeout, shutdown, or fatal supervisor evidence.
 
         Args:
-            total_slack: max_feeds_per_worker - len(_feed_tasks).
-            caps: per-SourceType env-var-driven cap ceilings.
-            held: DB-derived per-type active-lease count for this worker
-                (see FeedStore.count_held_by_type). May contain extra
-                keys beyond ``caps`` (e.g. ECHO always 0) — they are
-                ignored because the dict comprehension iterates ``caps``.
-                Keys in ``caps`` that are absent from ``held`` are
-                treated as 0; this keeps the function safe against any
-                future caller that passes a sparse dict.
+            seconds: Maximum number of seconds to wait.
 
         Returns:
-            Dict mapping each SourceType in `caps` to its computed LIMIT.
-            Sum of values is <= total_slack and each value is >= 0.
+            Whether process shutdown was requested.
+
+        Raises:
+            RuntimeError: Runtime shutdown state is not initialized.
+            BaseException: The supervisor has surfaced an integrity failure.
         """
-        # Clamp headroom at the cap, not just at zero: if `held` somehow
-        # went negative (double-decrement accounting bug), max(0, cap -
-        # held) > cap and would let a branch's LIMIT exceed the memory
-        # ceiling the cap represents. min(cap, ...) restores the "never
-        # exceeds cap" invariant regardless of held's sign.
-        headroom: dict[SourceType, int] = {
-            t: min(caps[t], max(0, caps[t] - held.get(t, 0))) for t in caps
-        }
-        limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
-        # Sort types by ascending headroom so tight branches are sized
-        # first; the loop's integer-division share naturally widens for
-        # later branches as preceding branches consume less than their
-        # "fair" slice.
-        sorted_types = sorted(caps, key=lambda t: headroom[t])
-        remaining_slack = total_slack
-        remaining_branches = len(sorted_types)
-        for t in sorted_types:
-            # share recomputes per iteration: when an earlier branch is
-            # headroom-limited (limits[t] < share), the savings flow into
-            # the next branch's share automatically. Integer-division
-            # remainders likewise compound forward, so the last branch's
-            # share == remaining_slack and absorbs everything that fits.
-            # Any remaining_slack > 0 at end of loop implies every branch
-            # ended at headroom — there's nowhere to redistribute to.
-            share = (
-                remaining_slack // remaining_branches
-                if remaining_branches > 0
-                else 0
+        shutdown = self._shutdown
+        if shutdown is None:
+            msg = "runtime shutdown event is not initialized"
+            raise RuntimeError(msg)
+        waits = [asyncio.create_task(shutdown.wait())]
+        supervisor = self._supervisor
+        if supervisor is not None:
+            waits.append(
+                asyncio.create_task(supervisor.integrity_failure_event.wait())
             )
-            limits[t] = min(headroom[t], share)
-            remaining_slack -= limits[t]
-            remaining_branches -= 1
-        return limits
+        try:
+            await asyncio.wait(
+                waits,
+                timeout=seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in waits:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waits, return_exceptions=True)
+        self._raise_integrity_failure()
+        return shutdown.is_set()
 
-    @staticmethod
-    def _calculate_recovery_limits(
-        *,
-        admission_budget: int,
-        caps: dict[SourceType, int],
-        held: dict[SourceType, int],
-        primary: list[LeasedFeed],
-    ) -> dict[SourceType, int]:
-        """Return recovery branch limits after accounting for primary leases."""
-        primary_by_type: dict[SourceType, int] = dict.fromkeys(caps, 0)
-        for lease in primary:
-            t = lease["source_type"]
-            if t in primary_by_type:
-                primary_by_type[t] += 1
+    def _raise_integrity_failure(self) -> None:
+        """Raise the supervisor's first fail-closed integrity outcome.
 
-        held_after_primary = {
-            t: held.get(t, 0) + primary_by_type[t] for t in caps
-        }
-        recovery_remaining_budget = max(0, admission_budget - len(primary))
-        return CollectorRuntime._calculate_branch_limits(
-            recovery_remaining_budget,
-            caps,
-            held_after_primary,
+        Returns:
+            None when the supervisor has no integrity failure.
+
+        Raises:
+            BaseException: The supervisor recorded a fatal integrity outcome.
+        """
+        supervisor = self._supervisor
+        if (
+            supervisor is None
+            or not supervisor.integrity_failure_event.is_set()
+        ):
+            return
+        failure = supervisor.integrity_failure
+        if failure is None:
+            msg = "supervisor signalled integrity failure without evidence"
+            raise grant_control.GrantControlIntegrityError(msg)
+        raise failure
+
+    def _plan_failure(
+        self,
+        status_reason: FeedStatusReason,
+        reason: str | None,
+    ) -> failure_policy.FailurePersistencePlan:
+        """Apply the one shared Feed and SID failure policy.
+
+        Args:
+            status_reason: Canonical failure classification.
+            reason: Optional operator-facing diagnostic detail.
+
+        Returns:
+            Materialized budgeted or non-budgeted persistence plan.
+        """
+        return failure_policy.plan_failure(
+            status_reason,
+            reason,
+            budgeted=self._failure_budget,
+            non_budgeted=_retry_without_failure_budget,
         )
 
-    @staticmethod
-    def _consume_orphan_exception(task: asyncio.Task) -> None:
-        """Consume the exception from an orphaned (cancelled-and-replaced) task.
+    def _plan_terminal_failure(
+        self,
+        outcome: grant_control.RunFailed,
+    ) -> failure_policy.FailurePersistencePlan:
+        """Plan one supervisor terminal failure.
 
-        Called via ``add_done_callback`` on tasks that _leasing_loop
-        cancels when it re-leases a feed it already holds. The reaper
-        normally calls ``task.exception()`` on completed tasks to prevent
-        the "Task exception was never retrieved" warning at GC time, but
-        orphaned tasks aren't in _feed_tasks anymore, so the reaper can't
-        reach them. This callback does that job instead.
+        Args:
+            outcome: Closed runner failure evidence.
+
+        Returns:
+            Materialized failure persistence plan.
         """
-        try:
-            exc = task.exception()
-        except asyncio.CancelledError:
-            pass  # expected path for the re-lease cancel race
-        else:
-            if exc is not None:
-                logger.error(
-                    "Orphaned feed task %s exited with error: %s",
-                    task.get_name(),
-                    exc,
-                    exc_info=exc,
-                )
+        return self._plan_failure(outcome.status_reason, outcome.reason)
 
-    # -- Per-feed pipeline ------------------------------------------------
+    async def _leasing_loop(self) -> None:
+        """Run the sole supervisor admission cadence until shutdown.
+
+        Returns:
+            None when process shutdown is requested.
+
+        Raises:
+            RuntimeError: Runtime supervision is not initialized.
+            BaseException: The supervisor surfaces an integrity failure.
+        """
+        shutdown = self._shutdown
+        supervisor = self._supervisor
+        if shutdown is None or supervisor is None:
+            msg = "runtime must be composed before admission"
+            raise RuntimeError(msg)
+
+        while not shutdown.is_set():
+            if self._memory_watchdog.is_paused():
+                await supervisor.admit_cycle(
+                    self._collector_settings.worker_id,
+                    memory_paused=True,
+                )
+                wait_sec = (
+                    self._collector_settings.rss_watchdog_poll_interval_sec
+                )
+            else:
+                try:
+                    await supervisor.admit_cycle(
+                        self._collector_settings.worker_id
+                    )
+                except Exception:
+                    self._raise_integrity_failure()
+                    logger.exception(
+                        "Grant admission failed -- retrying next cycle"
+                    )
+                wait_sec = _lease_poll_sleep_seconds(
+                    self._collector_settings.lease_poll_interval_sec,
+                    self._collector_settings.lease_poll_jitter_max_sec,
+                )
+            if await self._sleep_or_shutdown(wait_sec):
+                return
 
     def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
-        """Determines the Pub/Sub topic path based on the feed source type."""
-        return resolve_topic_path(feed["source_type"], self._collector_settings)
+        """Return the configured Pub/Sub topic for a Feed.
 
-    @staticmethod
-    def _non_budgeted_retry_after() -> datetime.datetime:
-        """Return the retry time for non-budgeted failure lanes."""
-        jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
-            _NON_BUDGETED_RETRY_MIN_SEC,
-            _NON_BUDGETED_RETRY_MAX_SEC,
-        )
-        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
-            seconds=jitter_sec,
-        )
+        Args:
+            feed: Claimed Feed whose source selects the topic.
 
-    def _emit_policy_decision(
-        self,
-        feed: LeasedFeed,
-        *,
-        reason: str,
-        status_reason: FeedStatusReason,
-        retry_after: datetime.datetime | None = None,
-        replay_missing: bool = False,
-        data_gap_known: bool = False,
-    ) -> None:
-        """Emit the canonical policy-decision telemetry event."""
-        if (
-            status_reason
-            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-        ):
-            executed_action = "record_post_bookmark_publish_gap"
-        elif failure_policy.consumes_failure_budget(status_reason):
-            executed_action = "increment_feed_failure_budget"
-        else:
-            executed_action = "retry_without_feed_budget"
-        payload: dict[str, object] = {
-            "event_type": "feed_failure_policy_decision",
-            "feed_id": str(feed["id"]),
-            "source_type": str(feed["source_type"]),
-            "reason": reason,
-            "status_reason": status_reason.value,
-            "replay_missing": replay_missing,
-            "data_gap_known": data_gap_known,
-            "executed_action": executed_action,
-        }
-        if retry_after is not None:
-            payload["retry_after"] = retry_after.isoformat()
-        logger.info(
-            "Feed failure policy decision", extra={"json_fields": payload}
-        )
-
-    def _emit_post_bookmark_publish_failure(
-        self,
-        feed: LeasedFeed,
-        *,
-        reason: str,
-        status_reason: FeedStatusReason,
-    ) -> None:
-        """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
-        payload: dict[str, object] = {
-            "event_type": "post_bookmark_publish_failure",
-            "feed_id": str(feed["id"]),
-            "source_type": str(feed["source_type"]),
-            "reason": reason,
-            "status_reason": status_reason.value,
-            "replay_missing": True,
-            "data_gap_known": True,
-            "executed_action": "record_post_bookmark_publish_gap",
-        }
-        logger.error(
-            "Post-bookmark publish failure",
-            extra={"json_fields": payload},
+        Returns:
+            Fully qualified Pub/Sub topic path.
+        """
+        return resolve_topic_path(
+            feed["source_type"],
+            self._collector_settings,
         )
 
     async def _process_captured_chunk(
         self,
         feed: LeasedFeed,
         captured_chunk: CapturedChunk,
-        seq_for_chunk: int,
-        worker_id: uuid.UUID,
-        fencing_token: int,
+        sequence: int,
+        grant: feed_store.FeedGrant,
         topic_path: str,
-        chunk_extension: str,
-        chunk_content_type: str,
-        shutdown: asyncio.Event | None = None,
+        extension: str,
+        content_type: str,
+        context: grant_control.RunContext,
     ) -> None:
-        """Run post-capture upload, bookmark, publish, and SLO logging."""
-        if shutdown is None:
-            shutdown = self._shutdown
+        """Upload, fence progress, then fulfill the publish obligation.
+
+        Args:
+            feed: Claimed Feed receiving the audio chunk.
+            captured_chunk: Captured audio and source timing metadata.
+            sequence: Feed-local create-only object sequence.
+            grant: Exact Feed authority fencing progress.
+            topic_path: Downstream Pub/Sub topic.
+            extension: Staged object file extension.
+            content_type: Staged object HTTP content type.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            None after upload, bookmark, and publication complete.
+
+        Raises:
+            LeaseExpiredError: Fenced progress rejects this grant.
+            _PipelineFailure: A physical side effect exhausts retries.
+            asyncio.CancelledError: The owning runner is cancelled.
+        """
         settings = self._collector_settings
+        # A yielded chunk may finish during cooperative stop/deactivation, but
+        # confirmed authority loss must still interrupt pre-bookmark retries.
+        # After the bookmark commits, publication is an unconditional
+        # obligation.
+        no_cooperative_stop = asyncio.Event()
         try:
-            gcs_uri = await retry_with_lease_check(
+            gcs_uri = await audio_pipeline.upload_staged_audio_with_retry(
                 gcp_helper.upload_staged_audio,
-                self._gcs_client,
-                captured_chunk.audio_bytes,
-                feed,
-                settings.audio_staging_bucket,
-                seq_for_chunk,
-                fencing_token,
-                chunk_extension,
-                chunk_content_type,
-                lease_lost=self._lease_lost,
-                shutdown=shutdown,
-                max_retries=settings.gcs_upload_max_retries,
-                base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
-                max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                retryable=(
-                    aiohttp.ClientError,
-                    asyncio.TimeoutError,
-                    OSError,
-                ),
-                operation_name="GCS upload",
+                gcs_client=self._gcs_client,
+                chunk=captured_chunk,
+                feed=feed,
+                settings=settings,
+                sequence=sequence,
+                fencing_token=grant.fencing_token,
+                extension=extension,
+                content_type=content_type,
+                lease_lost=context.grant_lost,
+                shutdown=no_cooperative_stop,
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
-        except Exception as exc:
+        except Exception as error:
             raise _PipelineFailure(
                 _PIPELINE_GCS_UPLOAD_FAILED,
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-            ) from exc
+            ) from error
 
-        async def _update_progress() -> bool:
-            return await self._store.update_feed_progress(
+        store = self._store
+        if store is None:
+            msg = "Feed store is not initialized"
+            raise RuntimeError(msg)
+
+        async def update_progress() -> bool:
+            return await store.update_feed_progress(
                 feed["id"],
-                worker_id=worker_id,
+                worker_id=grant.owner_worker_id,
                 new_gcs_path=gcs_uri,
-                fencing_token=fencing_token,
-                # bcfy_calls supplies the API `ts` resume cursor;
-                # stream collectors leave it None -> end_ts fallback.
+                fencing_token=grant.fencing_token,
                 last_bookmark_time=(
                     captured_chunk.resume_position
                     or captured_chunk.chunk_end_time
@@ -1049,17 +950,11 @@ class CollectorRuntime:
                 actor_id=self._runtime_actor_id,
             )
 
-        duration_ms = int(
-            (
-                captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
-            ).total_seconds()
-            * 1000
-        )
         try:
-            ok = await retry_with_lease_check(
-                _update_progress,
-                lease_lost=self._lease_lost,
-                shutdown=shutdown,
+            applied = await retry_with_lease_check(
+                update_progress,
+                lease_lost=context.grant_lost,
+                shutdown=no_cooperative_stop,
                 max_retries=settings.bookmark_max_retries,
                 base_delay_sec=settings.bookmark_retry_base_delay_sec,
                 max_delay_sec=settings.bookmark_retry_max_delay_sec,
@@ -1072,320 +967,87 @@ class CollectorRuntime:
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
-        except Exception as exc:
+        except Exception as error:
             raise _PipelineFailure(
                 _PIPELINE_BOOKMARK_WRITE_FAILED,
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-            ) from exc
-
-        if not ok:
-            # If the batched heartbeat is healthy (renewing every 15s),
-            # leases cannot be stolen within the 60s abandonment window.
-            # A stolen lease means the heartbeat mechanism itself failed
-            # systemically -- cancelling one task while 249 others may
-            # also be compromised is unsafe. os._exit(1) is deliberate.
-            # MIG auto-heals within seconds; total downtime per feed:
-            # ~60s (abandonment window) + ~5s (instance restart).
-            logger.critical(
-                "Fence violation on bookmark for feed %s -- terminating",
-                feed["name"],
-            )
-            self._lease_lost.set()
-            # logging.shutdown() flushes background logging threads
-            # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
-            # would bypass.
-            logging.shutdown()
-            os._exit(1)
+            ) from error
+        if not applied:
+            context.grant_lost.set()
+            msg = f"Fence violation on bookmark for feed {feed['name']}"
+            raise LeaseExpiredError(msg)
 
         try:
-            message_id = await retry_with_lease_check(
+            await audio_pipeline.publish_audio_chunk_after_bookmark(
                 gcp_helper.publish_audio_chunk,
-                self._pubsub_client,
-                topic_path,
-                str(feed["id"]),
-                feed["name"],
-                gcs_uri,
-                captured_chunk.session_id,
-                captured_chunk.chunk_start_time,
-                duration_ms,
-                feed["source_type"],
-                captured_chunk.external_audio_segment_id,
-                lease_lost=self._lease_lost,
-                shutdown=shutdown,
-                max_retries=settings.pubsub_publish_max_retries,
-                base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
-                max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-                retryable=(
-                    google_exceptions.Aborted,
-                    google_exceptions.DeadlineExceeded,
-                    google_exceptions.InternalServerError,
-                    google_exceptions.ResourceExhausted,
-                    google_exceptions.ServiceUnavailable,
-                    google_exceptions.Unknown,
-                    google_exceptions.Cancelled,
-                    pubsub_exceptions.PublishToPausedOrderingKeyException,
-                ),
-                operation_name="Pub/Sub publish",
+                pubsub_client=self._pubsub_client,
+                topic_path=topic_path,
+                feed_id=feed["id"],
+                feed_name=feed["name"],
+                source_type=feed["source_type"],
+                gcs_uri=gcs_uri,
+                chunk=captured_chunk,
+                settings=settings,
+                lease_lost=no_cooperative_stop,
+                shutdown=no_cooperative_stop,
+                event_logger=logger,
             )
-        except (asyncio.CancelledError, LeaseExpiredError):
+        except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as error:
             raise _PipelineFailure(
-                pubsub.publish_failure_reason(exc),
+                pubsub.publish_failure_reason(error),
                 status_reason=(
                     FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
                 ),
-            ) from exc
-
-        logger.info(
-            "Published message %s for feed %s",
-            message_id,
-            feed["name"],
-        )
-
-        # SLO: chunk_ingested emit -- strictly after publish success.
-        chunk_ingested_payload: dict[str, object] = {
-            "event_type": EVENT_TYPE_CHUNK_INGESTED,
-            "feed_id": str(feed["id"]),
-            "source_type": feed["source_type"],
-        }
-        if captured_chunk.receipt_time is not None:
-            raw_latency_sec = (
-                datetime.datetime.now(datetime.UTC)
-                - captured_chunk.receipt_time
-            ).total_seconds()
-            chunk_ingested_payload["processing_latency_sec"] = max(
-                0.0, round(raw_latency_sec, 2)
-            )
-            if raw_latency_sec < 0:
-                chunk_ingested_payload["latency_clamped"] = True
-        if captured_chunk.stream_interval_lag_sec is not None:
-            chunk_ingested_payload["stream_interval_lag_sec"] = round(
-                captured_chunk.stream_interval_lag_sec, 2
-            )
-        logger.info(
-            "Chunk ingested",
-            extra={"json_fields": chunk_ingested_payload},
-        )
-
-    async def _record_feed_failure(
-        self,
-        feed: LeasedFeed,
-        worker_id: uuid.UUID,
-        fencing_token: int,
-        *,
-        reason: str,
-        status_reason: FeedStatusReason,
-        replay_missing: bool = False,
-        data_gap_known: bool = False,
-    ) -> None:
-        """Persist a classified feed failure through the fenced store path."""
-        self._emit_policy_decision(
-            feed,
-            reason=reason,
-            status_reason=status_reason,
-            replay_missing=replay_missing,
-            data_gap_known=data_gap_known,
-        )
-        extra: dict[str, object] = {
-            "json_fields": {
-                "feed_id": str(feed["id"]),
-                "source_type": str(feed["source_type"]),
-                "reason": reason,
-                "status_reason": status_reason.value,
-            },
-        }
-        if status_reason.owner == "source":
-            # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
-            # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
-            logger.warning(
-                "Feed source processing observation: feed=%s reason=%s status_reason=%s",
-                feed["name"],
-                reason,
-                status_reason.value,
-                extra=extra,
-            )
-        else:
-            # Actionable Watch Duty internal system Gotchas (e.g. collector bugs, DB/auth failures) warrant an ERROR traceback.
-            logger.exception(
-                "Feed internal processing error: feed=%s reason=%s status_reason=%s",
-                feed["name"],
-                reason,
-                status_reason.value,
-                extra=extra,
-            )
-        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
-        # that drops the lease (report_feed_failure sets worker_id=NULL).
-        self._releasing_feeds.add(feed["id"])
-        try:
-            status = await self._store.report_feed_failure(
-                feed["id"],
-                worker_id,
-                fencing_token,
-                self._collector_settings.feed_failure_threshold,
-                actor_id=self._runtime_actor_id,
-                reason=reason,
-                status_reason=status_reason,
-            )
-            if status == "quarantined":
-                await quarantine_telemetry.emit_quarantine_event(
-                    feed_id=str(feed["id"]),
-                    feed_name=feed["name"],
-                    source_type=str(feed["source_type"]),
-                    reason=reason,
-                    status_reason=status_reason.value,
-                )
-        except Exception:
-            # 60s abandonment window is the safety net if this fails.
-            logger.exception(
-                "Failed to record failure for feed %s",
-                feed["name"],
-            )
-        finally:
-            # SAFETY: No await between discard() and return. This ensures
-            # _heartbeat_cycle cannot observe a state where the feed is
-            # absent from _releasing_feeds but the task is not yet .done().
-            self._releasing_feeds.discard(feed["id"])
-
-    async def _record_non_budgeted_failure(
-        self,
-        feed: LeasedFeed,
-        worker_id: uuid.UUID,
-        fencing_token: int,
-        *,
-        reason: str,
-        status_reason: FeedStatusReason,
-        replay_missing: bool = False,
-        data_gap_known: bool = False,
-    ) -> None:
-        """Release a failure that must not consume the feed quarantine budget."""
-        retry_after = self._non_budgeted_retry_after()
-        self._emit_policy_decision(
-            feed,
-            reason=reason,
-            status_reason=status_reason,
-            retry_after=retry_after,
-            replay_missing=replay_missing,
-            data_gap_known=data_gap_known,
-        )
-        if replay_missing and data_gap_known:
-            self._emit_post_bookmark_publish_failure(
-                feed,
-                reason=reason,
-                status_reason=status_reason,
-            )
-        if (
-            status_reason
-            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-        ):
-            # The policy-decision event and dedicated gap ERROR already cover
-            # this case; avoid a third log line for the same publish failure.
-            pass
-        elif (
-            status_reason.owner == "source"
-            or status_reason
-            is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
-        ):
-            logger.info(
-                "Feed source failure suppressed from quarantine budget: "
-                "feed=%s reason=%s",
-                feed["name"],
-                reason,
-            )
-        elif status_reason is FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID:
-            logger.warning(
-                "Feed source payload failure suppressed from quarantine "
-                "budget: feed=%s reason=%s",
-                feed["name"],
-                reason,
-            )
-        elif "Stream capture timed out" in reason:
-            logger.warning(
-                "Feed processing error suppressed from quarantine budget (timeout): "
-                "feed=%s reason=%s",
-                feed["name"],
-                reason,
-            )
-        else:
-            logger.exception(
-                "Feed processing error suppressed from quarantine budget: "
-                "feed=%s reason=%s",
-                feed["name"],
-                reason,
-            )
-        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
-        # that drops the lease (release_non_budgeted_failure sets
-        # worker_id=NULL).
-        self._releasing_feeds.add(feed["id"])
-        try:
-            await self._store.release_non_budgeted_failure(
-                feed["id"],
-                worker_id,
-                fencing_token,
-                retry_after=retry_after,
-                status_reason=status_reason,
-                actor_id=self._runtime_actor_id,
-                reason=reason,
-            )
-        except Exception:
-            # 60s abandonment window is the safety net if this fails.
-            logger.exception(
-                "Failed to record non-budgeted failure for feed %s",
-                feed["name"],
-            )
-        finally:
-            # SAFETY: No await between discard() and return.
-            self._releasing_feeds.discard(feed["id"])
-
-    @staticmethod
-    def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
-        """Return whether a leased feed carries persisted failure state."""
-        return feed["failure_count"] > 0 or feed["status_reason"] is not None
-
-    @staticmethod
-    def _advance_local_bookmark(
-        feed: LeasedFeed,
-        resume_position: datetime.datetime | None,
-    ) -> None:
-        """Keep the local lease copy monotonic with observation SQL."""
-        if resume_position is None:
-            return
-        current_bookmark = feed["last_bookmark_time"]
-        if current_bookmark is None or resume_position > current_bookmark:
-            feed["last_bookmark_time"] = resume_position
+            ) from error
 
     async def _process_source_observation(
         self,
         feed: LeasedFeed,
         observation: SourceObservation,
-        worker_id: uuid.UUID,
-        fencing_token: int,
-    ) -> bool:
-        """Record a non-audio source success when persisted state needs it.
+        grant: feed_store.FeedGrant,
+        context: grant_control.RunContext,
+    ) -> None:
+        """Persist a source observation or surface confirmed grant loss.
 
-        Returns ``True`` when processing may continue, ``False`` when the task
-        should stop because the row is no longer owned by this active lease.
+        Args:
+            feed: Claimed Feed whose state may advance or recover.
+            observation: Collector-provided source position.
+            grant: Exact Feed authority fencing the mutation.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            None after persistence or a bounded transient failure.
+
+        Raises:
+            LeaseExpiredError: Storage confirms that the grant was lost.
+            asyncio.CancelledError: The owning runner is cancelled.
         """
         if (
-            not self._leased_feed_has_failure_state(feed)
+            not _leased_feed_has_failure_state(feed)
             and observation.resume_position is None
         ):
-            return True
+            return
+        store = self._store
+        if store is None:
+            msg = "Feed store is not initialized"
+            raise RuntimeError(msg)
 
-        async def _record_observation() -> SourceObservationResult:
-            return await self._store.record_source_observation(
+        async def record_observation() -> SourceObservationResult:
+            return await store.record_source_observation(
                 feed["id"],
-                worker_id,
-                fencing_token,
+                grant.owner_worker_id,
+                grant.fencing_token,
                 observation.resume_position,
                 actor_id=self._runtime_actor_id,
             )
 
         try:
             result = await retry_with_lease_check(
-                _record_observation,
-                lease_lost=self._lease_lost,
-                shutdown=self._shutdown,
+                record_observation,
+                lease_lost=context.grant_lost,
+                shutdown=context.stop_requested,
                 max_retries=self._collector_settings.bookmark_max_retries,
                 base_delay_sec=(
                     self._collector_settings.bookmark_retry_base_delay_sec
@@ -1407,121 +1069,116 @@ class CollectorRuntime:
                 "Failed to record source observation for feed %s",
                 feed["name"],
             )
-            return True
+            return
 
         if result["recorded"]:
             feed["failure_count"] = 0
             feed["status_reason"] = None
-            self._advance_local_bookmark(feed, observation.resume_position)
-            return True
-
-        current_status = result["current_status"]
-        current_worker = result["current_worker"]
-        current_fencing_token = result["current_fencing_token"]
-        if current_status == "active" and (
-            current_worker != worker_id
-            or current_fencing_token != fencing_token
-        ):
-            logger.critical(
-                "Fence violation on source observation for feed %s -- terminating",
-                feed["name"],
+            _advance_local_bookmark(
+                feed,
+                observation.resume_position,
             )
-            logging.shutdown()
-            os._exit(1)
+            return
 
+        context.grant_lost.set()
+        current_worker = result["current_worker"]
+        current_worker_id = None
+        if current_worker is not None:
+            current_worker_id = str(current_worker)
         logger.info(
-            "Source observation ignored because feed is no longer active "
-            "under this lease",
+            "Source observation rejected for feed %s",
+            feed["name"],
             extra={
                 "json_fields": {
                     "feed_id": str(feed["id"]),
-                    "current_status": current_status,
-                    "current_worker": (
-                        str(current_worker)
-                        if current_worker is not None
-                        else None
-                    ),
-                    "current_fencing_token": current_fencing_token,
-                },
+                    "current_status": result["current_status"],
+                    "current_worker": current_worker_id,
+                    "current_fencing_token": result["current_fencing_token"],
+                }
             },
         )
-        return False
+        msg = f"Source observation lost ownership for feed {feed['name']}"
+        raise LeaseExpiredError(msg)
 
     async def _process_feed(  # noqa: PLR0911, PLR0912, PLR0915
         self,
+        grant: feed_store.FeedGrant,
         feed: LeasedFeed,
-    ) -> None:
-        """
-        Run the capture-upload-bookmark pipeline for a single feed.
+        context: grant_control.RunContext,
+    ) -> grant_control.RunOutcome:
+        """Run one Feed capture pipeline under exact grant authority.
 
-        Iterates the capture generator, uploads each chunk to GCS, and
-        bookmarks progress with fence violation detection.
+        Args:
+            grant: Exact Feed authority held by the supervisor.
+            feed: Claimed Feed configuration and mutable local cursor state.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            Closed completion, loss, or classified failure evidence.
+
+        Raises:
+            grant_control.GrantControlIntegrityError: Grant and payload do not
+                describe the same ownership generation.
+            asyncio.CancelledError: The owning supervisor task is cancelled.
         """
         if (
-            not feed.get("id")
-            or not str(feed["id"]).strip()
-            or str(feed["id"]).strip() == "None"
+            grant.feed_id != feed["id"]
+            or grant.owner_worker_id != self._collector_settings.worker_id
+            or grant.fencing_token != feed["fencing_token"]
         ):
-            msg = f"Leased feed '{feed.get('name')}' missing required id"
-            logger.error(msg)
-            raise ValueError(msg)
-
-        chunk_seq = 0
-        worker_id = self._collector_settings.worker_id
-        fencing_token = feed["fencing_token"]
-        _fallback_session_id: str | None = None
-        topic_path = self._get_pubsub_topic_path(feed)
-
-        if feed["source_type"] == SourceType.OPENMHZ:
-            extension = "m4a"
-            content_type = "audio/mp4"
-        elif feed["source_type"] in (
-            SourceType.ECHO,
-            SourceType.FIRE_NOTIFICATIONS,
-        ):
-            extension = "mp3"
-            content_type = "audio/mpeg"
-        elif feed["source_type"] in (
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-        ):
-            extension = "flac"
-            content_type = "audio/flac"
-        else:
-            msg = f"Unhandled source type: {feed['source_type']}"
-            raise ValueError(msg)
+            msg = "Feed grant does not match its runner payload"
+            raise grant_control.GrantControlIntegrityError(msg)
+        if context.grant_lost.is_set():
+            return grant_control.RunLost()
+        if context.stop_requested.is_set():
+            return grant_control.RunCompleted()
 
         try:
-            async for capture_event in self._capture_fn(
-                feed,
-                self._shutdown,
-                self._capture_resources,
-            ):
-                if isinstance(capture_event, SourceObservation):
-                    should_continue = await self._process_source_observation(
-                        feed,
-                        capture_event,
-                        worker_id,
-                        fencing_token,
-                    )
-                    if not should_continue:
-                        return
-                    if self._shutdown.is_set():
-                        return
-                    continue
+            topic_path = self._get_pubsub_topic_path(feed)
+            extension, content_type = _feed_media_type(feed["source_type"])
+        except ValueError as error:
+            reason = status_reason_detail.exception_text(error)
+            status_reason = (
+                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
+            )
+            _log_feed_failure(feed, status_reason, reason)
+            return grant_control.RunFailed(status_reason, reason)
 
-                if not isinstance(capture_event, CapturedChunk):
+        resources = self._capture_resources
+        if resources is None:
+            msg = "capture resources are not initialized"
+            raise RuntimeError(msg)
+        capture_iterator = self._capture_fn(
+            feed,
+            context.stop_requested,
+            resources,
+        )
+        sequence = 0
+        try:
+            async for event in capture_iterator:
+                if isinstance(event, SourceObservation):
+                    await self._process_source_observation(
+                        feed,
+                        event,
+                        grant,
+                        context,
+                    )
+                    if context.grant_lost.is_set():
+                        return grant_control.RunLost()
+                    if context.stop_requested.is_set():
+                        return grant_control.RunCompleted()
+                    continue
+                if not isinstance(event, CapturedChunk):
                     msg = (
-                        f"Collector yielded "
-                        f"{type(capture_event).__name__}, "
-                        f"expected CapturedChunk or SourceObservation"
+                        f"Collector yielded {type(event).__name__}; expected "
+                        "CapturedChunk or SourceObservation"
                     )
                     raise TypeError(msg)  # noqa: TRY301
-                captured_chunk = capture_event
+
                 ingest_time_ms = str(
                     int(
                         (
-                            captured_chunk.receipt_time
+                            event.receipt_time
                             or datetime.datetime.now(datetime.UTC)
                         ).timestamp()
                         * 1000
@@ -1530,211 +1187,114 @@ class CollectorRuntime:
                 with tracing_utils.with_baggage_and_span(
                     {
                         "ingest_time_ms": ingest_time_ms,
-                        "feed_type": str(feed["source_type"]),
+                        "feed_type": feed["source_type"].value,
                     },
                     "process_captured_chunk",
                     __name__,
                 ):
-                    chunk_extension = extension
-                    chunk_content_type = content_type
-
-                    if captured_chunk.mime_type is not None:
-                        mime_map = {
-                            AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
-                            AudioMimeType.AAC: ("aac", "audio/aac"),
-                            AudioMimeType.WAV: ("wav", "audio/x-wav"),
-                            AudioMimeType.FLAC: ("flac", "audio/flac"),
-                            AudioMimeType.MP4: ("m4a", "audio/mp4"),
-                            AudioMimeType.OGG: ("ogg", "audio/ogg"),
-                        }
-                        if captured_chunk.mime_type in mime_map:
-                            chunk_extension, chunk_content_type = mime_map[
-                                captured_chunk.mime_type
-                            ]
-
-                    # Bump chunk_seq up-front for every captured chunk, success or
-                    # failure. Reusing a seq across chunks is unsafe: combined with
-                    # second-precision upload timestamps and the 412-treated-as-
-                    # success path, a same-second retry could publish the next
-                    # chunk's metadata pointing at the previous chunk's audio bytes.
-                    seq_for_chunk = chunk_seq
-                    chunk_seq += 1
-                    is_draining = self._shutdown.is_set()
-                    chunk_shutdown = (
-                        asyncio.Event() if is_draining else self._shutdown
-                    )
+                    extension_for_chunk = extension
+                    content_type_for_chunk = content_type
+                    if event.mime_type is not None:
+                        extension_for_chunk, content_type_for_chunk = (
+                            audio_pipeline.staging_parameters(event.mime_type)
+                        )
+                    current_sequence = sequence
+                    sequence += 1
                     await self._process_captured_chunk(
                         feed,
-                        captured_chunk,
-                        seq_for_chunk,
-                        worker_id,
-                        fencing_token,
+                        event,
+                        current_sequence,
+                        grant,
                         topic_path,
-                        chunk_extension,
-                        chunk_content_type,
-                        shutdown=chunk_shutdown,
+                        extension_for_chunk,
+                        content_type_for_chunk,
+                        context,
                     )
-
-                    if self._shutdown.is_set():
-                        # Return without calling release_feed -- _shutdown_sequence
-                        # handles all task cancellation and the 60s abandonment
-                        # window is the safety net if batch release fails.
-                        logger.info(
-                            "Shutdown -- stopping feed %s cleanly after chunk %d",
-                            feed["name"],
-                            chunk_seq,
-                        )
-                        return
-
-        except asyncio.CancelledError:
-            logger.info("Feed %s task cancelled", feed["name"])
-            return
-
+                if context.grant_lost.is_set():
+                    return grant_control.RunLost()
+                if context.stop_requested.is_set():
+                    return grant_control.RunCompleted()
         except LeaseExpiredError:
-            # Confirmed lease loss. Do NOT attempt report_feed_failure:
-            # fenced ownership is gone, so another worker owns recovery.
-            logger.warning(
-                "Lease lost for feed %s -- aborting without DB write",
-                feed["name"],
+            logger.warning("Grant lost for feed %s", feed["name"])
+            return grant_control.RunLost()
+        except FeedFailure as error:
+            _log_feed_failure(
+                feed,
+                error.status_reason,
+                error.reason,
             )
-            return
-
-        except FeedFailure as e:
-            if failure_policy.consumes_failure_budget(e.status_reason):
-                await self._record_feed_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=e.reason,
-                    status_reason=e.status_reason,
-                )
-            else:
-                await self._record_non_budgeted_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=e.reason,
-                    status_reason=e.status_reason,
-                )
-            return
-
-        except _PipelineFailure as e:
-            replay_missing = (
-                e.status_reason
-                is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            return grant_control.RunFailed(
+                error.status_reason,
+                error.reason,
             )
-            if failure_policy.consumes_failure_budget(e.status_reason):
-                await self._record_feed_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=e.reason,
-                    status_reason=e.status_reason,
-                    replay_missing=replay_missing,
-                    data_gap_known=replay_missing,
-                )
-            else:
-                await self._record_non_budgeted_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=e.reason,
-                    status_reason=e.status_reason,
-                    replay_missing=replay_missing,
-                    data_gap_known=replay_missing,
-                )
-            return
-
-        except Exception as e:
-            # Transitional catch-all for bugs or untyped collector failures.
-            # Source-specific attribution belongs in collectors that raise
-            # FeedFailure; the runtime only records the explicit fallback.
-            reason = status_reason_detail.exception_text(e)
+        except _PipelineFailure as error:
+            _log_feed_failure(
+                feed,
+                error.status_reason,
+                error.reason,
+            )
+            return grant_control.RunFailed(
+                error.status_reason,
+                error.reason,
+            )
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is None or task.cancelling() > 0:
+                raise
+            if context.grant_lost.is_set():
+                return grant_control.RunLost()
+            if context.stop_requested.is_set():
+                return grant_control.RunCompleted()
+            raise
+        except Exception as error:
+            reason = status_reason_detail.exception_text(error)
             status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
-            if failure_policy.consumes_failure_budget(status_reason):
-                await self._record_feed_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=reason,
-                    status_reason=status_reason,
-                )
-            else:
-                await self._record_non_budgeted_failure(
-                    feed,
-                    worker_id,
-                    fencing_token,
-                    reason=reason,
-                    status_reason=status_reason,
-                )
-            return
-
-        # Normal completion (capture generator exhausted)
-        # SAFETY: same _releasing_feeds invariant as above.
-        self._releasing_feeds.add(feed["id"])
-        try:
-            await self._store.release_feed(feed["id"], worker_id, fencing_token)
-        except Exception:
-            # 60s abandonment window is the safety net.
-            logger.exception("Failed to release feed %s", feed["name"])
+            _log_feed_failure(feed, status_reason, reason)
+            return grant_control.RunFailed(status_reason, reason)
         finally:
-            # SAFETY: No await between discard() and return.
-            self._releasing_feeds.discard(feed["id"])
+            close = getattr(capture_iterator, "aclose", None)
+            if close is not None:
+                await close()
 
-    # -- Heartbeat OS thread ----------------------------------------------
+        if context.grant_lost.is_set():
+            return grant_control.RunLost()
+        return grant_control.RunCompleted()
 
     def _heartbeat_loop(self) -> None:
-        """
-        OS daemon thread: schedule heartbeat cycle and enforce stall timeout.
+        """Dispatch supervisor heartbeat cycles from the watchdog thread.
 
-        Runs in a daemon OS thread (not an asyncio task) so it stays immune
-        to event loop starvation — if the loop is blocked by a misbehaving
-        capture function, this thread still fires and detects the stall.
-
-        Uses a monotonic ticker for consistent heartbeat period regardless
-        of cycle duration. Without this, the effective interval is
-        ``heartbeat_interval + cycle_duration``. Under moderate DB load
-        (5s cycles), heartbeats would fire every 20s instead of 15s. Two
-        consecutive slow cycles could exceed the 60s abandonment window,
-        triggering unnecessary ``os._exit(1)``.
+        Returns:
+            None after thread stop or an unavailable event loop.
         """
         interval = self._collector_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
-
         while not self._thread_stop.is_set():
-            sleep_time = max(0.0, next_tick - time.monotonic())
-            if self._thread_stop.wait(timeout=sleep_time):
-                break
-
+            wait_sec = max(0.0, next_tick - time.monotonic())
+            if self._thread_stop.wait(timeout=wait_sec):
+                return
+            loop = self._loop
+            if loop is None:
+                logger.critical("Heartbeat loop started before event loop")
+                return
             try:
                 future = asyncio.run_coroutine_threadsafe(
                     self._heartbeat_cycle(),
-                    self._loop,
+                    loop,
                 )
                 future.result(
-                    timeout=self._collector_settings.heartbeat_stall_timeout_sec,
+                    timeout=(
+                        self._collector_settings.heartbeat_stall_timeout_sec
+                    ),
                 )
             except concurrent.futures.TimeoutError:
-                # CRITICAL: must be concurrent.futures.TimeoutError, NOT the
-                # built-in TimeoutError. In Python 3.11+, asyncio.TimeoutError
-                # aliases built-in TimeoutError — a DIFFERENT class from
-                # concurrent.futures.TimeoutError. A bare "except TimeoutError"
-                # would miss it, silently defeating the stall watchdog.
                 logger.critical(
-                    "Event loop stall -- heartbeat did not complete "
-                    "in %ds, terminating",
+                    "Event loop stall -- heartbeat did not complete in %ds",
                     self._collector_settings.heartbeat_stall_timeout_sec,
                 )
-                logging.shutdown()  # flush before os._exit bypasses handlers
+                logging.shutdown()
                 os._exit(1)
             except Exception:
-                # Transient DB error -- log and retry. A failed renewal
-                # attempt does not prove confirmed lease loss; fenced writes
-                # and heartbeat diagnostics remain authoritative.
                 logger.exception("Heartbeat renewal error")
-
-            # Allow one immediate catch-up tick, but reset large drift so a
-            # slow recovery window cannot spin heartbeat DB writes.
             next_tick = _advance_heartbeat_tick(
                 next_tick=next_tick,
                 interval=interval,
@@ -1742,286 +1302,104 @@ class CollectorRuntime:
             )
 
     async def _heartbeat_cycle(self) -> None:
+        """Dispatch one common exact-grant heartbeat cycle.
+
+        Returns:
+            None after every registered domain settles its heartbeat batch.
+
+        Raises:
+            RuntimeError: The supervisor is not initialized.
+            BaseException: A domain heartbeat cannot be safely correlated.
         """
-        Renew heartbeats and detect fence violations.
+        supervisor = self._supervisor
+        if supervisor is None:
+            msg = "supervisor is not initialized"
+            raise RuntimeError(msg)
 
-        Runs entirely on the event loop thread — all dict/task access is
-        thread-safe. Direct access from the OS heartbeat thread would risk
-        ``RuntimeError: dictionary changed size during iteration`` and
-        violates asyncio's thread-safety guarantees for ``task.done()``.
+        def observe_heartbeat() -> None:
+            self._health_state.last_heartbeat_tick = time.monotonic()
 
-        Batched renewal reduces heartbeat DB load from ~17 qps
-        (250 individual queries / 15s) to ~0.07 qps (1 query / 15s).
+        await supervisor.heartbeat_cycle(observe_heartbeat)
+
+    async def _stop_heartbeat_supervision(self) -> None:
+        """Stop and join the heartbeat OS thread.
+
+        Returns:
+            None once the thread has stopped or was never started.
         """
-        # Stamp at dispatch, NOT on DB success. /healthz gate 1 is a
-        # local-process-health check (spec: "must not check AlloyDB
-        # connectivity"); stamping post-DB would make a transient AlloyDB
-        # outage age every worker's stamp in lockstep, causing the autohealer
-        # to recreate the entire fleet simultaneously — a thundering herd
-        # that makes recovery worse. Stamping here proves the event loop
-        # dispatched the cycle, which is the true local-health signal.
-        self._health_state.last_heartbeat_tick = time.monotonic()
-
-        active = dict(self._feed_tasks.items())
-        if not active:
+        self._thread_stop.set()
+        thread = self._heartbeat_thread
+        if thread is None or not thread.is_alive():
             return
+        # GrantSupervisor owns the one external shutdown deadline around this
+        # callback. Do not impose a shorter timeout while an in-flight heartbeat
+        # is still bounded by the watchdog's stall timeout.
+        await asyncio.to_thread(thread.join)
 
-        results: list[
-            HeartbeatResult
-        ] = await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
-            list(active.keys()),
-            self._collector_settings.worker_id,
-        )
+    async def _shutdown_sequence(self) -> None:
+        """Drain grants before closing the queue and shared resources.
 
-        # Retention signal is now DB-authoritative worker ownership, not
-        # `renewed`. Skip-if-recent (feed_queries.py
-        # RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL) short-circuits the UPDATE
-        # when last_heartbeat is already <15 s fresh — those rows return
-        # with renewed=False but current_worker=us. Using `renewed` as the
-        # gate would then fire spurious fence-violation os._exit(1) on
-        # every newly-claimed feed whose first heartbeat tick falls inside
-        # the fresh window. The correct invariant is: a feed is retained
-        # iff the DB row still shows our worker_id.
-        #
-        # Race tolerance: `current_worker` is a point-in-time read from
-        # within a `SELECT ... FOR UPDATE` CTE, so it is consistent at
-        # that transaction's boundary. Between this check and a later
-        # fenced write by the task itself (progress / release / failure),
-        # another party could in theory steal the lease — but that path
-        # requires the pg_cron sweep (30 s cadence, 60 s abandonment
-        # threshold) OR another worker's recovery-CTE to fire, neither
-        # of which can happen while our last_heartbeat stays < 60 s old.
-        # Fenced writes on the task side are the authoritative lease-lost
-        # detection at write time; they call update_feed_progress /
-        # release_feed / report_feed_failure / release_non_budgeted_failure
-        # with WHERE worker_id=$1 AND fencing_token=$2 and return False if
-        # our lease was taken. The
-        # existing retry_with_lease_check wrapper + _lease_lost event
-        # gracefully handles that outcome without depending on the
-        # heartbeat's retained_ids observation.
-        worker_id = self._collector_settings.worker_id
-        retained_ids = {
-            r["id"] for r in results if r["current_worker"] == worker_id
-        }
+        Returns:
+            None after all owned resources close in dependency order.
 
-        # Cancel tasks for feeds that have been deactivated.
-        for r in results:
-            if (
-                r["current_status"] == "deactivated"
-                and r["current_worker"] == worker_id
-            ):
-                fid = r["id"]
-                if fid in active and not active[fid].done():
-                    logger.info(
-                        "Feed %s deactivated; cancelling task",
-                        fid,
-                        extra={
-                            "json_fields": {
-                                "event_type": "feed_deactivated_task_cancelled",
-                                "feed_id": str(fid),
-                            },
-                        },
-                    )
-                    active[fid].cancel()
-
-        # A feed missing from retained_ids is NOT a violation if:
-        #   - active[fid].done(): task finished between snapshot and DB response
-        #   - fid in _releasing_feeds: task is mid-await on release_feed /
-        #     record_failure — DB has set worker_id=NULL but task hasn't returned.
-        #     Without this filter, every normal release would trigger os._exit(1).
-        # Any remaining feed is a true fence violation: another worker stole the
-        # lease while this task was still running unaware.  Because the heartbeat
-        # is batched, a single stolen lease implies a systemic failure (the
-        # heartbeat mechanism itself broke), so we terminate the entire process
-        # rather than cancelling one task while 249 others may also be compromised.
-        lost_ids = {
-            fid
-            for fid in active
-            if fid not in retained_ids
-            and not active[fid].done()
-            and fid not in self._releasing_feeds
-        }
-        if not lost_ids:
-            logger.debug(
-                "Heartbeat retained %d feeds (%d actually written)",
-                len(retained_ids),
-                sum(1 for r in results if r["renewed"]),
-            )
-            return
-
-        # Log diagnostic details for each lost feed before terminating.
-        diag_by_id = {r["id"]: r for r in results}
-        for fid in lost_ids:
-            diag = diag_by_id.get(fid)
-            if diag:
-                logger.critical(
-                    "Feed %s lost: current_worker=%s current_status=%s renewed=%s",
-                    fid,
-                    diag["current_worker"],
-                    diag["current_status"],
-                    diag["renewed"],
-                )
-            else:
-                logger.critical(
-                    "Feed %s lost: no DB row returned (deleted from database?)",
-                    fid,
-                )
-
-        logger.critical(
-            "Heartbeat fence violation -- %d feed(s) lost: %s. Terminating.",
-            len(lost_ids),
-            ", ".join(str(fid) for fid in lost_ids),
-        )
-        # Belt-and-suspenders: signal retry loops in the narrow window
-        # before process death.
-        self._lease_lost.set()
-        logging.shutdown()  # flush before os._exit bypasses handlers
-        os._exit(1)
-
-    # -- Shutdown sequence ------------------------------------------------
-
-    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
+        Raises:
+            grant_supervisor.SupervisorNotDrainedError: Owned work may still
+                use shared runtime resources.
+            BaseException: Resource cleanup fails after grants have drained.
         """
-        Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
-        stop heartbeat thread, close GCS client and database pools.
-        """
-        logger.info(
-            "Shutting down -- %d active feed tasks",
-            len(self._feed_tasks),
-        )
-        # Stop the /healthz listener early so external probes get a clean
-        # connection refusal (port closed) rather than hanging on a socket
-        # whose event loop is about to drain.
-        # Wrapped in try/except so a cleanup failure here doesn't skip the
-        # heartbeat-thread stop and lease release below — the process is
-        # exiting anyway, but we still want to drop leases so another worker
-        # can pick them up quickly.
         if self._health_runner is not None:
             try:
                 await self._health_runner.cleanup()
             except Exception:
                 logger.warning(
-                    "Failed to cleanly shut down /healthz server — continuing",
+                    "Failed to stop health server",
                     exc_info=True,
                 )
 
-        # Stop the heartbeat thread before cancelling feed tasks: once feeds
-        # are released the heartbeat would otherwise see them as fence
-        # violations during the teardown window.
-        self._thread_stop.set()
-
-        # asyncio.to_thread avoids blocking the event loop during join().
-        # Without this, .join() blocks the event loop thread, but the
-        # heartbeat thread may be waiting for _heartbeat_cycle() to run ON
-        # that event loop — a deadlock that wastes shutdown budget until
-        # join() times out.
-        if (
-            self._heartbeat_thread is not None
-            and self._heartbeat_thread.is_alive()
-        ):
-            await asyncio.to_thread(self._heartbeat_thread.join, timeout=5)
-
-        # Stop watchdog thread AFTER heartbeat (so a watchdog trip doesn't
-        # cause the heartbeat to observe in-flight release_feeds_batch as
-        # fence violations) and BEFORE task cancellation (so a stuck
-        # cgroup read can't race with closing pools).
-        # 3s join (vs heartbeat's 5s): watchdog body has no DB I/O; only a
-        # path-stuck-on-cgroup-read could legitimately stall, and that's
-        # rare enough that 3s is generous.
-        await self._memory_watchdog.join(timeout_sec=3)
-
-        # Wait for feed tasks to finish on their own first, up to task_cancel_budget_sec
-        if self._feed_tasks:
-            _done, pending = await asyncio.wait(
-                self._feed_tasks.values(),
-                timeout=self._collector_settings.task_cancel_budget_sec,
-            )
-            for task in pending:
-                task.cancel()
-            if pending:
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait(pending, timeout=2.0)
-            if pending:
-                # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
-                # pending tasks at timeout. The task.cancel() loop above
-                # only requested cancellation; tasks that swallow
-                # CancelledError or are mid-CPU-bound work are still
-                # alive after the sub-timeout. We MUST explicitly
-                # re-cancel and re-await with a short hard timeout, or
-                # pending tasks will observe a NULL worker_id after
-                # release_feeds_batch and trigger the heartbeat
-                # fence-violation os._exit(1) (pre-existing invariant 1
-                # in PITFALLS.md).
-                #
-                # Bounded log: count + sorted feed names only (NEVER
-                # full task repr). On an 800-feed shutdown, formatting
-                # `pending` directly expands to >1MB of Cloud Logging
-                # output (Pitfall 9 critical detail).
-                names = sorted(t.get_name() for t in pending)
-                logger.warning(
-                    "Sub-timeout: %d tasks still running after %ss — "
-                    "explicitly cancelling and proceeding to release. "
-                    "names=%s",
-                    len(pending),
-                    self._collector_settings.task_cancel_budget_sec,
-                    names,
-                )
-                for task in pending:
-                    task.cancel()
-                # Hard 2s settle so cancellation actually propagates
-                # before release_feeds_batch runs. Tasks that don't
-                # honor cancellation within 2s are abandoned —
-                # release_feeds_batch is the safety net.
-                await asyncio.wait(pending, timeout=2.0)
-
-        # We MUST release leases AFTER cancelling tasks and waiting for them to
-        # exit! If we release leases while tasks are still running, they might
-        # see their lease as NULL during a progress update and trigger an
-        # accidental fence violation (os._exit(1)).
-        #
-        # Single WHERE worker_id = $1 UPDATE: catches every row the DB
-        # thinks we own, including stragglers from earlier per-feed
-        # release_feed failures. The per-type CTE + SKIP LOCKED on the
-        # claim side makes concurrent polling after a fleet-wide UNCLAIMED
-        # flip self-balancing across surviving workers, so the
-        # batched+jittered stagger the scaling plan originally prescribed
-        # is no longer needed.
-        worker_id = self._collector_settings.worker_id
-        logger.info(
-            "Releasing all leases owned by worker %s",
-            worker_id,
-        )
+        supervisor = self._supervisor
         try:
-            total_released = await self._store.release_feeds_batch(worker_id)
-            logger.info("Released %d leases", total_released)
-        except Exception:
-            logger.exception(
-                "Failed to release feeds on shutdown (safety net will recover)"
+            if supervisor is None:
+                await self._stop_heartbeat_supervision()
+            else:
+                await supervisor.shutdown(
+                    cooperative_grace_sec=(
+                        self._collector_settings.task_cancel_budget_sec
+                    ),
+                    external_stop_deadline_sec=(
+                        self._collector_settings.graceful_shutdown_timeout_sec
+                    ),
+                    stop_heartbeat_supervision=(
+                        self._stop_heartbeat_supervision
+                    ),
+                )
+        except grant_supervisor.SupervisorNotDrainedError:
+            self._thread_stop.set()
+            await self._memory_watchdog.join(timeout_sec=3)
+            logger.critical(
+                "Supervisor did not drain; preserving shared resources"
             )
+            raise
 
+        await self._memory_watchdog.join(timeout_sec=3)
+        if self._work_pool is not None:
+            await self._work_pool.close()
         await self._pubsub_client.close()
         await self._gcs_client.close()
 
-        # Close runtime-owned aiohttp session AFTER _gcs_client.close()
-        # per shutdown-ordering invariant (PITFALLS.md Pitfall 4 — close
-        # session after asyncio.wait of feed tasks; placing alongside
-        # _gcs_client.close() satisfies that). The 250ms sleep gives SSL
-        # transports time to flush so we don't emit
-        # "ResourceWarning: unclosed transport" (PITFALLS.md Pitfall 12 —
-        # enable_cleanup_closed is dead on Python 3.13.1+).
         if self._http_session is not None:
             await self._http_session.close()
             await asyncio.sleep(0.25)
-
-        # Heartbeat pool close may raise if the heartbeat cycle was
-        # mid-query when we stopped the thread — harmless during shutdown.
         if self._heartbeat_pool is not None:
             try:
-                await self._heartbeat_pool.close()
-            except Exception:  # noqa: S110
-                pass
-
+                await close_pool(self._heartbeat_pool)
+            except Exception:
+                # The heartbeat thread is already proven stopped, so this pool
+                # cannot still protect work. Continue closing the independent
+                # data pool, matching the legacy shutdown safety net.
+                logger.warning(
+                    "Failed to close heartbeat database pool",
+                    exc_info=True,
+                )
         if self._data_pool is not None:
             await close_pool(self._data_pool)
-
         logger.info("Shutdown complete")

@@ -18,10 +18,9 @@ MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 
 # Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
 # and prefetched per bundle during backfills, acting alongside the wall-clock budget
-# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
-# ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
-# instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit to prevent
+# instantaneous heap unrolls from flooding memory with in-flight GCS futures.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 1000
 
 # Number of chunks to prefetch ahead in the sliding window to bound background task queue
 # length and prevent connection pool exhaustion and task duplicates when bundles are clamped.
@@ -47,6 +46,7 @@ DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS: Final = 30000
 DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
 DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS: Final = 300000
 OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
+DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
@@ -54,7 +54,12 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"
 )
-GCS_CONNECTION_POOL_SIZE: Final = SHARED_DOWNLOAD_POOL_SIZE + 16
+# Scaled to 1.5x max download thread pool to provide sufficient HTTP connection
+# pool headroom without triggering urllib3 connection pool eviction.
+GCS_CONNECTION_POOL_MULTIPLIER: Final = 1.5
+GCS_CONNECTION_POOL_SIZE: Final = int(
+    SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER
+)
 GCS_CONNECTION_MAX_RETRIES: Final = 3
 
 # Structured watermark and FSM recovery configurations
