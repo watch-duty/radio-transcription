@@ -193,12 +193,10 @@ export function SegmentInfoPopover({
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 1,
-                py: 0.5,
+                p: 1,
               }}
             >
-              <Box
-                sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}
-              >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Tooltip title="Copy Segment ID">
                   <IconButton
                     size="small"
@@ -236,7 +234,6 @@ export function SegmentInfoPopover({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 1,
-                    p: 1,
                   }}
                 >
                   <Tooltip title="Copy External ID">
