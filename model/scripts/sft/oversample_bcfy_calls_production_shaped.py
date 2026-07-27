@@ -2,56 +2,24 @@
 dataset reconstruction (PR #1127, gs://wd-transcription-data/sft/
 dataset_versions/20260724-production-shaped-reconstruction/).
 
-This targets only training-owned rows:
+Duplicates each native bcfy_calls training row --dup-8khz times if its
+source_audio.sample_rate is narrowband, or --dup-other times otherwise,
+giving 8kHz rows more weight since they fail more often in production.
+Only training-owned rows are touched -- this script never reads or
+writes eval.jsonl/validation.jsonl, per PR #1127's requirement that any
+bcfy_calls weighting operate on training-owned rows only.
 
-1. No recording-level eval re-split. This dataset's train/eval/validation
-   split is a deliberately constructed, independently reviewed,
-   hash-pinned "immutable" artifact, and PR #1127 explicitly instructs
-   that any future bcfy_calls weighting decision must operate only on
-   training-owned rows and must not draw from eval. Oversampling the
-   existing 1,179 training-owned bcfy_calls rows alone already lifts
-   bcfy_calls to roughly a quarter of the resulting training set, so
-   there is no practical need to touch eval, and doing so would silently
-   move a benchmark another engineer designed to stay fixed. This script
-   never reads or writes eval.jsonl/validation.jsonl.
-
-2. Sample rate is read directly from this dataset's native
-   source_audio.sample_rate field on each row -- no audio download or
-   measurement needed.
-
-Where the 12x/6x defaults come from: a July 2026 incident-window study of
-1,934 SFT-failed production segments (plus a matched succeeded sample)
-found bcfy_calls segments fail far more often at 8kHz than at 16kHz --
-87.5% (525/600) vs. 44.9% (133/296), roughly 2:1. That 2:1 ratio between
---dup-8khz and --dup-other is not a coincidence; it directly encodes
-"duplicate the subset that demonstrably fails more, proportionally
-harder." The absolute scale (12, not e.g. 8 or 20) was picked to land
-bcfy_calls' resulting training share in the ~12-17% range that an earlier
-flat-multiplier draft of this same proposal had already been considering
-reasonable for this row count, before the sample-rate split was found.
-Applied to this dataset's different bcfy_calls composition (478
-narrowband / 701 other, vs. the study's 600/296), the same 12x/6x lands
-at a higher ~23% share -- not retargeted for this dataset specifically.
-
-These are a single agent's proposed defaults, adopted because the team
-was not expected to have a strong opinion on the exact multipliers and
-the retune needed to proceed either way -- not an independently reviewed
-target. Treat them as a documented starting point to argue with, not a
-derived optimum. In particular, the 2:1 severity ratio was measured
-against the prior dataset's 830 bcfy_calls rows; nobody has re-verified
-it holds for this reconstruction's specific 1,179 rows, which may draw on
-different underlying recordings under PR #1127's different segmentation
-rules.
-
-Duplicate rows still need a real, distinct GCS audio object each -- the
+Each duplicate needs its own real, distinct GCS audio object -- the
 canonical manifest validator (common.manifest.validate_canonical_
-manifest) rejects any two rows in the same manifest sharing an
-audio_filepath -- so this script still performs a server-side GCS
-copy_blob per duplicate under --dest-prefix, same as the prior effort.
-Each duplicate also gets a unique example_id/segment_id (this dataset's
-rows already carry both natively, unlike the prior one, but duplicating
-a row still needs them to stay unique manifest-wide) and split forced to
-"train" (defensive; native rows already carry split="train" here).
+manifest) rejects two rows sharing an audio_filepath -- so this script
+performs a server-side GCS copy_blob per duplicate under --dest-prefix,
+and gives each duplicate a unique example_id/segment_id.
+
+The --dup-8khz/--dup-other defaults (12/6) encode one prior failure-rate
+study, not a general constant. Before reusing them in a future round,
+re-measure the current 8kHz-vs-16kHz failure-rate gap for whatever
+failure population is live at that time and pick a target training share
+deliberately -- see GOO-822 for how this round's numbers were derived.
 
 Usage:
   uv run --with google-cloud-storage \
@@ -81,7 +49,7 @@ _thread_local = threading.local()
 
 # 8kHz-range threshold: catch 8000 Hz and any nearby narrowband edge cases
 # without accidentally bucketing 16000+/22050/44100/96000 as "narrowband".
-NARROWBAND_THRESHOLD_HZ = 12000
+_NARROWBAND_THRESHOLD_HZ = 12000
 
 
 def read_jsonl(client: storage.Client, path: str) -> list[dict]:
@@ -209,9 +177,7 @@ def _copy_blob(project: str | None, source_uri: str, dest_uri: str) -> bool:
         src_bucket = client.bucket(src_bucket_name)
         src_blob = src_bucket.blob(src_blob_name)
         src_bucket.copy_blob(src_blob, dst_bucket, dst_blob_name)
-    except (
-        Exception
-    ) as exc:  # per-copy failures are logged and counted, not fatal
+    except Exception as exc:  # per-copy failures are logged/counted, not fatal
         logger.warning(
             "failed to copy %s -> %s: %s: %s",
             source_uri,
@@ -288,9 +254,8 @@ def _parse_args() -> argparse.Namespace:
         default=12,
         help=(
             "Duplication factor for native rows at <12kHz sample rate. "
-            "Default reflects an unreviewed proposed ~2:1 weighting "
-            "toward 8kHz's measured failure severity -- see module "
-            "docstring."
+            "Default is a proposed starting point, not a tuned optimum "
+            "-- see module docstring before reusing it in a future round."
         ),
     )
     parser.add_argument(
@@ -299,8 +264,7 @@ def _parse_args() -> argparse.Namespace:
         default=6,
         help=(
             "Duplication factor for native rows at >=12kHz sample rate. "
-            "See --dup-8khz and the module docstring for where these "
-            "defaults come from."
+            "See --dup-8khz and the module docstring."
         ),
     )
     parser.add_argument("--concurrency", type=int, default=32)
@@ -336,7 +300,7 @@ def main() -> None:
         rate = _native_sample_rate(row)
         if rate is None:
             n_unmeasured += 1
-        is_narrowband = rate is not None and rate < NARROWBAND_THRESHOLD_HZ
+        is_narrowband = rate is not None and rate < _NARROWBAND_THRESHOLD_HZ
         n_narrowband += is_narrowband
         dup_n = args.dup_8khz if is_narrowband else args.dup_other
         for dup_idx in range(dup_n):
@@ -353,7 +317,7 @@ def main() -> None:
     logger.info(
         "Native bcfy_calls rows: %s narrowband (<%sHz, %sx) + %s other (%sx)",
         n_narrowband,
-        NARROWBAND_THRESHOLD_HZ,
+        _NARROWBAND_THRESHOLD_HZ,
         args.dup_8khz,
         len(bcfy_calls_rows) - n_narrowband,
         args.dup_other,
