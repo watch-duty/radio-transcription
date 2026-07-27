@@ -30,6 +30,30 @@ Two things are simpler here than in the prior effort:
    measured it with soundfile. This dataset's rows carry
    source_audio.sample_rate natively, so it's a free field read instead.
 
+Where the 12x/6x defaults come from: a July 2026 incident-window study of
+1,934 SFT-failed production segments (plus a matched succeeded sample)
+found bcfy_calls segments fail far more often at 8kHz than at 16kHz --
+87.5% (525/600) vs. 44.9% (133/296), roughly 2:1. That 2:1 ratio between
+--dup-8khz and --dup-other is not a coincidence; it directly encodes
+"duplicate the subset that demonstrably fails more, proportionally
+harder." The absolute scale (12, not e.g. 8 or 20) was picked to land
+bcfy_calls' resulting training share in the ~12-17% range that an earlier
+flat-multiplier draft of this same proposal had already been considering
+reasonable for this row count, before the sample-rate split was found.
+Applied to this dataset's different bcfy_calls composition (478
+narrowband / 701 other, vs. the study's 600/296), the same 12x/6x lands
+at a higher ~23% share -- not retargeted for this dataset specifically.
+
+These are a single agent's proposed defaults, adopted because the team
+was not expected to have a strong opinion on the exact multipliers and
+the retune needed to proceed either way -- not an independently reviewed
+target. Treat them as a documented starting point to argue with, not a
+derived optimum. In particular, the 2:1 severity ratio was measured
+against the prior dataset's 830 bcfy_calls rows; nobody has re-verified
+it holds for this reconstruction's specific 1,179 rows, which may draw on
+different underlying recordings under PR #1127's different segmentation
+rules.
+
 Duplicate rows still need a real, distinct GCS audio object each -- the
 canonical manifest validator (common.manifest.validate_canonical_
 manifest) rejects any two rows in the same manifest sharing an
@@ -273,13 +297,22 @@ def _parse_args() -> argparse.Namespace:
         "--dup-8khz",
         type=int,
         default=12,
-        help="Duplication factor for native rows at <12kHz sample rate.",
+        help=(
+            "Duplication factor for native rows at <12kHz sample rate. "
+            "Default reflects an unreviewed proposed ~2:1 weighting "
+            "toward 8kHz's measured failure severity -- see module "
+            "docstring."
+        ),
     )
     parser.add_argument(
         "--dup-other",
         type=int,
         default=6,
-        help="Duplication factor for native rows at >=12kHz sample rate.",
+        help=(
+            "Duplication factor for native rows at >=12kHz sample rate. "
+            "See --dup-8khz and the module docstring for where these "
+            "defaults come from."
+        ),
     )
     parser.add_argument("--concurrency", type=int, default=32)
     parser.add_argument(
