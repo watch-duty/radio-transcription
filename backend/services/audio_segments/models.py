@@ -25,6 +25,7 @@ class AnnotationType(StrEnum):
     TRANSCRIPT = "TRANSCRIPT"
     EVALUATION = "EVALUATION"
     WAVEFORM = "WAVEFORM"
+    TRANSCRIPT_FEEDBACK = "TRANSCRIPT_FEEDBACK"
 
 
 class TranscriptAnnotationData(BaseModel):
@@ -47,6 +48,12 @@ class WaveformAnnotationData(BaseModel):
 
     peaks: list[list[float]]
     duration_seconds: float = Field(gt=0)
+
+
+class TranscriptFeedbackAnnotationData(BaseModel):
+    """Data for transcript feedback (e.g. flagging)."""
+
+    flagged_by_user_ids: list[str] = Field(default_factory=list)
 
 
 class TranscriptAnnotation(BaseModel):
@@ -76,8 +83,24 @@ class WaveformAnnotation(BaseModel):
     created_at: datetime
 
 
+class TranscriptFeedbackAnnotation(BaseModel):
+    """Annotation for transcript feedback."""
+
+    audio_segment_id: str
+    type: Literal[AnnotationType.TRANSCRIPT_FEEDBACK] = (
+        AnnotationType.TRANSCRIPT_FEEDBACK
+    )
+    data: TranscriptFeedbackAnnotationData
+    created_at: datetime
+
+
 Annotation = Annotated[
-    Union[TranscriptAnnotation, EvaluationAnnotation, WaveformAnnotation],
+    Union[
+        TranscriptAnnotation,
+        EvaluationAnnotation,
+        WaveformAnnotation,
+        TranscriptFeedbackAnnotation,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -103,11 +126,21 @@ class WaveformAnnotationCreate(BaseModel):
     data: WaveformAnnotationData
 
 
+class TranscriptFeedbackAnnotationCreate(BaseModel):
+    """Model for creating a transcript feedback annotation."""
+
+    type: Literal[AnnotationType.TRANSCRIPT_FEEDBACK] = (
+        AnnotationType.TRANSCRIPT_FEEDBACK
+    )
+    data: TranscriptFeedbackAnnotationData
+
+
 AnnotationCreate = Annotated[
     Union[
         TranscriptAnnotationCreate,
         EvaluationAnnotationCreate,
         WaveformAnnotationCreate,
+        TranscriptFeedbackAnnotationCreate,
     ],
     Field(discriminator="type"),
 ]
