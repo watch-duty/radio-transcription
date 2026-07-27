@@ -92,9 +92,7 @@ describe('SegmentInfoPopover', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       'ext-segment-abc-123'
     );
-    expect(mockTriggerSnackbar).toHaveBeenCalledWith(
-      'External segment ID copied'
-    );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('External ID copied');
   });
 
   it('omits the external ID when not present', async () => {
