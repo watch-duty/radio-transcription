@@ -2,12 +2,10 @@
 dataset reconstruction (PR #1127, gs://wd-transcription-data/sft/
 dataset_versions/20260724-production-shaped-reconstruction/).
 
-Duplicates each native bcfy_calls training row --dup-8khz times if its
-source_audio.sample_rate is narrowband, or --dup-other times otherwise,
-giving 8kHz rows more weight since they fail more often in production.
-Only training-owned rows are touched -- this script never reads or
-writes eval.jsonl/validation.jsonl, per PR #1127's requirement that any
-bcfy_calls weighting operate on training-owned rows only.
+Duplicates every native bcfy_calls training row --dup-factor times,
+uniformly. Only training-owned rows are touched -- this script never
+reads or writes eval.jsonl/validation.jsonl, per PR #1127's requirement
+that any bcfy_calls weighting operate on training-owned rows only.
 
 Each duplicate needs its own real, distinct GCS audio object -- the
 canonical manifest validator (common.manifest.validate_canonical_
@@ -15,11 +13,19 @@ manifest) rejects two rows sharing an audio_filepath -- so this script
 performs a server-side GCS copy_blob per duplicate under --dest-prefix,
 and gives each duplicate a unique example_id/segment_id.
 
-The --dup-8khz/--dup-other defaults (12/6) encode one prior failure-rate
-study, not a general constant. Before reusing them in a future round,
-re-measure the current 8kHz-vs-16kHz failure-rate gap for whatever
-failure population is live at that time and pick a target training share
-deliberately -- see GOO-822 for how this round's numbers were derived.
+The --dup-factor default (3) targets matching bcfy_calls' share of
+production audio *duration*, not row count or failure rate -- see
+GOO-822: an earlier version of this script weighted 8kHz rows more
+heavily than 16kHz rows based on their relative failure severity, but
+that skewed bcfy_calls' internal sample-rate mix away from production
+reality and overshot its duration share (39% vs. an actual ~18%).
+Uniform 3x was verified (against the real canonical manifest and a
+duration-weighted production query) to land within half a point of
+bcfy_calls' actual production duration share without distorting its
+sample-rate mix. Before reusing --dup-factor in a future round,
+re-verify against whatever the current canonical manifest and
+production distribution look like at that time, rather than assuming 3
+still applies.
 
 Usage:
   uv run --with google-cloud-storage \
@@ -46,10 +52,6 @@ from google.cloud import storage
 logger = logging.getLogger(__name__)
 
 _thread_local = threading.local()
-
-# 8kHz-range threshold: catch 8000 Hz and any nearby narrowband edge cases
-# without accidentally bucketing 16000+/22050/44100/96000 as "narrowband".
-_NARROWBAND_THRESHOLD_HZ = 12000
 
 
 def read_jsonl(client: storage.Client, path: str) -> list[dict]:
@@ -91,14 +93,6 @@ def write_jsonl(client: storage.Client, rows: list[dict], path: str) -> None:
 def _is_bcfy_calls(row: dict) -> bool:
     dataset = row.get("dataset")
     return isinstance(dataset, dict) and dataset.get("family") == "bcfy_calls"
-
-
-def _native_sample_rate(row: dict) -> int | None:
-    source_audio = row.get("source_audio")
-    if not isinstance(source_audio, dict):
-        return None
-    rate = source_audio.get("sample_rate")
-    return rate if isinstance(rate, int) else None
 
 
 def _thread_local_storage_client(project: str | None) -> storage.Client:
@@ -249,22 +243,13 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--dup-8khz",
+        "--dup-factor",
         type=int,
-        default=12,
+        default=3,
         help=(
-            "Duplication factor for native rows at <12kHz sample rate. "
-            "Default is a proposed starting point, not a tuned optimum "
+            "Uniform duplication factor applied to every native bcfy_calls "
+            "row. Verified to match bcfy_calls' production duration share "
             "-- see module docstring before reusing it in a future round."
-        ),
-    )
-    parser.add_argument(
-        "--dup-other",
-        type=int,
-        default=6,
-        help=(
-            "Duplication factor for native rows at >=12kHz sample rate. "
-            "See --dup-8khz and the module docstring."
         ),
     )
     parser.add_argument("--concurrency", type=int, default=32)
@@ -294,36 +279,15 @@ def main() -> None:
 
     oversampled_rows: list[dict] = []
     copies: list[tuple[str, str]] = []
-    n_narrowband = 0
-    n_unmeasured = 0
     for row in bcfy_calls_rows:
-        rate = _native_sample_rate(row)
-        if rate is None:
-            n_unmeasured += 1
-        is_narrowband = rate is not None and rate < _NARROWBAND_THRESHOLD_HZ
-        n_narrowband += is_narrowband
-        dup_n = args.dup_8khz if is_narrowband else args.dup_other
-        for dup_idx in range(dup_n):
+        for dup_idx in range(args.dup_factor):
             dup_row = _duplicate_row(row, dup_idx, args.dest_prefix)
             oversampled_rows.append(dup_row)
             copies.append((row["audio_filepath"], dup_row["audio_filepath"]))
 
-    if n_unmeasured:
-        logger.warning(
-            "%s bcfy_calls rows had no source_audio.sample_rate field, "
-            "defaulted to --dup-other",
-            n_unmeasured,
-        )
     logger.info(
-        "Native bcfy_calls rows: %s narrowband (<%sHz, %sx) + %s other (%sx)",
-        n_narrowband,
-        _NARROWBAND_THRESHOLD_HZ,
-        args.dup_8khz,
-        len(bcfy_calls_rows) - n_narrowband,
-        args.dup_other,
-    )
-    logger.info(
-        "After weighted duplication: %s bcfy_calls training rows",
+        "After uniform %sx duplication: %s bcfy_calls training rows",
+        args.dup_factor,
         len(oversampled_rows),
     )
 
