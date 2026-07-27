@@ -1,15 +1,18 @@
 import { AnnotationType } from '@transcription/common';
 import type {
+  AddAnnotationRequest,
   Annotation,
   AudioClassification,
   AudioSegment,
   RuleAnnotation,
 } from '@transcription/common';
 import {
+  Body,
   Controller,
   Extension,
   Get,
   Path,
+  Post,
   Queries,
   Response,
   Route,
@@ -61,10 +64,18 @@ interface WaveformAnnotationBackend extends BaseAnnotationBackend {
   };
 }
 
+interface TranscriptFeedbackAnnotationBackend extends BaseAnnotationBackend {
+  type: AnnotationType.TRANSCRIPT_FEEDBACK;
+  data: {
+    flagged_by_user_ids: string[];
+  };
+}
+
 type AnnotationBackend =
   | TranscriptAnnotationBackend
   | EvaluationAnnotationBackend
-  | WaveformAnnotationBackend;
+  | WaveformAnnotationBackend
+  | TranscriptFeedbackAnnotationBackend;
 
 interface AudioSegmentBackend {
   id: string;
@@ -125,6 +136,16 @@ function convertAnnotationBackend(response: AnnotationBackend): Annotation {
       data: {
         peaks: response.data.peaks,
         durationSeconds: response.data.duration_seconds,
+      },
+    };
+  }
+
+  if (response.type === AnnotationType.TRANSCRIPT_FEEDBACK) {
+    return {
+      type: response.type,
+      createdAt: response.created_at,
+      data: {
+        flaggedByUserIds: response.data.flagged_by_user_ids,
       },
     };
   }
@@ -219,6 +240,44 @@ export class AudioController extends Controller {
       const { status, message } = handleBackendError(
         error,
         'fetching audio segments'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Post('{audioSegmentId}/annotations')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async addAnnotation(
+    @Path() audioSegmentId: string,
+    @Body() requestBody: AddAnnotationRequest
+  ): Promise<Annotation> {
+    try {
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+
+      let backendData: unknown = requestBody.data;
+      if (requestBody.type === AnnotationType.TRANSCRIPT_FEEDBACK) {
+        backendData = {
+          flagged_by_user_ids: (
+            requestBody.data as { flaggedByUserIds: string[] }
+          ).flaggedByUserIds,
+        };
+      }
+
+      const response = await client.request({
+        url: `${AUDIO_SEGMENTS_API_URL}/${audioSegmentId}/annotations`,
+        method: 'POST',
+        data: {
+          type: requestBody.type,
+          data: backendData,
+        },
+      });
+
+      return convertAnnotationBackend(response.data as AnnotationBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'adding annotation'
       );
       throw new HttpError(status, message);
     }

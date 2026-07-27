@@ -8,6 +8,7 @@ export enum AnnotationType {
   TRANSCRIPT = 'TRANSCRIPT',
   EVALUATION = 'EVALUATION',
   WAVEFORM = 'WAVEFORM',
+  TRANSCRIPT_FEEDBACK = 'TRANSCRIPT_FEEDBACK',
 }
 
 export interface TranscriptAnnotationData {
@@ -40,14 +41,21 @@ export interface WaveformAnnotationData {
   durationSeconds: number;
 }
 
+export interface TranscriptFeedbackAnnotationData {
+  flaggedByUserIds: string[];
+}
+
 export interface Annotation {
   type: AnnotationType;
   createdAt: string;
   data:
     | TranscriptAnnotationData
     | EvaluationAnnotationData
-    | WaveformAnnotationData;
+    | WaveformAnnotationData
+    | TranscriptFeedbackAnnotationData;
 }
+
+export type AddAnnotationRequest = Omit<Annotation, 'createdAt'>;
 
 export interface AudioSegment {
   id: string;
