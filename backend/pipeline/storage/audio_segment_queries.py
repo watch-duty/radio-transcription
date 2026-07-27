@@ -83,6 +83,39 @@ SET data = EXCLUDED.data, updated_at = NOW()
 RETURNING audio_segment_id, type, data, created_at, updated_at
 """
 
+FLAG_TRANSCRIPT_SQL = """
+INSERT INTO annotations (audio_segment_id, type, data)
+VALUES (
+    $1, 
+    'TRANSCRIPT_FLAG', 
+    jsonb_build_object('flagged_by_user_ids', jsonb_build_array($2::text))
+)
+ON CONFLICT (audio_segment_id, type) DO UPDATE
+SET 
+  data = jsonb_set(
+    annotations.data,
+    '{flagged_by_user_ids}',
+    (COALESCE(annotations.data->'flagged_by_user_ids', '[]'::jsonb) - $2::text) 
+      || jsonb_build_array($2::text)
+  ),
+  updated_at = NOW()
+RETURNING audio_segment_id, type, data, created_at, updated_at
+"""
+
+UNFLAG_TRANSCRIPT_SQL = """
+INSERT INTO annotations (audio_segment_id, type, data)
+VALUES ($1, 'TRANSCRIPT_FLAG', '{"flagged_by_user_ids": []}'::jsonb)
+ON CONFLICT (audio_segment_id, type) DO UPDATE
+SET 
+  data = jsonb_set(
+    annotations.data,
+    '{flagged_by_user_ids}',
+    COALESCE(annotations.data->'flagged_by_user_ids', '[]'::jsonb) - $2::text
+  ),
+  updated_at = NOW()
+RETURNING audio_segment_id, type, data, created_at, updated_at
+"""
+
 CREATE_AUDIO_SEGMENT_SQL = """
 INSERT INTO audio_segments (
     id,
