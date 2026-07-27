@@ -1,6 +1,5 @@
 import { AnnotationType } from '@transcription/common';
 import type {
-  AddAnnotationRequest,
   Annotation,
   AudioClassification,
   AudioSegment,
@@ -245,31 +244,24 @@ export class AudioController extends Controller {
     }
   }
 
-  @Post('{audioSegmentId}/annotations')
+  @Post('{audioSegmentId}/flag-transcript')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async addAnnotation(
+  public async flagTranscript(
     @Path() audioSegmentId: string,
-    @Body() requestBody: AddAnnotationRequest
+    @Body() requestBody: { flaggedByUserIds: string[] }
   ): Promise<Annotation> {
     try {
       const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
-
-      let backendData: unknown = requestBody.data;
-      if (requestBody.type === AnnotationType.TRANSCRIPT_FLAG) {
-        backendData = {
-          flagged_by_user_ids: (
-            requestBody.data as { flaggedByUserIds: string[] }
-          ).flaggedByUserIds,
-        };
-      }
 
       const response = await client.request({
         url: `${AUDIO_SEGMENTS_API_URL}/${audioSegmentId}/annotations`,
         method: 'POST',
         data: {
-          type: requestBody.type,
-          data: backendData,
+          type: AnnotationType.TRANSCRIPT_FLAG,
+          data: {
+            flagged_by_user_ids: requestBody.flaggedByUserIds,
+          },
         },
       });
 

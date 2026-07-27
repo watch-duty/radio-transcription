@@ -734,26 +734,6 @@ components:
           type: string
       type: object
       additionalProperties: false
-    Pick_Annotation.Exclude_keyofAnnotation.createdAt__:
-      properties:
-        type:
-          $ref: "#/components/schemas/AnnotationType"
-        data:
-          anyOf:
-            - $ref: "#/components/schemas/TranscriptAnnotationData"
-            - $ref: "#/components/schemas/EvaluationAnnotationData"
-            - $ref: "#/components/schemas/WaveformAnnotationData"
-            - $ref: "#/components/schemas/TranscriptFlagAnnotationData"
-      required:
-        - type
-        - data
-      type: object
-      description: From T, pick a set of properties whose keys are in the union K
-    Omit_Annotation.createdAt_:
-      $ref: "#/components/schemas/Pick_Annotation.Exclude_keyofAnnotation.createdAt__"
-      description: Construct a type with the properties of T except for those in type K.
-    AddAnnotationRequest:
-      $ref: "#/components/schemas/Omit_Annotation.createdAt_"
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -2073,9 +2053,9 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-  /api/v1/audioSegments/{audioSegmentId}/annotations:
+  /api/v1/audioSegments/{audioSegmentId}/flag-transcript:
     post:
-      operationId: AddAnnotation
+      operationId: FlagTranscript
       responses:
         "200":
           description: Ok
@@ -2142,7 +2122,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddAnnotationRequest"
+              properties:
+                flaggedByUserIds:
+                  items:
+                    type: string
+                  type: array
+              required:
+                - flaggedByUserIds
+              type: object
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
