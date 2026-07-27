@@ -27,7 +27,6 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { useQuery } from '@tanstack/react-query';
 import type { Feed } from '@transcription/common';
 
 import {
@@ -42,7 +41,8 @@ import {
   feedKey,
 } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
-import { listFeeds } from '../../service/listFeeds';
+import { useFeeds } from '../../hooks/useFeeds';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 
 export interface SettingsViewProps {
   triggerSnackbar?: (message: string) => void;
@@ -149,16 +149,18 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
   );
 
   const [selectedFeedToAdd, setSelectedFeedToAdd] = useState<Feed | null>(null);
+  const [feedSearchQuery, setFeedSearchQuery] = useState('');
 
-  // Fetch list of feeds to resolve feed names and allow adding new overrides
-  const { data: feedsData, error: feedsError } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+  const {
+    feeds,
+    error: feedsError,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useFeeds({
+    token,
+    searchQuery: feedSearchQuery,
   });
-
-  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
 
   useEffect(() => {
     if (feedsError && onError) {
@@ -465,7 +467,7 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
             configured for specific feeds.
           </Typography>
 
-          {feeds.length > 0 && availableFeedsForNewOverride.length > 0 && (
+          {availableFeedsForNewOverride.length > 0 && (
             <Stack
               direction={{ xs: 'column', sm: 'row' }}
               spacing={2}
@@ -473,11 +475,28 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
             >
               <Autocomplete
                 options={availableFeedsForNewOverride}
+                filterOptions={(x) => x}
                 getOptionLabel={(option) =>
                   option.name ? `${option.name} (${option.id})` : option.id
                 }
                 value={selectedFeedToAdd}
+                inputValue={feedSearchQuery}
+                onInputChange={(_, newInputValue) =>
+                  setFeedSearchQuery(newInputValue)
+                }
                 onChange={(_, val) => setSelectedFeedToAdd(val)}
+                loading={isFetchingNextPage}
+                slotProps={{
+                  listbox: {
+                    onScroll: (event) =>
+                      handleListboxScroll(
+                        event,
+                        fetchNextPage,
+                        hasNextPage,
+                        isFetchingNextPage
+                      ),
+                  },
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}

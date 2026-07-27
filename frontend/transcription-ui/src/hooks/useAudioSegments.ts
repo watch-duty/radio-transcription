@@ -41,7 +41,7 @@ interface UseAudioSegmentsOptions {
   searchedFeedId: string | null;
   searchedTimestamp: Date | null;
   alertFilter: AlertFilter;
-  isFeedsSuccess: boolean;
+  isFeedsSuccess?: boolean;
   // Whether the view wants live polling (it gates this on the list being
   // scrolled to the top). Polling is additionally suppressed unless the head of
   // the stream is loaded.
@@ -157,7 +157,7 @@ export function useAudioSegments({
       }
       return undefined;
     },
-    enabled: !!token && !!searchedFeedId && isFeedsSuccess,
+    enabled: !!token && !!searchedFeedId && (isFeedsSuccess ?? true),
     refetchOnWindowFocus: false,
   });
 
