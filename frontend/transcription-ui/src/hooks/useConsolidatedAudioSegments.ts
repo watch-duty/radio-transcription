@@ -119,6 +119,20 @@ export function isOverlapWithOfflineWindows(
   return false;
 }
 
+/**
+ * Compares two audio segments chronologically by startTimestamp (ascending),
+ * using segment ID as a tie-breaker.
+ */
+export function compareAudioSegments(
+  a: RenderableAudioSegment,
+  b: RenderableAudioSegment
+): number {
+  return (
+    Date.parse(a.startTimestamp) - Date.parse(b.startTimestamp) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
 export function consolidateAudioSegments(
   segments: AudioSegment[],
   audioSource?: SourceType,
@@ -128,12 +142,12 @@ export function consolidateAudioSegments(
   if (segments.length === 0) return [];
 
   const isContinuousAudioSource = isContinuousSource(audioSource);
-  const offlineWindows = deriveOfflineWindows(historyEvents, nowMs);
+  const offlineWindows = isContinuousAudioSource
+    ? deriveOfflineWindows(historyEvents, nowMs)
+    : [];
 
   // Sort chronologically (ascending) to group consecutive segments in time order
-  const chronologicalSegments = [...segments].sort(
-    (a, b) => Date.parse(a.startTimestamp) - Date.parse(b.startTimestamp)
-  );
+  const chronologicalSegments = [...segments].sort(compareAudioSegments);
 
   const consolidated: RenderableAudioSegment[] = [];
   let activeSilenceBundle: RenderableAudioSegment | null = null;
@@ -157,21 +171,17 @@ export function consolidateAudioSegments(
 
       // Tolerance for rounding errors and minor overlaps
       if (gapMs > MIN_GAP_FOR_OUTAGE_MS) {
-        // Check if the gap falls within an offline window from audit history
-        const isOfflineInHistory = isOverlapWithOfflineWindows(
-          prevEnd,
-          currStart,
-          offlineWindows
-        );
-
+        // Outage bundles across gaps are only synthesized for continuous stream sources
         const isOutage =
-          isOfflineInHistory ||
-          (isContinuousAudioSource &&
-            (segment.missingPriorContext || prevSegment.missingPostContext));
+          isContinuousAudioSource &&
+          (isOverlapWithOfflineWindows(prevEnd, currStart, offlineWindows) ||
+            segment.missingPriorContext ||
+            prevSegment.missingPostContext);
+
+        // Always flush active silence bundle across any time gap so silence doesn't bridge gaps
+        flushSilenceBundle();
 
         if (isOutage) {
-          flushSilenceBundle();
-
           // Inject virtual outage segment
           consolidated.push({
             id: `outage-${prevSegment.id}-${segment.id}`,
@@ -190,10 +200,6 @@ export function consolidateAudioSegments(
             annotations: [],
             isOutageBundle: true,
           } as RenderableAudioSegment);
-        } else {
-          // Continuous or non-continuous feed gap where feed was active:
-          // flush silence bundle so silence does not bridge across unrecorded time gaps
-          flushSilenceBundle();
         }
       }
     }
@@ -214,9 +220,7 @@ export function consolidateAudioSegments(
   flushSilenceBundle();
 
   // Return sorted descending (newest at the top)
-  return consolidated.sort(
-    (a, b) => Date.parse(b.startTimestamp) - Date.parse(a.startTimestamp)
-  );
+  return consolidated.reverse();
 }
 
 function extendOrCreateSilenceBundle(
