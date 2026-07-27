@@ -12,13 +12,12 @@ import {
   AnnotationType,
   AudioClassification,
   type TranscriptAnnotationData,
-  type TranscriptFeedbackAnnotationData,
 } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { useUserInfo } from '../../hooks/useUserInfo';
-import { addTranscriptFeedback } from '../../service/addAnnotation';
+import { flagTranscript } from '../../service/flagTranscript';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
@@ -186,7 +185,7 @@ export function TranscriptRow({
           : [user.email];
       }
 
-      await addTranscriptFeedback(audioSegment.id, userIds, token);
+      await flagTranscript(audioSegment.id, userIds, token);
     },
     onSuccess: () => {
       triggerSnackbar(
