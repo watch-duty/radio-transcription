@@ -25,7 +25,7 @@ class AnnotationType(StrEnum):
     TRANSCRIPT = "TRANSCRIPT"
     EVALUATION = "EVALUATION"
     WAVEFORM = "WAVEFORM"
-    TRANSCRIPT_FEEDBACK = "TRANSCRIPT_FEEDBACK"
+    TRANSCRIPT_FLAG = "TRANSCRIPT_FLAG"
 
 
 class TranscriptAnnotationData(BaseModel):
@@ -50,7 +50,7 @@ class WaveformAnnotationData(BaseModel):
     duration_seconds: float = Field(gt=0)
 
 
-class TranscriptFeedbackAnnotationData(BaseModel):
+class TranscriptFlagAnnotationData(BaseModel):
     """Data for transcript feedback (e.g. flagging)."""
 
     flagged_by_user_ids: list[str] = Field(default_factory=list)
@@ -83,14 +83,14 @@ class WaveformAnnotation(BaseModel):
     created_at: datetime
 
 
-class TranscriptFeedbackAnnotation(BaseModel):
+class TranscriptFlagAnnotation(BaseModel):
     """Annotation for transcript feedback."""
 
     audio_segment_id: str
-    type: Literal[AnnotationType.TRANSCRIPT_FEEDBACK] = (
-        AnnotationType.TRANSCRIPT_FEEDBACK
+    type: Literal[AnnotationType.TRANSCRIPT_FLAG] = (
+        AnnotationType.TRANSCRIPT_FLAG
     )
-    data: TranscriptFeedbackAnnotationData
+    data: TranscriptFlagAnnotationData
     created_at: datetime
 
 
@@ -99,7 +99,7 @@ Annotation = Annotated[
         TranscriptAnnotation,
         EvaluationAnnotation,
         WaveformAnnotation,
-        TranscriptFeedbackAnnotation,
+        TranscriptFlagAnnotation,
     ],
     Field(discriminator="type"),
 ]
@@ -126,13 +126,13 @@ class WaveformAnnotationCreate(BaseModel):
     data: WaveformAnnotationData
 
 
-class TranscriptFeedbackAnnotationCreate(BaseModel):
+class TranscriptFlagAnnotationCreate(BaseModel):
     """Model for creating a transcript feedback annotation."""
 
-    type: Literal[AnnotationType.TRANSCRIPT_FEEDBACK] = (
-        AnnotationType.TRANSCRIPT_FEEDBACK
+    type: Literal[AnnotationType.TRANSCRIPT_FLAG] = (
+        AnnotationType.TRANSCRIPT_FLAG
     )
-    data: TranscriptFeedbackAnnotationData
+    data: TranscriptFlagAnnotationData
 
 
 AnnotationCreate = Annotated[
@@ -140,7 +140,7 @@ AnnotationCreate = Annotated[
         TranscriptAnnotationCreate,
         EvaluationAnnotationCreate,
         WaveformAnnotationCreate,
-        TranscriptFeedbackAnnotationCreate,
+        TranscriptFlagAnnotationCreate,
     ],
     Field(discriminator="type"),
 ]
