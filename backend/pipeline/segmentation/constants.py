@@ -18,10 +18,9 @@ MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 
 # Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
 # and prefetched per bundle during backfills, acting alongside the wall-clock budget
-# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
-# ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
-# instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit to prevent
+# instantaneous heap unrolls from flooding memory with in-flight GCS futures.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 1000
 
 # Number of chunks to prefetch ahead in the sliding window to bound background task queue
 # length and prevent connection pool exhaustion and task duplicates when bundles are clamped.
