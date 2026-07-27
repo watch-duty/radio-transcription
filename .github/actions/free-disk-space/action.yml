@@ -20,10 +20,12 @@ runs:
           /usr/share/swift \
           /usr/share/az_* \
           /usr/share/sbt \
-          /var/lib/mongodb
+          /var/lib/mongodb \
+          /opt/az \
+          /opt/google/chrome \
+          /opt/microsoft \
+          /usr/lib/google-cloud-sdk \
+          /usr/local/gcloud
         sudo swapoff -a || true
         sudo rm -f /mnt/swapfile /swapfile || true
-        sudo apt-get remove --purge -y azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri
-        sudo apt-get autoremove -y
-        sudo apt-get clean
         sudo docker system prune --all --volumes --force
