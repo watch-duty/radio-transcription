@@ -81,10 +81,10 @@ export function TranscriptRow({
   );
 
   const feedbackAnnotation = audioSegment.annotations.find(
-    (a) => a.type === AnnotationType.TRANSCRIPT_FEEDBACK
+    (a) => a.type === AnnotationType.TRANSCRIPT_FLAG
   );
   const feedbackData = feedbackAnnotation?.data as
-    | TranscriptFeedbackAnnotationData
+    | TranscriptFlagAnnotationData
     | undefined;
   const hasUserFlagged =
     !!user && !!feedbackData?.flaggedByUserIds.includes(user.email);

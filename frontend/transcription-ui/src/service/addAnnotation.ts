@@ -16,7 +16,7 @@ export async function addTranscriptFeedback(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        type: AnnotationType.TRANSCRIPT_FEEDBACK,
+        type: AnnotationType.TRANSCRIPT_FLAG,
         data: { flaggedByUserIds },
       }),
     }
