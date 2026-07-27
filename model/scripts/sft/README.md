@@ -37,6 +37,14 @@ one target recorded for the prepared round. See the runbook for command order,
 recovery behavior, GCS artifacts, report inspection, checkpoint endpoint evals,
 masked/unmasked evals, and artifact hygiene.
 
+## Standalone Scripts
+
+- [`build_validation_manifest_from_eval.py`](build_validation_manifest_from_eval.py) -
+  builds a canonical `validation.jsonl` by sampling `eval.jsonl` and
+  relabeling `split`. See the runbook's
+  [Build A Validation Manifest](docs/runbook.md#build-a-validation-manifest)
+  section for why this exists.
+
 ## Verification Boundary
 
 Unit tests mock GCS and Vertex boundaries. They must not submit paid Vertex

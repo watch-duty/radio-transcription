@@ -27,6 +27,10 @@ publisher model. A training-only prepare may omit `[eval.model]`, but that round
 cannot be passed to `gemini-sft eval`. After tuning produces an endpoint, prepare
 a separate eval-only round for that endpoint as described below.
 
+To build the `validation_manifest_uri` input itself, see the runbook's
+["Build A Validation Manifest"](runbook.md#build-a-validation-manifest)
+section — do not hand-copy `eval.jsonl` without relabeling `split`.
+
 ## Prior Context Contract
 
 Use `[context]` to control the number and representation of prior same-source

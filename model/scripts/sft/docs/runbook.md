@@ -84,6 +84,26 @@ new eval-only config with a new `round_id`, omit both `train_manifest_uri` and
 `validation_manifest_uri`, and set `[eval.model].model` to the endpoint or
 checkpoint resource. Run `prepare` again for that config before eval.
 
+### Build A Validation Manifest
+
+Vertex AI SFT requires the validation set to be smaller than 5000 rows.
+This team's convention is to build `validation.jsonl` as a sample of
+`eval.jsonl`, with every sampled row's `split` field relabeled to
+`"validation"` (eval and validation are intentionally the same
+underlying data, viewed through two different splits). Use:
+
+```bash
+uv run python model/scripts/sft/build_validation_manifest_from_eval.py \
+  --eval gs://BUCKET/path/manifests/canonical/eval.jsonl \
+  --out-validation-uri gs://BUCKET/path/manifests/canonical/validation.jsonl
+```
+
+Point `validation_manifest_uri` at the script's output. If you instead
+hand `prepare` a validation manifest whose rows still carry
+`split="eval"`, it fails with `split_mismatch` — that error's message
+names this script; it means the manifest was never relabeled after being
+copied from eval, not that the validator is wrong.
+
 ## 2. Build Gemini SFT Inputs
 
 `prepare` is the non-paid validation and input-build step:
