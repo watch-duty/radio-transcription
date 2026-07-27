@@ -42,6 +42,7 @@ import {
 } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useFeeds } from '../../hooks/useFeeds';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 
 export interface SettingsViewProps {
   triggerSnackbar?: (message: string) => void;
@@ -487,17 +488,13 @@ export function SettingsView({ triggerSnackbar, onError }: SettingsViewProps) {
                 loading={isFetchingNextPage}
                 slotProps={{
                   listbox: {
-                    onScroll: (event: React.UIEvent<HTMLUListElement>) => {
-                      const listboxNode = event.currentTarget;
-                      if (
-                        listboxNode.scrollTop + listboxNode.clientHeight >=
-                        listboxNode.scrollHeight - 20
-                      ) {
-                        if (hasNextPage && !isFetchingNextPage) {
-                          fetchNextPage();
-                        }
-                      }
-                    },
+                    onScroll: (event) =>
+                      handleListboxScroll(
+                        event,
+                        fetchNextPage,
+                        hasNextPage,
+                        isFetchingNextPage
+                      ),
                   },
                 }}
                 renderInput={(params) => (

@@ -47,6 +47,7 @@ import type {
 
 import { useAuth } from '../../context/AuthContext';
 import { dryRunRule } from '../../service/dryRunRule';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 import {
   buildRulePayload,
   tagAddError,
@@ -1055,21 +1056,13 @@ function RuleScopeSection({
               loading={isFetchingNextFeedsPage}
               slotProps={{
                 listbox: {
-                  onScroll: (event: React.UIEvent<HTMLUListElement>) => {
-                    const listboxNode = event.currentTarget;
-                    if (
-                      listboxNode.scrollTop + listboxNode.clientHeight >=
-                      listboxNode.scrollHeight - 20
-                    ) {
-                      if (
-                        hasNextFeedsPage &&
-                        !isFetchingNextFeedsPage &&
-                        onFetchNextFeedsPage
-                      ) {
-                        onFetchNextFeedsPage();
-                      }
-                    }
-                  },
+                  onScroll: (event) =>
+                    handleListboxScroll(
+                      event,
+                      onFetchNextFeedsPage,
+                      hasNextFeedsPage,
+                      isFetchingNextFeedsPage
+                    ),
                 },
               }}
               renderInput={(params) => (

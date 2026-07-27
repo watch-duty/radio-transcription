@@ -13,6 +13,7 @@ import { type Feed, SourceType } from '@transcription/common';
 import { useAuth } from '../../context/AuthContext';
 import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
 import { useFeeds } from '../../hooks/useFeeds';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -81,17 +82,13 @@ function CondensedFeedSearchResults({
         }
         slotProps={{
           listbox: {
-            onScroll: (event: React.UIEvent<HTMLUListElement>) => {
-              const listboxNode = event.currentTarget;
-              if (
-                listboxNode.scrollTop + listboxNode.clientHeight >=
-                listboxNode.scrollHeight - 20
-              ) {
-                if (hasNextPage && !isFetchingNextPage && onLoadMore) {
-                  onLoadMore();
-                }
-              }
-            },
+            onScroll: (event) =>
+              handleListboxScroll(
+                event,
+                onLoadMore,
+                hasNextPage,
+                isFetchingNextPage
+              ),
           },
         }}
         renderInput={(params) => (
