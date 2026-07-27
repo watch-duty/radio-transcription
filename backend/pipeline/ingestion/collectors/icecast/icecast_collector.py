@@ -77,6 +77,9 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
+AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
+    30.0  # Threshold (in seconds) for logging anomalous audio timestamp lag
+)
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -539,7 +542,15 @@ async def _process_finalized_segment(
         chunk_end_time = min(chunk_end_time, _now_utc())
 
     audio_lag_sec = (receipt_time - chunk_start_time).total_seconds()
-    if audio_lag_sec > READ_TIMEOUT_SEC:
+    if (
+        previous_receipt_time is not None
+        and audio_lag_sec > AUDIO_LAG_WARN_THRESHOLD_SEC
+    ):
+        interval_lag_str = (
+            f"{stream_interval_lag_sec:.1f}s"
+            if stream_interval_lag_sec is not None
+            else "N/A"
+        )
         logger.warning(
             "[Ingestion Audio Lag] Feed %s (%s): chunk audio timestamp %s is %.1fs behind wall-clock receipt time %s (stream_interval_lag_sec=%s)",
             feed_id,
@@ -547,9 +558,7 @@ async def _process_finalized_segment(
             chunk_start_time.isoformat(),
             audio_lag_sec,
             receipt_time.isoformat(),
-            f"{stream_interval_lag_sec:.1f}s"
-            if stream_interval_lag_sec is not None
-            else "N/A",
+            interval_lag_str,
         )
 
     chunk = CapturedChunk(
