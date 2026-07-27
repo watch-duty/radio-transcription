@@ -538,6 +538,20 @@ async def _process_finalized_segment(
     if process_done:
         chunk_end_time = min(chunk_end_time, _now_utc())
 
+    audio_lag_sec = (receipt_time - chunk_start_time).total_seconds()
+    if audio_lag_sec > READ_TIMEOUT_SEC:
+        logger.warning(
+            "[Ingestion Audio Lag] Feed %s (%s): chunk audio timestamp %s is %.1fs behind wall-clock receipt time %s (stream_interval_lag_sec=%s)",
+            feed_id,
+            feed_name,
+            chunk_start_time.isoformat(),
+            audio_lag_sec,
+            receipt_time.isoformat(),
+            f"{stream_interval_lag_sec:.1f}s"
+            if stream_interval_lag_sec is not None
+            else "N/A",
+        )
+
     chunk = CapturedChunk(
         audio_bytes=segment_bytes,
         chunk_start_time=chunk_start_time,

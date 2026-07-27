@@ -2266,6 +2266,49 @@ class TestIcecastTimelineManager(unittest.TestCase):
             now + datetime.timedelta(seconds=75),
         )
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.logger"
+    )
+    def test_audio_lag_warning_logged_when_lag_exceeds_timeout(
+        self, mock_logger: MagicMock
+    ) -> None:
+        """Test that [Ingestion Audio Lag] warning is logged when chunk audio timestamp lags receipt time by > READ_TIMEOUT_SEC."""
+        fixed_now = datetime.datetime(
+            2026, 7, 27, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        anchor_time = fixed_now - datetime.timedelta(seconds=120)  # 120s lag
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_pcm = Path(tmp_dir) / "mock_test_lag_segment.pcm"
+                tmp_pcm.write_bytes(
+                    b"\x00\x00" * 16000 * 10
+                )  # 10 seconds of 16kHz audio
+
+                (
+                    chunk,
+                    _receipt,
+                    _cum_samples,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=1,
+                    stream_anchor_time=anchor_time,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk)
+                mock_logger.warning.assert_called_once()
+                warning_call = mock_logger.warning.call_args[0]
+                self.assertIn("[Ingestion Audio Lag]", warning_call[0])
+                self.assertEqual(warning_call[1], "test-feed-id")
+
+        asyncio.run(_run())
+
 
 if __name__ == "__main__":
     unittest.main()
