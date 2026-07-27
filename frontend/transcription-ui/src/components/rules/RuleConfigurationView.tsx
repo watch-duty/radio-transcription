@@ -8,9 +8,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Rule, RuleCreate, RuleUpdate } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useFeeds } from '../../hooks/useFeeds';
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
-import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
 import { RuleConfigurationEdit } from './RuleConfigurationEdit';
@@ -43,6 +43,8 @@ export function RuleConfigurationView({
     },
   }));
 
+  const [feedSearchQuery, setFeedSearchQuery] = useState('');
+
   const rulesErrorHandled = useRef<Error | null>(null);
   const feedsErrorHandled = useRef<Error | null>(null);
 
@@ -58,17 +60,16 @@ export function RuleConfigurationView({
   });
 
   const {
-    data: feedsData,
+    feeds,
     isLoading: feedsLoading,
     error: feedsError,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+    hasNextPage: hasNextFeedsPage,
+    isFetchingNextPage: isFetchingNextFeedsPage,
+    fetchNextPage: fetchNextFeedsPage,
+  } = useFeeds({
+    token,
+    searchQuery: feedSearchQuery,
   });
-
-  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
 
   const sortedFeeds = useMemo(() => {
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));
@@ -126,7 +127,6 @@ export function RuleConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Rule "${data.ruleName}" updated successfully!`);
       setIsEditing(false);
-      setId('');
       setEditingRule({
         ruleName: '',
         description: '',
@@ -142,20 +142,26 @@ export function RuleConfigurationView({
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
-      onError(error, 'Updating Rule Settings');
+      onError(error, 'Updating Rule');
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (ruleId: string) => deleteRule(ruleId, token!),
-    onSuccess: (_, ruleId) => {
+    onSuccess: () => {
       triggerSnackbar('Rule deleted successfully!');
       setIsEditing(false);
-      setId('');
-      queryClient.setQueryData<Rule[]>(['listRules', token], (oldRules) => {
-        return oldRules
-          ? oldRules.filter((rule) => rule.ruleId !== ruleId)
-          : [];
+      setEditingRule({
+        ruleName: '',
+        description: '',
+        isActive: true,
+        scope: { level: 'GLOBAL', targetFeeds: [] },
+        conditions: {
+          evaluationType: 'KEYWORD_MATCH',
+          operator: 'ANY',
+          keywords: [],
+          caseSensitive: false,
+        },
       });
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
@@ -177,16 +183,12 @@ export function RuleConfigurationView({
     setId(rule.ruleId);
     setEditingRule({
       ruleName: rule.ruleName,
-      description: rule.description || '',
+      description: rule.description ?? '',
       isActive: rule.isActive,
-      scope: {
-        level: rule.scope.level,
-        targetFeeds: rule.scope.targetFeeds || [],
-      },
+      scope: rule.scope,
       conditions: rule.conditions,
       tags: rule.tags ?? [],
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
@@ -278,6 +280,11 @@ export function RuleConfigurationView({
               }}
               onCancel={handleCancelEdit}
               isSubmitting={isSubmitting}
+              feedSearchQuery={feedSearchQuery}
+              onFeedSearchQueryChange={setFeedSearchQuery}
+              hasNextFeedsPage={hasNextFeedsPage}
+              isFetchingNextFeedsPage={isFetchingNextFeedsPage}
+              onFetchNextFeedsPage={fetchNextFeedsPage}
             />
           </Grid>
         )}
