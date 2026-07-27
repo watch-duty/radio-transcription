@@ -3,6 +3,7 @@ from typing import Final
 
 import numpy as np
 
+from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
 )
@@ -286,6 +287,31 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
         self.assertIn("gs://fake/2.flac", self.ctx.contributing_audio_uris)
 
+    def test_end_audio_offset_anchored_to_last_contributing_file(self) -> None:
+        """Verifies end_audio_offset_ms is computed relative to the LAST contributing
+        file's own start time, matching how start_audio_offset_ms is relative to the
+        FIRST contributing file -- rather than as a bare segment duration, which
+        previously left the two offsets in different, incomparable reference frames.
+        """
+        self.ctx.transmission_start_time_ms = 1000
+        self.ctx.buffer_start_time_ms = 1000
+        self.ctx.start_audio_offset_ms = 1000
+        self.ctx.buffer_duration_ms = 17000
+        self.ctx.last_segment_end_time_ms = 18000
+        self.ctx.speech_segments = [TimeRange(start_ms=1000, end_ms=18000)]
+        self.ctx.add_contributing_chunk("gs://fake/1.flac", 0)
+        self.ctx.add_contributing_chunk("gs://fake/2.flac", 15000)
+
+        flush = self.state_machine._flush_current_transmission(
+            reason="test", ctx=self.ctx
+        )
+
+        # Relative to the FIRST contributing file (starts at 0).
+        self.assertEqual(flush.start_audio_offset_ms, 1000)
+        # Relative to the LAST contributing file (starts at 15000), not the
+        # segment's own 17000ms duration and not an offset from the first file.
+        self.assertEqual(flush.end_audio_offset_ms, 3000)
+
     def test_late_chunk_excessive_speech_duration_split(self) -> None:
         """Verifies that an isolated late-arriving chunk containing speech exceeding
         max_transmission_duration_ms is force-split internally without corrupting main timeline.
@@ -565,3 +591,40 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             and a.reason == "Forced flush due to upstream audio chunk gap"
         ]
         self.assertEqual(len(flush_actions), 1)
+
+    def test_qualifying_silence_gap_survives_padding_and_splits_stitcher(
+        self,
+    ) -> None:
+        """Regression test: verifies that a qualifying 1.024s raw silence gap (>= 800ms)
+        survives VAD segment padding clamping and correctly triggers a dispatch split
+        in AudioStitchingStateMachine (significant_gap_ms = 800).
+        """
+        detector = vad.VoiceActivityDetector(
+            pad_sec=0.3, min_qualifying_gap_sec=0.8
+        )
+        raw_segments = [(1.0, 2.0), (3.024, 4.024)]
+        padded_segments = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+
+        config = get_test_stitch_config(significant_gap_ms=800)
+        self.state_machine = AudioStitchingStateMachine(config)
+
+        chunk = mock_audio_chunk(0, 10000, padded_segments)
+        actions = self._process(chunk)
+
+        # Verify that TWO separate SPEECH flushes occur: one after burst 1, and one after burst 2 (due to trailing silence)
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction) and a.audio_classification == 1
+        ]
+        self.assertEqual(len(flush_actions), 2)
+        self.assertEqual(
+            flush_actions[0].speech_time_range.end_ms,
+            int(padded_segments[0][1] * 1000),
+        )
+        self.assertEqual(
+            flush_actions[1].speech_time_range.start_ms,
+            int(padded_segments[1][0] * 1000),
+        )

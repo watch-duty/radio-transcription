@@ -19,6 +19,14 @@ _REPO_ROOT = _MODEL_DIR.parent
 _NOTEBOOK = _MODEL_DIR / "colabs" / "gemini_transcribe_audio.ipynb"
 _SRC_DIR = _MODEL_DIR / "src"
 _SCRIPTS_DIR = _MODEL_DIR / "scripts"
+_BACKEND_PROMPT = (
+    _REPO_ROOT
+    / "backend"
+    / "pipeline"
+    / "transcription"
+    / "transcribers"
+    / "prompts.py"
+)
 
 
 def _notebook_imports() -> set[tuple[str | None, str]]:
@@ -68,7 +76,43 @@ def _python_calls(path: pathlib.Path) -> set[tuple[str, str]]:
     return calls
 
 
+def _module_constant(path: pathlib.Path, name: str) -> str | None:
+    """Read a module-level string constant's value via AST, no import.
+
+    Args:
+        path: Python source file to parse.
+        name: Module-level assignment name to read.
+
+    Returns:
+        The constant's string value, or None if the name is not assigned.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name
+            for target in node.targets
+        ):
+            return ast.literal_eval(node.value)
+    return None
+
+
 class TestDriftGuard(unittest.TestCase):
+    def test_backend_transcriber_prompt_matches_canonical_system_prompt(
+        self,
+    ) -> None:
+        """Backend GEMINI_PROMPT must match the canonical SFT system prompt.
+
+        The served model is fine-tuned with the canonical prompt, so backend
+        inference must send byte-identical text or it drifts from training. A
+        companion guard lives in the transcription package tests because CI
+        path-filters the lanes: a backend-only edit skips this model lane.
+        """
+        backend_prompt = _module_constant(_BACKEND_PROMPT, "GEMINI_PROMPT")
+        self.assertIsNotNone(backend_prompt)
+        self.assertEqual(
+            backend_prompt, prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT
+        )
+
     def test_gemini_sft_config_defaults_to_runtime_common_prompts(self) -> None:
         """SFT config defaults must source prompts from common.gemini.prompts."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,7 +176,7 @@ model = "gemini-3.1-flash-lite"
         )
 
     def test_packaged_eval_uses_shared_context_builder(self) -> None:
-        """Packaged eval must call the shared context-history builder."""
+        """PR1 exposes both provider views while main uses the bridge."""
         evaluate_calls = _python_calls(_SRC_DIR / "gemini_sft" / "evaluate.py")
         artifact_calls = _python_calls(_SRC_DIR / "gemini_sft" / "artifacts.py")
 
@@ -144,6 +188,10 @@ model = "gemini-3.1-flash-lite"
             ("context", "build_context_histories"),
             artifact_calls,
         )
+        self.assertIn(
+            ("context", "EvaluationSegment"),
+            artifact_calls,
+        )
 
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:
         """Online target execution must call shared Vertex helpers."""
@@ -153,20 +201,24 @@ model = "gemini-3.1-flash-lite"
         self.assertIn(("vertex", "resource_location"), calls)
 
     def test_tuning_data_uses_shared_content_builder(self) -> None:
-        """Tuning examples must call the shared content builder."""
+        """Tuning examples must call the reference-only content builder."""
         calls = _python_calls(_SRC_DIR / "common" / "gemini" / "tuning_data.py")
+
+        self.assertIn(
+            ("context", "build_training_transcription_contents"),
+            calls,
+        )
+
+    def test_vertex_request_uses_shared_content_builder(self) -> None:
+        """Vertex exposes generic and prediction-only request boundaries."""
+        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
 
         self.assertIn(
             ("context", "build_transcription_contents"),
             calls,
         )
-
-    def test_vertex_request_uses_shared_content_builder(self) -> None:
-        """Batch requests must call the shared content builder."""
-        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
-
         self.assertIn(
-            ("context", "build_transcription_contents"),
+            ("context", "build_evaluation_transcription_contents"),
             calls,
         )
 

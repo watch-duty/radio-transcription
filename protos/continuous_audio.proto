@@ -23,6 +23,10 @@ message ContinuousAudio {
 
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
+
+  // The wall-clock timestamp when this audio chunk was received at the collector.
+  google.protobuf.Timestamp receipt_timestamp = 9;
+
   reserved 6, 8;
   reserved "external_id";
 }

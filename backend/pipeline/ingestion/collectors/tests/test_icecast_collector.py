@@ -2076,14 +2076,14 @@ class TestIcecastTimelineManager(unittest.TestCase):
             manager.process_chunk(chunk, 16000 * 15, process_done=False)
         self.assertIn("Negative chunk duration", str(ctx.exception))
 
-    def test_non_monotonic_start_time_raises_value_error(self) -> None:
-        """Verify that non-monotonic chunk start times raise ValueError."""
+    def test_non_monotonic_start_time_clamps_to_last_end(self) -> None:
+        """Verify that non-monotonic chunk start times are clamped to last end time and stream anchor is shifted."""
+        now = datetime.datetime.now(datetime.UTC)
         manager = icecast_collector.IcecastTimelineManager(
-            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            stream_anchor_time=now,
             feed_id=uuid.uuid4(),
             feed_name="test-feed",
         )
-        now = datetime.datetime.now(datetime.UTC)
         chunk1 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now,
@@ -2101,9 +2101,19 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=15),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk2, 16000 * 30, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res_clamped = manager.process_chunk(
+            chunk2, 16000 * 30, process_done=False
+        )
+        self.assertEqual(len(res_clamped), 1)
+        self.assertEqual(
+            res_clamped[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        # Verify stream_anchor_time was shifted forward by 5s to prevent perpetual clamping
+        self.assertEqual(
+            manager.stream_anchor_time,
+            now + datetime.timedelta(seconds=5),
+        )
 
     def test_microsecond_rounding_coalesced(self) -> None:
         """Verify that microsecond-level rounding errors in chunk start times are coalesced."""
@@ -2171,7 +2181,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res3[0].chunk_start_time, now + datetime.timedelta(seconds=45)
         )
 
-        # Test overlap of 3 microseconds (above boundary - should raise ValueError)
+        # Test overlap of 3 microseconds (clamped gracefully without error)
         chunk5 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now
@@ -2181,9 +2191,80 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=60),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk5, 16000 * 75, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res4 = manager.process_chunk(chunk5, 16000 * 75, process_done=False)
+        self.assertEqual(len(res4), 1)
+        self.assertEqual(
+            res4[0].chunk_start_time, now + datetime.timedelta(seconds=60)
+        )
+
+    def test_midstream_burst_does_not_shift_anchor_before_last_yielded_end(
+        self,
+    ) -> None:
+        """Verify mid-stream burst unrolling bounds backward anchor shift to preserve monotonicity."""
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk0 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk0, 16000 * 15, process_done=False)
+        self.assertEqual(manager.stream_anchor_time, now)
+
+        # Mid-stream burst of fast chunks
+        c1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=15),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=18),
+        )
+        c2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=30),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=21),
+        )
+        c3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=45),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=24),
+        )
+        manager.process_chunk(c1, 16000 * 30, process_done=False)
+        manager.process_chunk(c2, 16000 * 45, process_done=False)
+        manager.process_chunk(c3, 16000 * 60, process_done=False)
+
+        # Exit burst mode on steady chunk c4
+        c4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=60),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=39),
+        )
+        res_burst = manager.process_chunk(c4, 16000 * 75, process_done=False)
+        self.assertEqual(len(res_burst), 4)
+
+        # Anchoring should remain contiguous with last yielded end time (now)
+        self.assertEqual(manager.stream_anchor_time, now)
+        self.assertEqual(
+            res_burst[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(
+            res_burst[3].chunk_end_time,
+            now + datetime.timedelta(seconds=75),
+        )
 
 
 if __name__ == "__main__":
