@@ -150,31 +150,6 @@ FROM current_state
 LEFT JOIN do_update ON current_state.id = do_update.id
 """
 
-RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
-WITH current_state AS (
-    SELECT id, worker_id, status, last_heartbeat
-    FROM feeds WHERE id = ANY($1::uuid[])
-    FOR UPDATE
-),
-do_update AS (
-    UPDATE feeds SET last_heartbeat = NOW()
-    FROM current_state
-    WHERE feeds.id = current_state.id
-      AND current_state.worker_id = $2
-      AND current_state.status = 'active'::feed_status
-      AND (current_state.last_heartbeat IS NULL
-           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
-    RETURNING feeds.id
-)
-SELECT
-    current_state.id,
-    current_state.worker_id AS current_worker,
-    current_state.status::text AS current_status,
-    (do_update.id IS NOT NULL) AS renewed
-FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
-"""
-
 RENEW_GRANT_HEARTBEATS_SQL = """\
 WITH input AS MATERIALIZED (
     SELECT
@@ -242,29 +217,6 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
-  AND status = 'active'::feed_status
-"""
-
-# SIGTERM drain: release every active lease still owned by this worker in
-# one UPDATE. Primary use is _shutdown_sequence — after cancelling all
-# feed tasks (whose CancelledError path skips the normal-completion
-# release_feed), this single statement is what flips active rows back to
-# unclaimed. Deactivated rows are terminal admin stops until reset, so
-# release must not make them claimable.
-#
-# WHERE worker_id = $1 is authoritative for both cases, and the active
-# status guard preserves operator deactivation if shutdown races a
-# manual lifecycle change. unclaimed_since = NOW() matches the
-# convention in RELEASE_FEED_SQL so the autoscaler's MIN(unclaimed_since)
-# signal stays accurate across scale-in. No last_heartbeat write —
-# heartbeat renewal is now the sole writer of that column (scaling plan
-# §6.1).
-RELEASE_FEEDS_BATCH_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    unclaimed_since = NOW()
-WHERE worker_id = $1
   AND status = 'active'::feed_status
 """
 

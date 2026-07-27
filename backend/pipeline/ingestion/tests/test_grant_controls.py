@@ -605,7 +605,6 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             actor_id=_ACTOR_ID,
             reason=non_budgeted_plan.reason,
         )
-        self.data_store.release_feeds_batch.assert_not_awaited()
         policy_mock.assert_not_called()
         retry_mock.assert_not_awaited()
 
@@ -1368,7 +1367,6 @@ class TestGrantControlStructuralBoundaries(unittest.TestCase):
             self.assertNotIn("classify_failure_policy", source)
             self.assertNotIn("consumes_failure_budget", source)
             self.assertNotIn("retry_with_lease_check", source)
-        self.assertNotIn("release_feeds_batch", feed_source)
         for forbidden in (
             "load_membership(",
             "commit_child_mutations(",
