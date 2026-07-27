@@ -46,6 +46,8 @@ function renderPopover(
 
 const mockTriggerSnackbar = vi.fn();
 const openPopover = () => fireEvent.click(screen.getByLabelText('Share'));
+const openInfoPopover = () =>
+  fireEvent.click(screen.getByLabelText('Segment info'));
 
 describe('SegmentInfoPopover', () => {
   beforeEach(() => {
@@ -65,7 +67,9 @@ describe('SegmentInfoPopover', () => {
     renderPopover();
     openPopover();
 
-    fireEvent.click(await screen.findByRole('button', { name: /copy link/i }));
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: /copy link/i })
+    );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining('segmentId=tx-123')
     );
@@ -74,7 +78,7 @@ describe('SegmentInfoPopover', () => {
 
   it('shows segment and external IDs and copies them for admins', async () => {
     renderPopover({ externalAudioSegmentId: 'ext-segment-abc-123' });
-    openPopover();
+    openInfoPopover();
 
     expect(await screen.findByText('Segment ID')).toBeInTheDocument();
     expect(screen.getByText('tx-123')).toBeInTheDocument();
@@ -95,7 +99,7 @@ describe('SegmentInfoPopover', () => {
 
   it('omits the external ID when not present', async () => {
     renderPopover();
-    openPopover();
+    openInfoPopover();
 
     expect(await screen.findByText('Segment ID')).toBeInTheDocument();
     expect(
@@ -108,7 +112,7 @@ describe('SegmentInfoPopover', () => {
       'Audio cut off at the end',
       'System max tokens reached',
     ]);
-    openPopover();
+    openInfoPopover();
 
     expect(await screen.findByText('Segment error(s)')).toBeInTheDocument();
     expect(screen.getByText('Audio cut off at the end')).toBeInTheDocument();
