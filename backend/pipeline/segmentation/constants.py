@@ -81,6 +81,15 @@ VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 150
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
+# Absolute lower bound (in seconds) for padded audio segment start offsets
+VAD_MIN_AUDIO_OFFSET_SEC: Final = 0.0
+# Divisor used to split silence gaps between adjacent speech bursts into equal
+# halves for midpoint padding clamping
+VAD_GAP_MIDPOINT_DIVISOR: Final = 2.0
+# Minimum silence gap duration (in seconds) that represents a qualifying dispatch split threshold.
+# Padding is clamped for gaps between 0.8s and 1.4s to preserve a padded silence gap >= 800ms
+# for downstream stitcher dispatch splitting.
+VAD_QUALIFYING_GAP_SEC: Final = DEFAULT_SIGNIFICANT_GAP_MS / 1000.0
 
 # VAD Priming Terminology Glossary:
 # 1. prior_audio_tail (VAD_DEFAULT_PRIMING_SEC = 6.0s):
