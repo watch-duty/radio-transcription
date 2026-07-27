@@ -39,9 +39,8 @@ describe('listFeeds', () => {
     expect(feeds).toStrictEqual({ feeds: mockData, total: mockData.length });
   });
 
-  it('should loop and fetch all pages when response is paginated ListFeedsResponse object', async () => {
+  it('should fetch single page when calling listFeeds', async () => {
     const page1Feeds = [{ id: '1', name: 'Feed 1' }];
-    const page2Feeds = [{ id: '2', name: 'Feed 2' }];
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -57,34 +56,17 @@ describe('listFeeds', () => {
       },
     });
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      text: async () =>
-        JSON.stringify({
-          feeds: page2Feeds,
-          total: 2,
-        }),
-      headers: {
-        get: (key: string) =>
-          key === 'content-type' ? 'application/json' : null,
-      },
-    });
-
     const feeds = await listFeeds('tokenXYZ');
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining('/api/v1/feeds'),
       expect.any(Object)
     );
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('/api/v1/feeds?limit=100&nextToken=token_abc'),
-      expect.any(Object)
-    );
     expect(feeds).toStrictEqual({
-      feeds: [...page1Feeds, ...page2Feeds],
+      feeds: page1Feeds,
+      nextToken: 'token_abc',
       total: 2,
     });
   });

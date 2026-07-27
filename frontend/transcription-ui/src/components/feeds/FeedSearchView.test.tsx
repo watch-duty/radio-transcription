@@ -48,6 +48,10 @@ describe('FeedSearchView Condensed Mode', () => {
       feeds: mockFeeds,
       total: mockFeeds.length,
     });
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: mockFeeds,
+      total: mockFeeds.length,
+    });
   });
 
   it('passes statusReason and statusReasonDetail to FeedStatusIndicator in condensed search', async () => {

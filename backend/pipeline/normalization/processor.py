@@ -83,9 +83,10 @@ class AudioDerivativeUris:
 
 
 class NormalizationEventProcessor:
-    """Coordinates GCS downloading, VAD-preserving bandpass normalization, and derivative uploads.
+    """Coordinates GCS downloading, audio derivative transcoding, and GCS uploads.
 
-    Persists segment records to AlloyDB and publishes downstream NormalizedAudio events.
+    Persists segment records to AlloyDB, generates waveform annotations, and publishes
+    downstream NormalizedAudio events.
     """
 
     def __init__(

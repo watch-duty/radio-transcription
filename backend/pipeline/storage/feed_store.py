@@ -17,6 +17,7 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.storage import (
+    connection,
     feed_change_notifications,
     feed_lifecycle,
     feed_queries,
@@ -232,15 +233,6 @@ class SourceObservationResult(TypedDict):
     recorded: bool
 
 
-class HeartbeatResult(TypedDict):
-    """Per-feed diagnostic info returned by diagnostic heartbeat renewal."""
-
-    id: uuid.UUID
-    current_worker: uuid.UUID | None
-    current_status: str
-    renewed: bool
-
-
 class Feed(TypedDict):
     """Full feed details."""
 
@@ -318,6 +310,8 @@ class FeedStore:
             are never leased here). ``CollectorRuntime`` passes
             ``list(settings.caps.keys())`` so the SQL shape and the
             runtime's per-type budgets are seeded from the same set.
+        heartbeat_timeout_sec: Optional total timeout for heartbeat pool
+            checkout, query execution, and connection release.
 
     """
 
@@ -325,8 +319,11 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         claim_types: collections.abc.Sequence[SourceType] | None = None,
+        *,
+        heartbeat_timeout_sec: float | None = None,
     ) -> None:
         self._pool = pool
+        self._heartbeat_timeout_sec = heartbeat_timeout_sec
         if claim_types is None:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
@@ -533,44 +530,6 @@ class FeedStore:
         )
         return result
 
-    async def renew_heartbeats_batch_diagnostic(
-        self,
-        feed_ids: list[uuid.UUID],
-        worker_id: uuid.UUID,
-    ) -> list[HeartbeatResult]:
-        """
-        Batch-renew heartbeats with per-feed diagnostic info.
-
-        Uses an atomic CTE that locks rows, conditionally updates, and
-        always returns per-feed state in a single round-trip. This enables
-        the caller to log *why* a feed wasn't renewed (stolen by another
-        worker, quarantined, etc.) before taking action.
-
-        Args:
-            feed_ids: List of feed UUIDs to renew.
-            worker_id: UUID of the worker holding the leases.
-
-        Returns:
-            List of ``HeartbeatResult`` dicts, one per input feed_id.
-
-        """
-        if not feed_ids:
-            return []
-        rows = await self._pool.fetch(
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
-            feed_ids,
-            worker_id,
-        )
-        return [
-            HeartbeatResult(
-                id=row["id"],
-                current_worker=row["current_worker"],
-                current_status=row["current_status"],
-                renewed=row["renewed"],
-            )
-            for row in rows
-        ]
-
     async def renew_grant_heartbeats(
         self,
         grants: collections.abc.Sequence[FeedGrant],
@@ -602,12 +561,14 @@ class FeedStore:
             enumerate(grants),
             key=lambda item: item[1].feed_id.int,
         )
-        rows = await self._pool.fetch(
+        rows = await connection.fetch_with_timeout_budget(
+            self._pool,
             feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             [grant.feed_id for _, grant in ordered],
             [grant.owner_worker_id for _, grant in ordered],
             [grant.fencing_token for _, grant in ordered],
             [ordinal for ordinal, _ in ordered],
+            timeout_sec=self._heartbeat_timeout_sec,
         )
 
         expected_by_ordinal = dict(enumerate(grants))
@@ -1009,35 +970,6 @@ class FeedStore:
             except ValueError:
                 continue
         return counts
-
-    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
-        """Release every active lease still owned by this worker.
-
-        Primary use: ``_shutdown_sequence`` calls this once after
-        cancelling all feed tasks. The cancelled tasks return without
-        running their normal-completion ``release_feed`` (see the
-        ``_process_feed`` shutdown branch), so this single UPDATE flips
-        active rows back to ``unclaimed``. Deactivated rows stay deactivated
-        even if they still carry this worker's metadata.
-
-        Secondary defensive role: catches any straggler row where an
-        earlier per-feed ``release_feed`` call failed mid-lifetime
-        (transient DB error, task reaped before the finally block could
-        retry) and the row was sitting in the DB with ``worker_id = us``
-        until pg_cron reclaimed it.
-
-        Args:
-            worker_id: UUID of the worker releasing its leases.
-
-        Returns:
-            The number of feeds actually released.
-        """
-        result = await self._pool.execute(
-            feed_queries.RELEASE_FEEDS_BATCH_SQL, worker_id
-        )
-        if result.startswith("UPDATE "):
-            return int(result.split()[1])
-        return 0
 
     async def create_feed(
         self,
