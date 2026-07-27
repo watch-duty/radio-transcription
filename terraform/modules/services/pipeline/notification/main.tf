@@ -17,7 +17,7 @@ locals {
 # Secret Manager resource for the external backend API key
 resource "google_secret_manager_secret" "external_endpoint_api_key" {
   project   = local.project_id
-  secret_id = "wd-backend-endpoint-API-key"
+  secret_id = "external-endpoint-API-key"
   replication {
     auto {}
   }

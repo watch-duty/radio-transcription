@@ -5,12 +5,12 @@ import time
 import requests
 
 from backend.pipeline.common.tracing_utils import traced_to_thread
-from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers import base
 
 logger = logging.getLogger(__name__)
 
 
-class LocalApiTranscriber(Transcriber):
+class LocalApiTranscriber(base.Transcriber):
     """Transcriber that calls a local HTTP API for transcription."""
 
     def __init__(self, api_url: str | None = None) -> None:
@@ -53,6 +53,7 @@ class LocalApiTranscriber(Transcriber):
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
+        context: base.TranscriptionContext | None = None,
     ) -> str | None:
         def _call_api() -> requests.Response | None:
             if uri:

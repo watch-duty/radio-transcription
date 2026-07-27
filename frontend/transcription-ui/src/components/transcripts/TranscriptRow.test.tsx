@@ -210,7 +210,7 @@ describe('TranscriptRow', () => {
     );
 
     fireEvent.click(screen.getByLabelText('Share'));
-    const copyButton = await screen.findByRole('button', {
+    const copyButton = await screen.findByRole('menuitem', {
       name: /copy transcript/i,
     });
     fireEvent.click(copyButton);
@@ -241,7 +241,7 @@ describe('TranscriptRow', () => {
     );
 
     fireEvent.click(screen.getByLabelText('Share'));
-    const deepLinkButton = await screen.findByRole('button', {
+    const deepLinkButton = await screen.findByRole('menuitem', {
       name: /copy link/i,
     });
     fireEvent.click(deepLinkButton);
@@ -318,7 +318,7 @@ describe('TranscriptRow', () => {
     );
 
     fireEvent.click(screen.getByLabelText('Share'));
-    const downloadButton = await screen.findByRole('button', {
+    const downloadButton = await screen.findByRole('menuitem', {
       name: /download audio/i,
     });
     fireEvent.click(downloadButton);
@@ -362,11 +362,13 @@ describe('TranscriptRow', () => {
     expect(styles.userSelect).not.toBe('none');
 
     fireEvent.click(screen.getByLabelText('Share'));
-    const copyButton = await screen.findByRole('button', {
+    const copyButton = await screen.findByRole('menuitem', {
       name: /copy transcript/i,
     });
     expect(copyButton).toBeTruthy();
-    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (copyButton as HTMLElement).getAttribute('aria-disabled')
+    ).toBeNull();
 
     fireEvent.click(copyButton);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -414,9 +416,9 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('10 sec')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Share'));
-    await screen.findByRole('button', { name: /copy link/i });
+    await screen.findByRole('menuitem', { name: /copy link/i });
     expect(
-      screen.queryByRole('button', { name: /copy transcript/i })
+      screen.queryByRole('menuitem', { name: /copy transcript/i })
     ).toBeNull();
   });
 
@@ -481,7 +483,7 @@ describe('TranscriptRow', () => {
     );
 
     fireEvent.click(screen.getByLabelText('Share'));
-    await screen.findByRole('button', { name: /copy link/i });
+    await screen.findByRole('menuitem', { name: /copy link/i });
     expect(screen.queryByText('Segment ID')).not.toBeInTheDocument();
   });
 
@@ -506,7 +508,7 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByLabelText('Share'));
+    fireEvent.click(screen.getByLabelText('Segment info'));
     expect(await screen.findByText('Segment ID')).toBeInTheDocument();
   });
 
@@ -546,10 +548,12 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('[Transcription failed]')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Share'));
-    const copyButton = await screen.findByRole('button', {
+    const copyButton = await screen.findByRole('menuitem', {
       name: /copy transcript/i,
     });
-    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
+    expect((copyButton as HTMLElement).getAttribute('aria-disabled')).toBe(
+      'true'
+    );
   });
 
   it('renders partial transcription with text and incomplete prefix, and copy button enabled', async () => {
@@ -591,9 +595,11 @@ describe('TranscriptRow', () => {
     expect(screen.queryByText('[Transcription failed]')).toBeNull();
     // Copy button should be enabled
     fireEvent.click(screen.getByLabelText('Share'));
-    const copyButton = await screen.findByRole('button', {
+    const copyButton = await screen.findByRole('menuitem', {
       name: /copy transcript/i,
     });
-    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (copyButton as HTMLElement).getAttribute('aria-disabled')
+    ).toBeNull();
   });
 });

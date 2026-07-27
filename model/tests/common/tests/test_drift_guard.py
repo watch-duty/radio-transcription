@@ -176,7 +176,7 @@ model = "gemini-3.1-flash-lite"
         )
 
     def test_packaged_eval_uses_shared_context_builder(self) -> None:
-        """Packaged eval must call the shared context-history builder."""
+        """PR1 exposes both provider views while main uses the bridge."""
         evaluate_calls = _python_calls(_SRC_DIR / "gemini_sft" / "evaluate.py")
         artifact_calls = _python_calls(_SRC_DIR / "gemini_sft" / "artifacts.py")
 
@@ -188,6 +188,10 @@ model = "gemini-3.1-flash-lite"
             ("context", "build_context_histories"),
             artifact_calls,
         )
+        self.assertIn(
+            ("context", "EvaluationSegment"),
+            artifact_calls,
+        )
 
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:
         """Online target execution must call shared Vertex helpers."""
@@ -197,20 +201,24 @@ model = "gemini-3.1-flash-lite"
         self.assertIn(("vertex", "resource_location"), calls)
 
     def test_tuning_data_uses_shared_content_builder(self) -> None:
-        """Tuning examples must call the shared content builder."""
+        """Tuning examples must call the reference-only content builder."""
         calls = _python_calls(_SRC_DIR / "common" / "gemini" / "tuning_data.py")
+
+        self.assertIn(
+            ("context", "build_training_transcription_contents"),
+            calls,
+        )
+
+    def test_vertex_request_uses_shared_content_builder(self) -> None:
+        """Vertex exposes generic and prediction-only request boundaries."""
+        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
 
         self.assertIn(
             ("context", "build_transcription_contents"),
             calls,
         )
-
-    def test_vertex_request_uses_shared_content_builder(self) -> None:
-        """Batch requests must call the shared content builder."""
-        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
-
         self.assertIn(
-            ("context", "build_transcription_contents"),
+            ("context", "build_evaluation_transcription_contents"),
             calls,
         )
 

@@ -4,11 +4,15 @@ import { saveAs } from 'file-saver';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DownloadIcon from '@mui/icons-material/Download';
+import InfoIcon from '@mui/icons-material/InfoOutlineRounded';
 import LinkIcon from '@mui/icons-material/Link';
+import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
@@ -19,16 +23,6 @@ import type {
 
 import { useAuth } from '../../context/AuthContext';
 import { getAudioUrl } from '../../utils/audioUtils';
-
-// Icon is a plain child (not `startIcon`) so its `fontSize="small"` isn't
-// shrunk by MUI's small-button icon sizing.
-const SHARE_ACTION_SX = {
-  justifyContent: 'flex-start',
-  textTransform: 'none',
-  color: 'text.primary',
-  gap: 1,
-  px: 1,
-} as const;
 
 interface SegmentInfoPopoverProps {
   audioSegment: AudioSegment;
@@ -53,15 +47,17 @@ export function SegmentInfoPopover({
 }: SegmentInfoPopoverProps) {
   const { isAdmin } = useAuth();
   const { id, externalAudioSegmentId } = audioSegment;
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const close = () => setAnchor(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [infoAnchor, setInfoAnchor] = useState<HTMLElement | null>(null);
+  const closeMenu = () => setMenuAnchor(null);
+  const closeInfo = () => setInfoAnchor(null);
 
   const handleCopyTranscript = () => {
     if (transcriptAnnotation?.text) {
       navigator.clipboard.writeText(transcriptAnnotation.text);
       triggerSnackbar('Transcript copied');
     }
-    close();
+    closeMenu();
   };
 
   const handleCopyLink = () => {
@@ -74,7 +70,7 @@ export function SegmentInfoPopover({
     );
     navigator.clipboard.writeText(url.toString());
     triggerSnackbar('Transcript link copied');
-    close();
+    closeMenu();
   };
 
   const handleDownloadAudio = async () => {
@@ -97,7 +93,21 @@ export function SegmentInfoPopover({
       console.error('Failed to download audio:', err);
       triggerSnackbar('Failed to download audio');
     }
-    close();
+    closeMenu();
+  };
+
+  const handleCopySegmentId = () => {
+    navigator.clipboard.writeText(id);
+    triggerSnackbar('Segment ID copied');
+    closeInfo();
+  };
+
+  const handleCopyExternalSegmentId = () => {
+    if (externalAudioSegmentId) {
+      navigator.clipboard.writeText(externalAudioSegmentId);
+      triggerSnackbar('External ID copied');
+      closeInfo();
+    }
   };
 
   return (
@@ -107,79 +117,130 @@ export function SegmentInfoPopover({
           size="small"
           aria-label="Share"
           aria-haspopup="dialog"
-          aria-expanded={Boolean(anchor)}
+          aria-expanded={Boolean(menuAnchor)}
           onClick={(e) => {
             e.stopPropagation();
-            setAnchor(e.currentTarget);
+            setMenuAnchor(e.currentTarget);
           }}
         >
-          <LinkIcon fontSize="small" />
+          <MoreHorizIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <Popover
-        open={Boolean(anchor)}
-        anchorEl={anchor}
-        onClose={close}
+      <Menu
+        open={Boolean(menuAnchor)}
+        anchorEl={menuAnchor}
+        onClose={closeMenu}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <Box
-          sx={{
-            p: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 0.5,
-            width: isAdmin ? 240 : 180,
-          }}
-        >
-          {!isSilence && !isOutage && (
-            <Button
-              size="small"
-              onClick={handleCopyTranscript}
-              disabled={!transcriptAnnotation || hasErrors}
-              sx={SHARE_ACTION_SX}
-            >
-              <ContentCopyIcon fontSize="small" />
-              Copy transcript
-            </Button>
-          )}
-          <Button size="small" onClick={handleCopyLink} sx={SHARE_ACTION_SX}>
-            <LinkIcon fontSize="small" />
-            Copy link
-          </Button>
-          <Button
-            size="small"
-            onClick={handleDownloadAudio}
-            disabled={!audioSegment.playbackAudioUri}
-            sx={SHARE_ACTION_SX}
+        {!isSilence && !isOutage && (
+          <MenuItem
+            onClick={handleCopyTranscript}
+            disabled={!transcriptAnnotation || hasErrors}
+            dense
           >
+            <ListItemIcon>
+              <ContentCopyIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Copy transcript</ListItemText>
+          </MenuItem>
+        )}
+        <MenuItem onClick={handleCopyLink} dense>
+          <ListItemIcon>
+            <LinkIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Copy link</ListItemText>
+        </MenuItem>
+        <MenuItem
+          onClick={handleDownloadAudio}
+          disabled={!audioSegment.playbackAudioUri}
+          dense
+        >
+          <ListItemIcon>
             <DownloadIcon fontSize="small" />
-            Download audio
-          </Button>
-          {isAdmin && (
-            <>
-              <Divider sx={{ my: 0.5 }} />
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 1,
-                  py: 0.5,
-                }}
-              >
+          </ListItemIcon>
+          <ListItemText>Download audio</ListItemText>
+        </MenuItem>
+      </Menu>
+
+      {isAdmin && (
+        <>
+          <Tooltip title="Segment info">
+            <IconButton
+              size="small"
+              aria-label="Segment info"
+              aria-haspopup="dialog"
+              aria-expanded={Boolean(infoAnchor)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setInfoAnchor(e.currentTarget);
+              }}
+            >
+              <InfoIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Popover
+            open={Boolean(infoAnchor)}
+            anchorEl={infoAnchor}
+            onClose={closeInfo}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1,
+                p: 1,
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Tooltip title="Copy Segment ID">
+                  <IconButton
+                    size="small"
+                    aria-label="copy segment id"
+                    onClick={handleCopySegmentId}
+                    sx={{ p: 0 }}
+                  >
+                    <ContentCopyIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block' }}
+                  >
+                    Segment ID
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontFamily: 'monospace',
+                      fontSize: '0.65rem',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {id}
+                  </Typography>
+                </Box>
+              </Box>
+
+              {externalAudioSegmentId && (
                 <Box
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                  }}
                 >
-                  <Tooltip title="Copy Segment ID">
+                  <Tooltip title="Copy External ID">
                     <IconButton
                       size="small"
-                      aria-label="copy segment id"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigator.clipboard.writeText(id);
-                        triggerSnackbar('Segment ID copied');
-                      }}
+                      aria-label="copy external segment id"
+                      onClick={handleCopyExternalSegmentId}
                       sx={{ p: 0 }}
                     >
                       <ContentCopyIcon fontSize="small" />
@@ -191,7 +252,7 @@ export function SegmentInfoPopover({
                       color="text.secondary"
                       sx={{ display: 'block' }}
                     >
-                      Segment ID
+                      External ID
                     </Typography>
                     <Typography
                       variant="body2"
@@ -201,82 +262,37 @@ export function SegmentInfoPopover({
                         wordBreak: 'break-all',
                       }}
                     >
-                      {id}
+                      {externalAudioSegmentId}
                     </Typography>
                   </Box>
                 </Box>
+              )}
 
-                {externalAudioSegmentId && (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 1,
-                      pl: 1,
-                    }}
+              {degradationReasons.length > 0 && (
+                <Box sx={{ mt: 1 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mb: 0.5 }}
                   >
-                    <Tooltip title="Copy External ID">
-                      <IconButton
-                        size="small"
-                        aria-label="copy external segment id"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigator.clipboard.writeText(externalAudioSegmentId);
-                          triggerSnackbar('External segment ID copied');
-                        }}
-                        sx={{ p: 0 }}
-                      >
-                        <ContentCopyIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: 'block' }}
-                      >
-                        External ID
-                      </Typography>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontFamily: 'monospace',
-                          fontSize: '0.65rem',
-                          wordBreak: 'break-all',
-                        }}
-                      >
-                        {externalAudioSegmentId}
-                      </Typography>
-                    </Box>
-                  </Box>
-                )}
-
-                {degradationReasons.length > 0 && (
-                  <Box sx={{ mt: 1 }}>
+                    Segment error(s)
+                  </Typography>
+                  {degradationReasons.map((error, index) => (
                     <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: 'block', mb: 0.5 }}
+                      key={index}
+                      variant="body2"
+                      color="error.main"
+                      sx={{ wordBreak: 'break-word' }}
                     >
-                      Segment error(s)
+                      {error}
                     </Typography>
-                    {degradationReasons.map((error, index) => (
-                      <Typography
-                        key={index}
-                        variant="body2"
-                        color="error.main"
-                        sx={{ wordBreak: 'break-word' }}
-                      >
-                        {error}
-                      </Typography>
-                    ))}
-                  </Box>
-                )}
-              </Box>
-            </>
-          )}
-        </Box>
-      </Popover>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          </Popover>
+        </>
+      )}
     </>
   );
 }
