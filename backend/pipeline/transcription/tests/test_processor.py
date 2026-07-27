@@ -119,8 +119,13 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             audio_segments_client=mock_audio_segments_client,
         )
 
-        # Run process_event
-        await processor.process_event(cloud_event)
+        # Run with an SDK provider so emitted child spans receive their own IDs.
+        with patch.object(
+            tracing_utils._state,
+            "custom_provider",
+            TracerProvider(),
+        ):
+            await processor.process_event(cloud_event)
 
         # Verify transcriber was invoked with GCS reference
         mock_transcriber.transcribe.assert_called_once_with(
@@ -133,10 +138,15 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.publish.assert_called_once()
         call_args = mock_publisher.publish.call_args
         self.assertEqual(call_args.kwargs["ordering_key"], "feed-2222")
-        self.assertEqual(
-            call_args.kwargs["traceparent"],
-            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        )
+        version, trace_id, span_id, flags = call_args.kwargs[
+            "traceparent"
+        ].split("-")
+        self.assertEqual(version, "00")
+        self.assertEqual(trace_id, "4bf92f3577b34da6a3ce929d0e0e4736")
+        self.assertRegex(span_id, r"^[0-9a-f]{16}$")
+        self.assertNotEqual(span_id, "0000000000000000")
+        self.assertNotEqual(span_id, "00f067aa0ba902b7")
+        self.assertEqual(flags, "01")
 
         # Deserialize output data passed to publish
         out_proto = TranscribedAudio()

@@ -132,12 +132,9 @@ ${env_file_content}
         -e WORKER_INDEX=%i \
         ${container_image}'
     # HANDOFF-01 from radio-transcription PR #359: stop-timeout must
-    # accommodate the worker's 90s graceful_shutdown_timeout_sec
-    # (SHUTDOWN-01). All shutdown work — task cancel (~30s budget),
-    # 2s settle window, release_feeds_batch (~5s), asyncpg pool close
-    # (~5s), aiohttp session close (~5s) — happens INSIDE that 90s
-    # budget, with ~40s of slack (PR #359 description: "30 + 2 + ~5
-    # release + ~5 close ≈ 42s, well under 90s graceful").
+    # accommodate the worker's 90s graceful_shutdown_timeout_sec.
+    # The supervisor stops admission, drains runners, exact-finalizes
+    # grants, and then closes shared clients inside that worker budget.
     #
     # Budget layering after SIGTERM:
     #   - docker stop -t 100 → gives the worker 100s to exit before
@@ -146,9 +143,9 @@ ${env_file_content}
     #   - TimeoutStopSec=120 → gives `docker stop` itself 120s to return
     #     before systemd kills it. 20s margin over docker's -t 100.
     #
-    # Docker's default `-t 10` would SIGKILL the worker mid-
-    # `release_feeds_batch` UPDATE, leaving leases stuck for 60s until
-    # the abandoned-lease pg_cron sweep recovers them.
+    # Docker's default `-t 10` could SIGKILL the worker before its exact
+    # grants settle, leaving the remaining grants for heartbeat-expiry
+    # recovery.
     ExecStop=/usr/bin/docker stop -t 100 ${service_name}-%i
     TimeoutStopSec=120
 
