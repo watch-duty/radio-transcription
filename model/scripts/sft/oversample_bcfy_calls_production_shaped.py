@@ -27,16 +27,19 @@ re-verify against whatever the current canonical manifest and
 production distribution look like at that time, rather than assuming 3
 still applies.
 
-Usage:
-  uv run --with google-cloud-storage \
-      python oversample_bcfy_calls_production_shaped.py \
+Usage (from the lightweight ASR docker runtime, which already installs
+model[scoring,vertex] -- google-cloud-storage is a core model dependency,
+no extra install step needed):
+  docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+      bash -lc 'cd model/scripts/sft && python3 \
+      oversample_bcfy_calls_production_shaped.py \
       --train gs://wd-transcription-data/sft/dataset_versions/\
 20260724-production-shaped-reconstruction/manifests/canonical/train.jsonl \
       --project <gcp-project> \
       --dest-prefix gs://wd-transcription-data/sft/runs/<round-id>/\
 audio/bcfy_calls_oversampled \
       --out-train-uri gs://wd-transcription-data/sft/runs/<round-id>/\
-manifests/canonical/train.jsonl
+manifests/canonical/train.jsonl'
 """
 
 from __future__ import annotations
