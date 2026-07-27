@@ -1,9 +1,12 @@
 # Next-round SFT dataset reconstruction
 
-Status: **construction and approved publication complete**. The full
+Status: **canonical reconstruction and approved publication complete; final
+model-facing projection specified but not materialized**. The full canonical
 request/audio universe is materialized, the independent verifier reports
 `COMPLETE`, the actual Gemini SFT loaders and local preflight pass, and the
-create-only GCS publication has been independently verified. No SFT job or
+create-only GCS publication has been independently verified. A later exact
+production source/sample-rate census now also selects the recommended
+model-facing weighting and media projection described below. No SFT job or
 provider inference was run.
 
 ## Outcome
@@ -20,6 +23,20 @@ views:
 There is no atomic-unmasked compatibility eval and no new validation split.
 Provider tuning validation is a deterministic subset of the full primary eval;
 the full primary eval remains available for scoring.
+
+The published reconstruction remains the immutable owner-complete reference,
+not a prefix to mutate in place. The current next-round design derives one
+model-facing training projection from it:
+
+- BCFY Calls uses **uniform total multiplicity 3** for every training row;
+- the former 12x-at-8-kHz / 6x-at-other-rates proposal is rejected;
+- BCFY Feeds model-input audio is serialized as production-aligned 16 kHz mono
+  for the derived train, primary-eval, and predicted-context views;
+- BCFY Calls, Echo, and Fire Notifications retain their native request sample
+  rates;
+- masked eval remains the already-published unchanged historical view.
+
+This derived projection has not yet been materialized or submitted to SFT.
 
 ## Frozen source universe and ownership
 
@@ -51,7 +68,9 @@ status.
 The soft objective minimizes exact Wasserstein-1 distance between the
 reconstructed split-wide request-duration distribution and the frozen
 production BCFY-feed duration distribution. Thirty seconds is only a very soft
-anchor; matching production request geometry has higher priority.
+anchor; matching production request geometry has higher priority. This
+objective matches request-duration geometry only. It does not establish
+production source-family prevalence or model-input sample-rate parity.
 
 ### BCFY Calls and Fire Notifications
 
@@ -83,13 +102,14 @@ Target reconciliation is deterministic:
 
 Transcript contents do not influence audio boundaries.
 
-## Audio serialization
+## Frozen base audio serialization
 
-Every output is a single continuous source-frame slice. There is no synthetic
-silence, concatenation of disjoint intervals, resampling, downmixing,
-normalization, padding, trimming, filtering, crossfade, or time stretching.
-Source sample rate, channel count, and PCM subtype are preserved, and decoded
-output PCM must exactly equal the selected source PCM.
+Every output in the published canonical base is a single continuous
+source-frame slice. There is no synthetic silence, concatenation of disjoint
+intervals, resampling, downmixing, normalization, padding, trimming, filtering,
+crossfade, or time stretching. Source sample rate, channel count, and PCM
+subtype are preserved, and decoded output PCM must exactly equal the selected
+source PCM.
 
 The frozen family-specific encoders are:
 
@@ -106,10 +126,20 @@ Each row records the encoded hash and size, decoded PCM hash, encoder profile
 and version, command digest, frozen encoder-contract digest, and—where
 applicable—the exact FFmpeg binary and deployed-image identities.
 
+Those guarantees describe the immutable published reference. The derived
+model-facing projection selected later in this report deliberately reserializes
+BCFY Feeds as 16 kHz mono. For those derived rows, verification binds the
+immutable source identity, selected interval, frozen conversion contract, and
+decoded derived-media hash; source/output PCM equality is no longer the
+applicable invariant. The derived media and manifests require a new projection
+identity and must not overwrite the published base.
+
 ## Post-publication incident findings
 
 The detailed evidence and decision record is
 [`additional-findings-20260724.md`](additional-findings-20260724.md).
+Its incident evidence remains relevant, but its older production source-mixture
+estimate is superseded by the exact bounded census below.
 
 The user subsequently supplied results from a complete rerun of the 1,934
 production segments for which every observed tuned attempt had lacked an
@@ -176,21 +206,218 @@ failure risk or a justified sampling multiplier: both compare training rows
 with an outcome-selected cohort and include failures that the prompt
 correction removed.
 
-The most complete frozen production sensitivity mapping instead assigns
-90,117/629,374 candidate segments (14.319%) to BCFY Calls. Against that
-exposure, the recovered cohort is enriched by about 2.42-fold, not 20.7-fold.
-That mapping uses current metadata for 74,342 candidates whose event-time
-source was unresolved, so it is sensitivity evidence rather than an
-authoritative event-time mixture.
+The exact bounded production census below assigns 84,277/555,645 unique
+requests (15.167%), 431,821 seconds (18.312% of requested duration), and
+85,014/559,261 invocations (15.201%) to BCFY Calls, with zero missing source
+lineage. Against unique-request exposure, 669/1,934 is enriched by about
+2.281-fold, not 20.7-fold. This is still not calibrated marginal risk: the
+incident cohort is outcome-selected and mostly predates the prompt fix.
 
 The evidence supports treating BCFY Calls exposure as a high-priority SFT
 sampling decision, but it does not support making 34.592% the training target.
-The source breakdown of the 292 post-prompt residuals is needed before using
-that residual as a weighting target. The published unique owner census remains
-unchanged. If repeated examples are used for the one actual SFT input, that
-effective manifest must be an explicit, separately hash-bound rendering of
-this same training dataset; it must not silently alter the immutable published
-prefix or create a second semantic dataset.
+The exact production census below resolves the source/sample-rate exposure
+question and selects a uniform total multiplicity of 3 for BCFY Calls. The
+published unique owner census remains unchanged. The one actual SFT input must
+be an explicit, separately hash-bound rendering of this same training dataset;
+it must not silently alter the immutable published prefix or create a second
+semantic dataset.
+
+### Exact production source and sample-rate census
+
+A later audit measured the exact production window
+`[2026-07-24 08:03:00 PDT, 2026-07-27 13:45:00 PDT)`. The primary unit is one
+unique exact segment/model-input audio URI observed in a `Transcribing` event.
+Application-level invocation counts are retained separately so Pub/Sub
+redelivery or reprocessing cannot silently change the source/rate mixture.
+
+Two independent full Cloud Logging reads produced the same 559,261-row
+invocation identity set and the same per-partition content chain. Exact URI
+deduplication produced 555,645 unique requests and 3,616 repeat invocations.
+A settled log-based attempts metric counted 559,270 starts, nine more than the
+stable row evidence. Those nine metric-only events have no URI/rate evidence
+and were not synthesized.
+
+Every one of the 555,645 unique requests resolved to an immutable
+`audio_segments.feed_id -> feeds.source_type` lineage and a sample rate:
+
+- all non-BCFY-Feeds requests used generation-bearing 42-byte FLAC
+  `STREAMINFO` reads, with no decode or sample inspection;
+- production ingestion forces BCFY Feeds to 16 kHz mono PCM16; a deterministic
+  10,000-object header sample found 10,000/10,000 at that format, giving a
+  one-sided 95% upper bound of 0.030% on an unobserved violation.
+
+No OpenMHz request appeared in the bounded window.
+
+The exact unique-request source distribution is:
+
+| Source | Requests | Request share | Audio duration | Duration share |
+|---|---:|---:|---:|---:|
+| BCFY Feeds | 424,131 | 76.331% | 1,578,693.990 s | 66.946% |
+| BCFY Calls | 84,277 | 15.167% | 431,821.000 s | 18.312% |
+| Echo | 25,633 | 4.613% | 163,914.843 s | 6.951% |
+| Fire Notifications | 21,604 | 3.888% | 183,740.017 s | 7.792% |
+| **Total** | **555,645** | **100%** | **2,358,169.850 s** | **100%** |
+
+Invocation weighting produces nearly the same mixture: BCFY Feeds 76.271%,
+BCFY Calls 15.201%, Echo 4.630%, and Fire Notifications 3.897%. Redelivery
+therefore does not materially bias the source result.
+
+The exact sample-rate distribution is:
+
+| Sample rate | Unique requests | Request share | Duration share | Invocations | Invocation share |
+|---|---:|---:|---:|---:|---:|
+| 8 kHz | 67,549 | 12.157% | 21.273% | 68,152 | 12.186% |
+| 16 kHz | 478,713 | 86.154% | 77.291% | 481,657 | 86.124% |
+| 22.05 kHz | 8,912 | 1.604% | 1.292% | 8,975 | 1.605% |
+| 44.1 kHz | 153 | 0.028% | 0.078% | 155 | 0.028% |
+| 96 kHz | 318 | 0.057% | 0.066% | 322 | 0.058% |
+
+Rate is strongly confounded with source:
+
+| Source | Sample rate | Within-source request share | Within-source duration share |
+|---|---:|---:|---:|
+| BCFY Feeds | 16 kHz | 100.000% | 100.000% |
+| BCFY Calls | 8 kHz | 28.644% | 45.019% |
+| BCFY Calls | 16 kHz | 61.751% | 49.154% |
+| BCFY Calls | 22.05 kHz | 9.046% | 5.041% |
+| BCFY Calls | 44.1 + 96 kHz | 0.559% | 0.786% |
+| Echo | 8 kHz | 100.000% | 100.000% |
+| Fire Notifications | 8 kHz | 82.281% | 78.012% |
+| Fire Notifications | 16 kHz | 11.757% | 17.250% |
+| Fire Notifications | 22.05 kHz | 5.962% | 4.738% |
+
+#### Training comparison and sample-rate decision
+
+The hypothesis that 8 kHz is underrepresented is rejected:
+
+| Rate | Canonical-train row share | Canonical-train duration share | Production request share | Production duration share |
+|---|---:|---:|---:|---:|
+| 8 kHz | 64.642% | 60.310% | 12.157% | 21.273% |
+| 16 kHz | 13.085% | 14.439% | 86.154% | 77.291% |
+| 22.05 kHz | 20.876% | 23.867% | 1.604% | 1.292% |
+| Other | 1.397% | 1.383% | 0.085% | 0.144% |
+
+This global contrast must not become a global inverse-frequency weight because
+the source mixtures differ substantially:
+
+| Source | Canonical-train row share | Canonical-train duration share | Production request share | Production duration share |
+|---|---:|---:|---:|---:|
+| BCFY Calls | 3.490% | 7.029% | 15.167% | 18.312% |
+| BCFY Feeds | 29.467% | 25.030% | 76.331% | 66.946% |
+| Echo | 47.016% | 20.794% | 4.613% | 6.951% |
+| Fire Notifications | 20.027% | 47.147% | 3.888% | 7.792% |
+
+Training should not literally duplicate rows until it matches traffic shares:
+that would collapse effective sample size while adding no acoustic diversity,
+and every protected owner must remain present at least once. Instead, source
+and rate are treated jointly.
+
+Within BCFY Calls, the major-rate duration geometry is already close:
+
+| Rate | Train row share | Train duration share | Production request share | Production duration share |
+|---|---:|---:|---:|---:|
+| 8 kHz | 40.543% | 42.359% | 28.644% | 45.019% |
+| 16 kHz | 52.417% | 48.867% | 61.751% | 49.154% |
+| 22.05 kHz | 2.799% | 4.364% | 9.046% | 5.041% |
+| 44.1 kHz | 4.241% | 4.411% | 0.182% | 0.425% |
+| 96 kHz | 0% | 0% | 0.377% | 0.361% |
+
+The 12x/6x proposal would move BCFY Calls to 57.695% 8 kHz rows and
+59.510% 8 kHz duration, the wrong direction. It would also make BCFY Calls
+23.369% of all training rows and 39.239% of all training duration.
+
+The selected default is therefore **uniform total multiplicity 3**: every
+BCFY Calls row occurs three times in the one final SFT manifest, independent of
+sample rate. Relative to the immutable 33,780-row canonical train, that
+projection has:
+
+- 36,138 total rows;
+- 3,537 BCFY Calls rows, 9.79% of requests;
+- 50,778 BCFY Calls target words, 15.08% of target words;
+- 30,731.745 BCFY Calls audio seconds, 18.49% of training duration.
+
+The duration share closely matches production's 18.312% without inheriting
+the incident cohort's outcome-selection bias or overemphasizing 8 kHz. Copies
+must use unique model-input object URIs, deterministic identities, and
+deterministic interleaving so sibling copies are not adjacent. This is total
+multiplicity 3, not three extra copies.
+
+This is not a claim that sample rate is irrelevant. The historical
+87.5%-versus-44.9% BCFY Calls result came from an outcome-selected
+failed-plus-matched-success study and cannot estimate marginal production
+failure risks. If 8 kHz is deliberately hard-weighted in a future experiment,
+that is an explicit hard-case intervention requiring a fixed-total-exposure
+ablation, not correction of an exposure deficit.
+
+#### Production-aligned BCFY Feeds representation
+
+The published reconstruction correctly preserves source-native PCM and remains
+the immutable owner-complete reference. It also reveals a model-input mismatch:
+canonical-train BCFY Feeds is only 35.986% 16 kHz by row and 37.130% by
+duration, while production model-input BCFY Feeds is 100% 16 kHz. Canonical
+Feeds is predominantly 22.05 kHz: 56.108% of rows and 55.058% of duration.
+
+For the derived model-facing projection, every reconstructed BCFY Feeds request
+is therefore serialized as 16 kHz mono using one frozen deterministic
+conversion contract. Request boundaries, transcripts, owners, and membership
+do not change. The same derived media must be used by primary eval and its
+predicted-context view. BCFY Calls, Echo, and Fire Notifications remain at
+their native production request rates. The existing masked eval remains
+unchanged for historical comparability.
+
+Oversampling only the existing 16 kHz Feeds rows is rejected: it would discard
+effective diversity and leave most annotated Feeds material in a representation
+that production never sends to the model.
+
+#### Evaluation and operational reporting
+
+Every checkpoint and all three evaluation views—reconstructed primary,
+reconstructed with prediction-only prior context, and retained masked—must
+slice results by both source and the actual model-input sample rate, not just a
+global 8-kHz/16-kHz split. Required views are source, exact rate, 8 kHz versus
+non-8 kHz, 8 kHz versus 16 kHz, and source x exact rate. At minimum, exact-rate
+tables report 8, 16, 22.05, 44.1, and 96 kHz where present. Every cell includes
+row count, audio duration, reference-word support, and both row-weighted and
+reference-word-weighted metrics. Sparse cells remain visible rather than being
+silently folded into `other`; global rate results are never interpreted
+without their source-conditioned counterpart.
+
+Production request geometry in the census is:
+
+| Duration | Request share | Audio-duration share |
+|---|---:|---:|
+| <2.3 s | 47.829% | 16.343% |
+| 2.3–<4.36 s | 24.844% | 18.626% |
+| 4.36–<7.89 s | 14.283% | 19.469% |
+| 7.89–<11.46 s | 5.755% | 12.745% |
+| 11.46–<17.47 s | 4.189% | 13.876% |
+| 17.47–30 s | 2.311% | 12.007% |
+| >30 s | 0.788% | 6.934% |
+
+These are reporting strata, not bucket targets for reconstruction or
+weighting.
+
+The settled application metric recorded 10,254 `unintelligible` terminal
+statuses (1.833%), which count as effective-empty under this project's broader
+definition; 10,175 invocations entered fallback (an overlapping auxiliary
+status). Of 559,270 metric starts, 545,271 ended as success, 3,618 as transient
+error, 35 as permanent error, 40 as policy blocked, 50 as partial, and two were
+cutoff-in-flight; zero ended in a separate literal `empty` status.
+
+These are production benchmarks, not label quotas. End-to-end status does not
+reveal the full-window internal tuned-attempt `finish_reason=None` versus
+blank-`STOP` mixture. The reconstructed eval should expose provider and
+transport outcomes naturally under production-equivalent requests, not inject
+synthetic failures or force their frequencies to equal the bounded window. It
+must report both attempt-level causes and terminal outcomes.
+
+The exact aggregate receipt SHA-256 is
+`6b735cd7310556627742357f5c02bf07e4fa10ea5f03d7f79281a9e18bafc19c`;
+the 555,645-row membership artifact SHA-256 is
+`4c45046de1ae1205495634605eacdb1df98cb70c9f3d4cecc4a416c4742f9b72`.
+The first 679 logged invocations used the prior tuned endpoint before the
+deployment transition; 558,582 used the current endpoint. That 0.12% boundary
+slice does not materially change the source/rate conclusions.
 
 ## Short valid FLAC rejection finding
 
@@ -260,9 +487,9 @@ scheduled terminal requests. Conditional successful-response WER and
 operational all-row WER are both reported. Operational WER assigns every
 terminal no-transcription outcome an empty hypothesis and never drops the row.
 
-## Final materialization results
+## Frozen base materialization results
 
-The finished build contains 43,988 reconstructed requests/audio files:
+The published frozen build contains 43,988 reconstructed requests/audio files:
 
 | Family | Train requests | Eval requests | Train owners | Eval owners |
 |---|---:|---:|---:|---:|
@@ -281,18 +508,24 @@ training requests and 41 primary-eval requests above 30 seconds. The longest
 training request is a 72.9-second authoritative Fire Notifications provider
 item; the longest BCFY-feed request is 58.416 seconds.
 
-The final BCFY-feed geometry is:
+The frozen base BCFY-feed request-duration geometry is:
 
-| Split | Sources | Requests | Duration W1 vs production | KS | Max duration |
+| Split | Sources | Requests | Duration W1 vs production request geometry | KS | Max duration |
 |---|---:|---:|---:|---:|---:|
 | Train | 369 | 9,954 | 45.468 ms | 0.007961 | 58.416 s |
 | Eval | 21 | 750 | 99.103 ms | 0.008748 | 24.211 s |
+
+The low W1 and KS values validate request-duration geometry only. They do not
+show production sample-rate parity or source-share parity.
 
 The exact `[UNINTELLIGIBLE]` target rate is 5/33,780 (0.0148%) in training and
 0/10,208 in primary eval. Thirteen training requests (0.0385%) contain the
 marker anywhere. The retained masked eval has no blank or
 `[UNINTELLIGIBLE]` targets. These are dataset-label rates, not production model
-empty-output rates.
+empty-output rates. In particular, production's 1.833% terminal
+`unintelligible` rate is an end-to-end model/application outcome, not a target
+label rate; the two are not directly comparable and do not justify synthetic
+empty targets.
 
 Masked eval retains 2,043 unchanged raw rows:
 
@@ -311,7 +544,7 @@ lineage fields. Removing exactly those fields reproduces the emitted raw
 payload byte-for-byte, whose SHA-256 is
 `85166828ce2aefa58f3185d0db9959e4e2c26dbe0296039fda0ff4d1f624f955`.
 
-Key final manifest identities:
+Key frozen base manifest identities:
 
 | Artifact | Rows | SHA-256 |
 |---|---:|---|
@@ -321,6 +554,28 @@ Key final manifest identities:
 | Gemini train input | 33,780 | `0a7a3bd4b51bad3cb92953199ee51dcb7defc805e2dfaa441b2cd0727479f745` |
 | Gemini validation input | 5,000 | `41b6a01c319f841d12650cd12bd90e7152bb111438e1b207ae7bb2e17745fb46` |
 | Predicted-context schedule | 10,208 | `78b39e5ba0b1205779aef6a6e13f66aed7a371c8de81d2bfb09199f4d3d79e68` |
+
+## Production-census limitations and evidence quality
+
+- The half-open census covers 3 days, 5 hours, and 42 minutes. It is exact for
+  that window, not proof of a seasonal or long-term mixture.
+- The primary denominator is 555,645 unique exact audio URIs; the secondary
+  invocation denominator is 559,261. Nine additional metric-only starts lack
+  URI/rate evidence and are not imputed.
+- Source lineage missing is zero and sample rate missing is zero. All 131,514
+  non-Feeds unique requests had their generation-bearing 42-byte FLAC
+  `STREAMINFO` read. BCFY Feeds rate is code-contracted and independently
+  checked on a deterministic 10,000-header sample rather than by reading all
+  424,131 headers.
+- Two independent full log reads produced the same 559,261-row identity set and
+  per-partition content hashes.
+- The first 679 invocations (0.12%) used revision 45 and the prior tuned
+  endpoint; the remaining 558,582 used revisions 46–48 and the current
+  endpoint.
+- The census establishes exposure, not sample-rate causality or a complete
+  success/failure-by-rate denominator. It inspected no transcript, prompt,
+  annotation, model response, or decoded audio samples and ran no inference or
+  SFT.
 
 ## Verification
 
