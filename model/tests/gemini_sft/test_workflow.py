@@ -93,9 +93,11 @@ def _eval_only_config_text(
     round_id: str = "round-a",
     eval_label: str = "base",
     eval_model: str = "gemini-3.1-flash-lite",
+    prior_context_count: int | None = None,
 ) -> str:
     body = _config_text(
         round_id=round_id,
+        prior_context_count=prior_context_count,
         eval_label=eval_label,
         eval_model=eval_model,
     )
@@ -238,6 +240,40 @@ def _seed_source_manifests(
     storage.put(train_uri, "audio")
     storage.put(validation_uri, "audio")
     storage.put(eval_uri, "audio")
+
+
+def _contained_context_rows(
+    split: str,
+) -> list[dict[str, typing.Any]]:
+    source_uri = f"gs://audio/{split}-source.flac"
+    return [
+        {
+            **_row(
+                f"gs://audio/{split}-outer.flac",
+                "outer",
+                duration=10.0,
+                example_id=f"{split}-example",
+                segment_id="outer",
+                offset=0.0,
+                split=split,
+            ),
+            "original_audio_uri": source_uri,
+            "original_offset": 0.0,
+        },
+        {
+            **_row(
+                f"gs://audio/{split}-inner.flac",
+                "inner",
+                duration=2.0,
+                example_id=f"{split}-example",
+                segment_id="inner",
+                offset=2.0,
+                split=split,
+            ),
+            "original_audio_uri": source_uri,
+            "original_offset": 2.0,
+        },
+    ]
 
 
 def _assert_no_prepared_outputs(
@@ -445,6 +481,129 @@ class TestPrepareRun(unittest.TestCase):
 
                 self.assertEqual(result, 1)
                 self.assertEqual(storage.uploads, [])
+
+    def test_positive_context_prepare_rejects_containment_before_upload(
+        self,
+    ) -> None:
+        for invalid_split in ("train", "validation", "eval"):
+            with (
+                self.subTest(split=invalid_split),
+                tempfile.TemporaryDirectory() as tmp_s,
+            ):
+                tmp = pathlib.Path(tmp_s)
+                storage = fake_gcs.FakeStorageClient()
+                manifests = {
+                    "train": (
+                        _contained_context_rows("train")
+                        if invalid_split == "train"
+                        else [
+                            {
+                                **_row(
+                                    "gs://audio/train.flac",
+                                    "train",
+                                    duration=1.0,
+                                    split="train",
+                                ),
+                                "original_audio_uri": (
+                                    "gs://audio/train-source.flac"
+                                ),
+                                "original_offset": 0.0,
+                            }
+                        ]
+                    ),
+                    "validation": (
+                        _contained_context_rows("validation")
+                        if invalid_split == "validation"
+                        else [
+                            {
+                                **_row(
+                                    "gs://audio/validation.flac",
+                                    "validation",
+                                    duration=1.0,
+                                    split="validation",
+                                ),
+                                "original_audio_uri": (
+                                    "gs://audio/validation-source.flac"
+                                ),
+                                "original_offset": 0.0,
+                            }
+                        ]
+                    ),
+                    "eval": (
+                        _contained_context_rows("eval")
+                        if invalid_split == "eval"
+                        else [
+                            {
+                                **_row(
+                                    "gs://audio/eval.flac",
+                                    "eval",
+                                    duration=1.0,
+                                    split="eval",
+                                ),
+                                "original_audio_uri": (
+                                    "gs://audio/eval-source.flac"
+                                ),
+                                "original_offset": 0.0,
+                            }
+                        ]
+                    ),
+                }
+                for split, rows in manifests.items():
+                    storage.put(
+                        f"gs://source/manifests/{split}.jsonl",
+                        _manifest(rows),
+                    )
+                run_cfg = config_module.load_run_config(
+                    _write_config_file(tmp, prior_context_count=2)
+                )
+
+                with unittest.mock.patch.object(
+                    prepare.preflight,
+                    "run_preflight",
+                ) as run_preflight:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "same-source duplicate spans",
+                    ):
+                        prepare.prepare_run(
+                            run_cfg=run_cfg,
+                            storage_client=storage,
+                            results_dir=tmp / "results",
+                        )
+
+                run_preflight.assert_not_called()
+                self.assertEqual(storage.uploads, [])
+                _assert_no_prepared_outputs(self, tmp, storage)
+
+    def test_eval_only_positive_context_rejects_containment_before_upload(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(_contained_context_rows("eval")),
+            )
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(
+                _eval_only_config_text(prior_context_count=2),
+                encoding="utf-8",
+            )
+            run_cfg = config_module.load_prepare_run_config(cfg_path)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "same-source duplicate spans",
+            ):
+                prepare.prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            self.assertEqual(storage.uploads, [])
+            self.assertFalse(storage.has(run_cfg.paths.config_uri))
 
     def test_eval_only_prepare_reports_missing_source_as_cli_failure(
         self,
@@ -943,6 +1102,7 @@ class TestPrepareRun(unittest.TestCase):
                     **_row(
                         "gs://audio/source-a/001.flac",
                         "first",
+                        duration=1.0,
                         example_id="source-a",
                         segment_id="001",
                         offset=0.0,
@@ -955,6 +1115,7 @@ class TestPrepareRun(unittest.TestCase):
                     **_row(
                         "gs://audio/source-a/002.flac",
                         "second",
+                        duration=1.0,
                         example_id="source-a",
                         segment_id="002",
                         offset=1.0,
@@ -972,11 +1133,18 @@ class TestPrepareRun(unittest.TestCase):
                 "gs://source/manifests/validation.jsonl",
                 _manifest(
                     [
-                        _row(
-                            "gs://audio/validation.flac",
-                            "validation transcript",
-                            5.0,
-                        )
+                        {
+                            **_row(
+                                "gs://audio/validation.flac",
+                                "validation transcript",
+                                duration=1.0,
+                                offset=5.0,
+                            ),
+                            "original_audio_uri": (
+                                "gs://audio/validation-source.flac"
+                            ),
+                            "original_offset": 5.0,
+                        }
                     ]
                 ),
             )
@@ -984,11 +1152,18 @@ class TestPrepareRun(unittest.TestCase):
                 "gs://source/manifests/eval.jsonl",
                 _manifest(
                     [
-                        _row(
-                            "gs://audio/eval.flac",
-                            "eval transcript",
-                            6.0,
-                        )
+                        {
+                            **_row(
+                                "gs://audio/eval.flac",
+                                "eval transcript",
+                                duration=1.0,
+                                offset=6.0,
+                            ),
+                            "original_audio_uri": (
+                                "gs://audio/eval-source.flac"
+                            ),
+                            "original_offset": 6.0,
+                        }
                     ]
                 ),
             )

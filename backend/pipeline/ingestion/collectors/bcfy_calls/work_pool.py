@@ -3,8 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc  # noqa: TC003 - public hints resolve at runtime.
 import dataclasses
 import typing
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SettledBatches[BatchT, ResultT]:
+    """Terminal evidence for one caller-ordered batch sequence.
+
+    Attributes:
+        results: Successful accepted batches paired with their results in
+            exact caller order.
+        failure: First unexpected admission or execution failure, if any.
+        cancellation: First exact caller cancellation received while
+            admission or settlement was in progress.
+    """
+
+    results: tuple[tuple[BatchT, ResultT], ...]
+    failure: BaseException | None
+    cancellation: asyncio.CancelledError | None
 
 
 class _BatchExecutor[BatchT, ResultT](typing.Protocol):
@@ -21,6 +39,22 @@ class _QueuedBatch[BatchT, ResultT]:
 
     batch: BatchT
     completion: asyncio.Future[ResultT]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BatchAdmission[ResultT]:
+    """Resolved outcome of one queue admission attempt.
+
+    Attributes:
+        completion: Accepted batch completion, or ``None`` before acceptance.
+        failure: Unexpected admission failure, if one occurred.
+        cancellation: First exact caller cancellation deferred during
+            admission settlement.
+    """
+
+    completion: asyncio.Future[ResultT] | None
+    failure: BaseException | None
+    cancellation: asyncio.CancelledError | None
 
 
 def _require_positive(value: int, field_name: str) -> int:
@@ -46,32 +80,28 @@ def _require_positive(value: int, field_name: str) -> int:
     return value
 
 
-async def _settle_before_reraising_cancellation[ResultT](
-    completion: asyncio.Future[ResultT],
-    cancellation: asyncio.CancelledError,
-) -> typing.NoReturn:
-    """Settle accepted work before preserving caller cancellation.
+async def _wait_for_all[ResultT](
+    futures: collections.abc.Iterable[asyncio.Future[ResultT]],
+    cancellation: asyncio.CancelledError | None = None,
+) -> asyncio.CancelledError | None:
+    """Wait without transferring caller cancellation to issued work.
 
     Args:
-        completion: Result of work whose queue admission already committed.
-        cancellation: Original cancellation to propagate after settlement.
+        futures: Issued operations that must reach a terminal state.
+        cancellation: Earlier caller cancellation to retain, if any.
 
-    Raises:
-        asyncio.CancelledError: Always, chained from any terminal work failure.
+    Returns:
+        The first exact caller cancellation received before all operations
+        settled, or ``None``.
     """
-    while not completion.done():
+    pending = {future for future in futures if not future.done()}
+    while pending:
         try:
-            await asyncio.shield(completion)
-        except asyncio.CancelledError:
-            continue
-        except Exception:
-            break
-
-    try:
-        completion.result()
-    except BaseException as error:
-        raise cancellation from error
-    raise cancellation
+            _done, pending = await asyncio.wait(pending)
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+    return cancellation
 
 
 class BcfyCallsWorkPool[BatchT, ResultT]:
@@ -115,7 +145,7 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
         self._submissions_drained = asyncio.Event()
         self._submissions_drained.set()
         self._workers_started = asyncio.Event()
-        self._workers_stopped = asyncio.Event()
+        self._workers_stopped: asyncio.Future[None] | None = None
         self._worker_owner: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
 
@@ -130,6 +160,7 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
             raise RuntimeError(message)
 
         self._start_called = True
+        self._workers_stopped = asyncio.get_running_loop().create_future()
         self._worker_owner = asyncio.create_task(
             self._run_workers(),
             name="bcfy-calls-work-pool",
@@ -155,78 +186,155 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
             started_wait.cancel()
             await asyncio.gather(started_wait, return_exceptions=True)
 
-    async def submit(
+    async def settle_batches(
         self,
-        batch: BatchT,
-    ) -> asyncio.Future[ResultT]:
-        """Admit one complete batch, waiting for bounded queue capacity.
+        batches: collections.abc.Iterable[BatchT],
+    ) -> SettledBatches[BatchT, ResultT]:
+        """Admit and settle a caller-ordered sequence of complete batches.
+
+        Queue ``put`` completion is the admission boundary. Caller
+        cancellation stops later admissions, but a racing current admission
+        is first resolved and every accepted batch reaches a terminal state.
 
         Args:
-            batch: Opaque source-specific batch executed atomically.
+            batches: Complete batches in source caller order.
 
         Returns:
-            A future settled with the executor result or exception.
+            Successful batch/result pairs, the first unexpected failure, and
+            the first exact caller cancellation. No evidence is raised here so
+            the caller can apply successful durable outcomes before choosing
+            exception precedence.
+        """
+        accepted: list[tuple[BatchT, asyncio.Future[ResultT]]] = []
+        admission_failure: BaseException | None = None
+        cancellation: asyncio.CancelledError | None = None
 
-        Raises:
-            RuntimeError: The pool is not accepting submissions.
-            asyncio.CancelledError: Admission is cancelled while backpressured.
+        try:
+            batch_iterator = iter(batches)
+        except BaseException as error:
+            return SettledBatches((), error, None)
+
+        while admission_failure is None and cancellation is None:
+            try:
+                batch = next(batch_iterator)
+            except StopIteration:
+                break
+            except BaseException as error:
+                admission_failure = error
+                break
+
+            admission = await self._admit_batch(batch)
+            if admission.completion is not None:
+                accepted.append((batch, admission.completion))
+            if admission.failure is not None:
+                admission_failure = admission.failure
+            if admission.cancellation is not None:
+                cancellation = admission.cancellation
+
+        cancellation = await _wait_for_all(
+            (completion for _batch, completion in accepted),
+            cancellation,
+        )
+
+        results: list[tuple[BatchT, ResultT]] = []
+        failure: BaseException | None = None
+        for batch, completion in accepted:
+            try:
+                result = completion.result()
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+            else:
+                results.append((batch, result))
+        if failure is None:
+            failure = admission_failure
+
+        return SettledBatches(
+            results=tuple(results),
+            failure=failure,
+            cancellation=cancellation,
+        )
+
+    async def _admit_batch(  # noqa: PLR0912
+        self,
+        batch: BatchT,
+    ) -> _BatchAdmission[ResultT]:
+        """Resolve one queue admission without losing caller cancellation.
+
+        Args:
+            batch: Caller-ordered Feed batch to admit.
+
+        Returns:
+            Accepted completion evidence, admission failure, or deferred
+            caller cancellation.
         """
         if not self._admission_open:
             message = "Broadcastify Calls work pool is not accepting work"
-            raise RuntimeError(message)
+            return _BatchAdmission(None, RuntimeError(message), None)
+
+        workers_stopped = self._workers_stopped
+        if workers_stopped is None:
+            message = "Broadcastify Calls work pool workers are unavailable"
+            return _BatchAdmission(None, RuntimeError(message), None)
 
         completion = asyncio.get_running_loop().create_future()
         queued = _QueuedBatch(batch=batch, completion=completion)
         self._submitting += 1
         self._submissions_drained.clear()
         admission = asyncio.create_task(self._queue.put(queued))
-        workers_stopped = asyncio.create_task(self._workers_stopped.wait())
+        failure: BaseException | None = None
+        cancellation: asyncio.CancelledError | None = None
+        admission_cancel_requested = False
         accepted = False
+        done: set[asyncio.Future[None]] = set()
+
         try:
             try:
                 done, _pending = await asyncio.wait(
                     (admission, workers_stopped),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-                if admission not in done:
-                    message = (
-                        "Broadcastify Calls work pool workers have terminated"
-                    )
-                    raise RuntimeError(message)
-                admission.result()
-                accepted = True
-            finally:
-                try:
-                    admission.cancel()
-                    workers_stopped.cancel()
-                    await asyncio.gather(
-                        admission,
-                        workers_stopped,
-                        return_exceptions=True,
-                    )
-                finally:
-                    # Admission may commit concurrently with caller
-                    # cancellation before asyncio.wait returns its done set.
-                    if (
-                        not accepted
-                        and admission.done()
-                        and not admission.cancelled()
-                    ):
+            except asyncio.CancelledError as error:
+                cancellation = error
+                done = set()
+
+            if admission not in done and cancellation is None:
+                message = "Broadcastify Calls work pool workers have terminated"
+                failure = RuntimeError(message)
+        finally:
+            if admission not in done and not admission.done():
+                admission_cancel_requested = admission.cancel()
+            cancellation = await _wait_for_all(
+                (admission,),
+                cancellation,
+            )
+
+            if admission.cancelled():
+                if not admission_cancel_requested and failure is None:
+                    try:
                         admission.result()
-                        accepted = True
-                    if not accepted:
-                        completion.cancel()
-                    self._submitting -= 1
-                    if self._submitting == 0:
-                        self._submissions_drained.set()
-        except asyncio.CancelledError as cancellation:
-            if accepted:
-                await _settle_before_reraising_cancellation(
-                    completion,
-                    cancellation,
-                )
-            raise
-        return completion
+                    except BaseException as error:
+                        failure = error
+            else:
+                try:
+                    admission.result()
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
+                else:
+                    accepted = True
+
+            if not accepted:
+                completion.cancel()
+            self._submitting -= 1
+            if self._submitting == 0:
+                self._submissions_drained.set()
+
+        return _BatchAdmission(
+            completion if accepted else None,
+            failure,
+            cancellation,
+        )
 
     async def close(self) -> None:
         """Stop admission and drain every accepted batch before returning.
@@ -261,7 +369,9 @@ class BcfyCallsWorkPool[BatchT, ResultT]:
                 self._workers_started.set()
         finally:
             self._admission_open = False
-            self._workers_stopped.set()
+            workers_stopped = self._workers_stopped
+            if workers_stopped is not None and not workers_stopped.done():
+                workers_stopped.set_result(None)
             await self._submissions_drained.wait()
             self._cancel_queued_completions()
 
