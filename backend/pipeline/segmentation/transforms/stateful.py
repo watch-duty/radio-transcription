@@ -662,6 +662,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.order_config = order_config
         self.stitch_config = stitch_config
         self.processed_in_bundle = 0
+        self.bundle_start_time_monotonic: float = 0.0
         self.bundle_clamped_item_limit = Metrics.counter(
             self.__class__, "bundle_clamped_item_limit"
         )
@@ -721,15 +722,16 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.processed_in_bundle = 0
         self.bundle_start_time_monotonic = time.monotonic()
 
+    def _get_bundle_start_time(self) -> float:
+        """Returns the monotonic start timestamp for the current bundle execution."""
+        if not self.bundle_start_time_monotonic:
+            self.bundle_start_time_monotonic = time.monotonic()
+        return self.bundle_start_time_monotonic
+
     def _get_bundle_deadline_monotonic(self) -> float:
         """Returns the monotonic timestamp at which the current worker bundle budget expires."""
-        if not hasattr(self, "bundle_start_time_monotonic"):
-            logger.warning(
-                "bundle_start_time_monotonic was not initialized; falling back to current time.monotonic()."
-            )
-            self.bundle_start_time_monotonic = time.monotonic()
         return (
-            self.bundle_start_time_monotonic
+            self._get_bundle_start_time()
             + trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
         )
 
@@ -757,12 +759,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     def _is_bundle_budget_exhausted(self) -> bool:
         """Check if the current worker bundle has exhausted its time or prefetch budget."""
-        if not hasattr(self, "bundle_start_time_monotonic"):
-            logger.warning(
-                "bundle_start_time_monotonic was not initialized; falling back to current time.monotonic()."
-            )
-            self.bundle_start_time_monotonic = time.monotonic()
-        elapsed_sec = time.monotonic() - self.bundle_start_time_monotonic
+        elapsed_sec = time.monotonic() - self._get_bundle_start_time()
         return (
             elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
             or self.processed_in_bundle
@@ -781,9 +778,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         rescheduled_deadline: Timestamp | None = None,
     ) -> None:
         """Records Beam metrics counters and structured logging when bundle drain is clamped."""
-        elapsed_sec = time.monotonic() - getattr(
-            self, "bundle_start_time_monotonic", time.monotonic()
-        )
+        elapsed_sec = time.monotonic() - self._get_bundle_start_time()
         reasons = []
         if clamped_by_items:
             self.bundle_clamped_item_limit.inc()
@@ -871,9 +866,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 self.processed_in_bundle
                 >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
             )
-            elapsed_sec = time.monotonic() - getattr(
-                self, "bundle_start_time_monotonic", time.monotonic()
-            )
+            elapsed_sec = time.monotonic() - self._get_bundle_start_time()
             clamped_by_time = (
                 elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
             )
