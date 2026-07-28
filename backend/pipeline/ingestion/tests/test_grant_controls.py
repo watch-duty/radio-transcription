@@ -256,7 +256,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.data_store = mock.AsyncMock(spec=feed_store.FeedStore)
         self.heartbeat_store = mock.AsyncMock(spec=feed_store.FeedStore)
-        self.caps = source_runtime_specs.default_caps()
+        self.caps = source_runtime_specs.default_feed_claim_caps()
         self.control = feed_grant_control.FeedGrantControl(
             self.data_store,
             self.heartbeat_store,
@@ -270,7 +270,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         first = _leased_feed(
             uuid.UUID(int=2),
-            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_type=feed_store.SourceType.BCFY_FEEDS,
         )
         second = _leased_feed(
             uuid.UUID(int=1),
@@ -295,7 +295,8 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         owner, limits = self.data_store.acquire_feeds_batch.await_args.args
         self.assertEqual(owner, _OWNER_ID)
         self.assertEqual(sum(limits.values()), 8)
-        self.assertIn(feed_store.SourceType.BCFY_CALLS, limits)
+        self.assertNotIn(feed_store.SourceType.BCFY_CALLS, limits)
+        self.assertIn(feed_store.SourceType.BCFY_FEEDS, limits)
         self.assertEqual(tuple(limits), tuple(self.caps))
         self.assertEqual(
             [item.grant.feed_id for item in result], [first["id"], second["id"]]
