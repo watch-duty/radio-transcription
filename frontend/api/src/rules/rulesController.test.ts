@@ -128,12 +128,14 @@ describe('RulesController', () => {
   const mockAdminRequest = {
     user: {
       isAdmin: true,
+      email: 'admin@example.com',
     },
   } as unknown as express.Request;
 
   const mockNonAdminRequest = {
     user: {
       isAdmin: false,
+      email: 'user@example.com',
     },
   } as unknown as express.Request;
 
@@ -171,6 +173,9 @@ describe('RulesController', () => {
             case_sensitive: false,
           },
           tags: [{ key: 'geo_event_type', value: 'flooding' }],
+        },
+        headers: {
+          'X-WD-Actor-Id': 'user:google:admin@example.com',
         },
       });
     });
@@ -210,6 +215,9 @@ describe('RulesController', () => {
         url: 'http://rules-api.example.com/rule_123',
         method: 'PUT',
         data: { rule_name: 'Updated Name' },
+        headers: {
+          'X-WD-Actor-Id': 'user:google:admin@example.com',
+        },
       });
     });
 
@@ -225,6 +233,9 @@ describe('RulesController', () => {
         url: 'http://rules-api.example.com/rule_123',
         method: 'PUT',
         data: { tags: [{ key: 'geo_event_type', value: 'wildfire' }] },
+        headers: {
+          'X-WD-Actor-Id': 'user:google:admin@example.com',
+        },
       });
     });
 
@@ -259,6 +270,9 @@ describe('RulesController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://rules-api.example.com/rule_123',
         method: 'DELETE',
+        headers: {
+          'X-WD-Actor-Id': 'user:google:admin@example.com',
+        },
       });
     });
 
