@@ -72,7 +72,9 @@ def reject_split_leakage(
         groups.merge_all(matches)
 
     sources_by_split = {
-        split: {groups.root(node) for aliases in nodes for node in aliases}
+        split: {
+            groups.root(node) for node in itertools.chain.from_iterable(nodes)
+        }
         for split, nodes in nodes_by_split.items()
     }
     for holdout in ("validation", "eval"):
