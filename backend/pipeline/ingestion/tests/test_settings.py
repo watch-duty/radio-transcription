@@ -59,7 +59,6 @@ class TestCollectorSettings(unittest.TestCase):
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
             "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-segmented-topic",
             "CAP_BCFY_FEEDS": "200",
-            "CAP_BCFY_CALLS": "400",
             "CAP_OPENMHZ": "700",
             "CAP_FIRE_NOTIFICATIONS": "500",
         }
@@ -233,33 +232,6 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(sid.owned_cap, 19)
         self.assertEqual(sid.claims_per_cycle, 3)
         self.assertTrue(sid.claims_enabled)
-
-    def test_legacy_calls_authority_and_cap_environment_are_ignored(
-        self,
-    ) -> None:
-        env = {
-            **_required_env(),
-            "BCFY_CALLS_AUTHORITY_MODE": "legacy_feed",
-            "CAP_BCFY_CALLS": "999",
-            "WORKER_PROFILE": "sid-dormant",
-        }
-
-        with patch.dict("os.environ", env, clear=True):
-            settings = CollectorSettings()
-
-        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
-        self.assertEqual(
-            set(settings.feed_claim_caps),
-            {
-                SourceType.BCFY_FEEDS,
-                SourceType.OPENMHZ,
-                SourceType.FIRE_NOTIFICATIONS,
-            },
-        )
-        _feed, sid = settings.worker_profile.allocations
-        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
-        self.assertTrue(sid.claims_enabled)
-        self.assertEqual(settings.worker_profile.name, "mixed")
 
     def test_zero_process_capacity_fails_closed(self) -> None:
         """Reject a topology that cannot own even one selected grant."""

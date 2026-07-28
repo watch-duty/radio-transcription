@@ -26,8 +26,8 @@ Ruff, ty/pyright, mise.
 - Keep `/healthz.bcfy_calls_authority_mode` with the exact value `sid_lease`.
 - Keep Feed-domain claims enabled for `bcfy_feeds`, `openmhz`, and
   `fire_notifications`.
-- Ignore any supplied `BCFY_CALLS_AUTHORITY_MODE` or `CAP_BCFY_CALLS` value
-  rather than retaining a hidden rollback path.
+- Remove the obsolete Calls cutover settings rather than retaining a hidden
+  rollback path.
 - Run only focused low-resource tests locally; leave resource-heavy integration
   and E2E lanes to GitHub Actions.
 
@@ -73,8 +73,6 @@ def test_feed_claimable_specs_exclude_non_feed_authorities(self) -> None:
             feed_store.SourceType.FIRE_NOTIFICATIONS,
         },
     )
-    self.assertNotIn(feed_store.SourceType.BCFY_CALLS, specs)
-    self.assertNotIn(feed_store.SourceType.ECHO, specs)
 
 
 def test_default_feed_claim_caps_match_feed_claimable_specs(self) -> None:
@@ -90,21 +88,16 @@ def test_default_feed_claim_caps_match_feed_claimable_specs(self) -> None:
     )
 ```
 
-- [ ] **Step 2: Write failing settings tests for removed Calls capacity**
+- [ ] **Step 2: Update settings tests for Feed-claim capacity**
 
-Update settings tests to use `settings.feed_claim_caps` and add:
+Update settings tests to use `settings.feed_claim_caps` and assert the current
+Feed-authority mapping:
 
 ```python
-def test_legacy_calls_cap_environment_is_ignored(self) -> None:
-    env = {
-        **_required_env(),
-        "CAP_BCFY_CALLS": "999",
-    }
-
-    with patch.dict("os.environ", env, clear=True):
+def test_feed_claim_cap_keys_match_default_registry(self) -> None:
+    with patch.dict("os.environ", _required_env(), clear=True):
         settings = CollectorSettings()
 
-    self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
     self.assertEqual(
         set(settings.feed_claim_caps),
         {
@@ -129,8 +122,7 @@ safe-run -- uv run python -m pytest \
 ```
 
 Expected: failures because the new Feed-claim functions do not exist,
-`CollectorSettings.caps` still includes Calls, and `CAP_BCFY_CALLS` is still
-parsed.
+and `CollectorSettings.caps` still includes Calls.
 
 - [ ] **Step 4: Implement Feed-authority metadata**
 
@@ -291,34 +283,9 @@ The default settings assertion must require:
 
 ```python
 self.assertEqual(settings.worker_profile.name, "mixed")
-sid = worker_profiles.allocation_for_domain(
-    settings.worker_profile,
-    grant_control.DomainId.SID,
-)
-self.assertIsNotNone(sid)
-assert sid is not None
+_feed, sid = settings.worker_profile.allocations
+self.assertIs(sid.domain_id, grant_control.DomainId.SID)
 self.assertTrue(sid.claims_enabled)
-```
-
-Add an environment compatibility assertion:
-
-```python
-def test_legacy_authority_environment_is_ignored(self) -> None:
-    env = {
-        **_required_env(),
-        "BCFY_CALLS_AUTHORITY_MODE": "legacy_feed",
-    }
-
-    with patch.dict("os.environ", env, clear=True):
-        settings = CollectorSettings()
-
-    sid = worker_profiles.allocation_for_domain(
-        settings.worker_profile,
-        grant_control.DomainId.SID,
-    )
-    self.assertIsNotNone(sid)
-    assert sid is not None
-    self.assertTrue(sid.claims_enabled)
 ```
 
 - [ ] **Step 3: Run the worker-profile/settings tests and confirm failure**
@@ -332,7 +299,7 @@ safe-run -- uv run python -m pytest \
 ```
 
 Expected: failures because `build_mixed_worker_profile` and `MIXED_PROFILE` do
-not exist and the legacy authority variable still selects Feed ownership.
+not exist and SID claims are still dormant.
 
 - [ ] **Step 4: Implement the fixed mixed profile**
 
