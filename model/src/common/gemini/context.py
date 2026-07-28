@@ -73,90 +73,9 @@ class RollingHistoryScheduleRow:
     wave: int
 
 
-# Temporary stacked-PR bridge for latest-main callers. PR #1003 removes this
-# block after switching evaluation to the prediction-only causal interface.
-@dataclasses.dataclass(frozen=True)
-class ContextTurn:
-    """One previous transcript retained for the legacy context interface.
-
-    Attributes:
-        audio_uri: Source audio URI retained for provenance and identity.
-        text: Transcript text supplied as prior context.
-    """
-
-    audio_uri: str
-    text: str
-
-
-def build_transcription_contents(
-    *,
-    audio_uri: str,
-    user_prompt: str,
-    history: collections.abc.Sequence[ContextTurn] | None = None,
-    history_mode: str = "text_turns",
-) -> list[dict[str, typing.Any]]:
-    """Build contents for latest-main callers using generic context turns.
-
-    Args:
-        audio_uri: GCS URI for the current FLAC audio segment.
-        user_prompt: Instruction for the current audio turn.
-        history: Prior generic turns ordered oldest to newest.
-        history_mode: One of the supported prior-context modes.
-
-    Returns:
-        Provider contents ending with the current user audio turn.
-    """
-    return _build_transcription_contents(
-        audio_uri=audio_uri,
-        user_prompt=user_prompt,
-        history=list(history or ()),
-        history_mode=history_mode,
-    )
-
-
-def build_context_histories(
-    rows: list[dict[str, typing.Any]],
-    *,
-    max_turns: int,
-) -> list[list[ContextTurn]]:
-    """Build generic histories for latest-main evaluation callers.
-
-    Args:
-        rows: Canonical or compatibility manifest rows in caller order.
-        max_turns: Maximum number of preceding turns retained per row.
-
-    Returns:
-        Generic histories aligned one-for-one with ``rows``.
-
-    Raises:
-        ValueError: If ``max_turns`` is negative.
-    """
-    if max_turns < 0:
-        msg = "max_turns must be non-negative"
-        raise ValueError(msg)
-    histories: list[list[ContextTurn]] = [[] for _ in rows]
-    if max_turns == 0 or not rows:
-        return histories
-
-    grouped_indices: dict[str, list[int]] = collections.defaultdict(list)
-    for index, row in enumerate(rows):
-        grouped_indices[_episode_key(row, index)].append(index)
-
-    for indices in grouped_indices.values():
-        history: list[ContextTurn] = []
-        for index in sorted(indices, key=lambda i: _row_sort_key(rows[i], i)):
-            histories[index] = list(history[-max_turns:])
-            row = rows[index]
-            text = str(row.get("text") or "").strip()
-            audio_uri = str(row.get("audio_filepath") or "").strip()
-            if audio_uri and _usable_history_text(text):
-                history.append(ContextTurn(audio_uri=audio_uri, text=text))
-    return histories
-
-
 # UP040: model supports Python 3.11.
 _TranscriptTurn: typing.TypeAlias = (  # noqa: UP040
-    TrainingReferenceTurn | PredictedHistoryTurn | ContextTurn
+    TrainingReferenceTurn | PredictedHistoryTurn
 )
 
 PRIOR_CONTEXT_MODES: typing.Final = frozenset(
@@ -443,6 +362,51 @@ def validate_evaluation_context_contract(
         TypeError: If the context count is not an integer.
         ValueError: If the count is negative or the mode is unsupported.
     """
+    _validate_prior_context_count(prior_context_count)
+    return validate_history_mode(history_mode)
+
+
+def resolve_evaluation_backend_for_context(
+    prior_context_count: int,
+    configured_backend: str | None,
+) -> str | None:
+    """Resolve any backend selection imposed by evaluation context.
+
+    Args:
+        prior_context_count: Maximum structural prediction-history window.
+        configured_backend: Already-parsed explicit backend, or ``None``.
+
+    Returns:
+        The configured backend for stateless evaluation, ``"online"`` for
+        positive context, or ``None`` when target shape must choose.
+
+    Raises:
+        TypeError: If the context count is not an integer.
+        ValueError: If the count is negative or positive context is combined
+            with explicit batch execution.
+    """
+    _validate_prior_context_count(prior_context_count)
+    if prior_context_count == 0:
+        return configured_backend
+    if configured_backend == "batch":
+        msg = (
+            "predicted-history evaluation requires the online backend; "
+            "batch cannot construct causal prior predictions"
+        )
+        raise ValueError(msg)
+    return "online"
+
+
+def _validate_prior_context_count(prior_context_count: int) -> None:
+    """Validate one structural prediction-history window size.
+
+    Args:
+        prior_context_count: Maximum structural prediction-history window.
+
+    Raises:
+        TypeError: If the context count is not an integer.
+        ValueError: If the context count is negative.
+    """
     if isinstance(prior_context_count, bool) or not isinstance(
         prior_context_count, int
     ):
@@ -451,7 +415,6 @@ def validate_evaluation_context_contract(
     if prior_context_count < 0:
         msg = "prior_context_count must be non-negative"
         raise ValueError(msg)
-    return validate_history_mode(history_mode)
 
 
 def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
@@ -1105,91 +1068,6 @@ def _finite_number(value: typing.Any) -> bool:
     )
 
 
-def _episode_key(row: dict[str, typing.Any], fallback_index: int) -> str:
-    """Return the best available same-source episode key for a training row.
-
-    Args:
-        row: Canonical training manifest row.
-        fallback_index: Caller-order index used when provenance is absent.
-
-    Returns:
-        A stable source identifier or a row-specific fallback key.
-    """
-    value = row.get("original_audio_uri")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    source_audio = row.get("source_audio")
-    if isinstance(source_audio, dict):
-        value = source_audio.get("audio_filepath")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    for key in ("audio_uri", "example_id", "audio_filepath"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return f"__missing_episode_key__:{fallback_index}"
-
-
-def _row_sort_key(
-    row: dict[str, typing.Any], fallback_index: int
-) -> tuple[float, int, str]:
-    """Return a deterministic source-order key for one training row.
-
-    Args:
-        row: Canonical training manifest row.
-        fallback_index: Caller-order index used for absent source ordering.
-
-    Returns:
-        Source offset, within-source order, and audio URI.
-    """
-    offset = _numeric_value(row.get("original_offset"))
-    if offset is None:
-        source_audio = row.get("source_audio")
-        if isinstance(source_audio, dict):
-            offset = _numeric_value(source_audio.get("offset"))
-    if offset is None:
-        offset = _numeric_value(row.get("offset"))
-    if offset is None:
-        offset = float(fallback_index)
-
-    order = _int_value(row.get("row_index"))
-    if order is None:
-        order = _int_value(row.get("segment_id"))
-    if order is None:
-        order = fallback_index
-
-    audio_uri = str(row.get("audio_filepath") or "")
-    return (offset, order, audio_uri)
-
-
 def _usable_history_text(text: str) -> bool:
     normalized = text.strip()
     return bool(normalized) and normalized.upper() != "[UNINTELLIGIBLE]"
-
-
-def _numeric_value(value: typing.Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)) and math.isfinite(float(value)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            parsed = float(value)
-        except ValueError:
-            return None
-        if math.isfinite(parsed):
-            return parsed
-    return None
-
-
-def _int_value(value: typing.Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None

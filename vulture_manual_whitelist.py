@@ -10,6 +10,8 @@
 from backend.pipeline.common.storage.mock_cache_provider import (
     MockCacheProvider,
 )
+from backend.pipeline.ingestion import grant_supervisor
+from backend.pipeline.storage import ingestion_lease_store
 
 MockCacheProvider
 _.get_value
@@ -20,123 +22,15 @@ _.get_value
 current_worker
 current_fencing_token
 
-# Vulture excludes focused tests and cannot follow runtime-selected Lease
-# adapters, so retain the public lifecycle methods, returned result fields, and
-# lifecycle telemetry causes exercised through those dynamic boundaries.
-from backend.pipeline.storage.ingestion_lease_store import (
-    IngestionLeaseStore,
-    LeaseHeartbeatResult,
-    LeaseOperationResult,
-    LeaseReleaseCause,
-)
-
-IngestionLeaseStore.claim_unclaimed
-IngestionLeaseStore.claim_recoverable
-IngestionLeaseStore.renew_heartbeats
-IngestionLeaseStore.release
-IngestionLeaseStore.finalize_failure
-IngestionLeaseStore.load_membership
-IngestionLeaseStore.commit_child_mutations
-LeaseOperationResult.disposition
-LeaseHeartbeatResult.disposition
-LeaseReleaseCause.SHUTDOWN
-LeaseReleaseCause.REBALANCE
-LeaseReleaseCause.CANCELLATION
-LeaseReleaseCause.ABANDONMENT
-
-# The exact Feed-grant heartbeat storage boundary lands before the generic
-# Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
-from backend.pipeline.storage.feed_store import FeedStore
-
-FeedStore.renew_grant_heartbeats
-
-# CollectorRuntime no longer calls these legacy lifecycle helpers. The next
-# stacked cleanup PR deletes them.
-FeedStore.renew_heartbeats_batch_diagnostic
-FeedStore.release_feeds_batch
-
-# The typed Feed/SID control contracts and immutable worker profiles land as a
-# reviewable foundation before CollectorRuntime composition. Vulture excludes
-# their focused tests and cannot see Protocol member use through structural
-# typing. Remove these entries as the supervisor and startup wiring land.
-from backend.pipeline.ingestion import (
-    failure_policy,
-    feed_grant_control,
-    grant_control,
-    grant_supervisor,
-    sid_grant_control,
-    worker_profiles,
-)
-
-failure_policy.plan_failure
-feed_grant_control.FeedGrantControl
-feed_grant_control.FeedGrantControl.heartbeat
-feed_grant_control.FeedGrantControl.finalize
-sid_grant_control.SidGrantControl
-sid_grant_control.SidGrantControl.heartbeat
-sid_grant_control.SidGrantControl.finalize
-grant_control.ClaimMode.RECOVERY
-grant_control.RunContext.stop_requested
-grant_control.RunContext.grant_lost
-grant_control.GrantControl
-grant_control.GrantControl.heartbeat
-grant_control.GrantControl.finalize
-grant_control.GrantRunner
-worker_profiles.derive_bcfy_calls_authority
-worker_profiles.resolve_worker_profile
-
-# The pure Calls cursor policy lands before the scheduler and SID runner that
-# consume it. Vulture excludes its focused tests.
-from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
-
-cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE
-cursor_policy.ReplayFloorCause.OVERLOAD
-cursor_policy.BootstrapDecision.replay_floor
-cursor_policy._issue_covered_page
-cursor_policy._issue_replayable_page
-cursor_policy._issue_no_progress_page
-cursor_policy.LeaseCursor.next_page_sequence
-cursor_policy.LeaseCursor.outstanding_candidate
-cursor_policy.LeaseCursor.prepare
-cursor_policy.LeaseCursor.prepare_no_progress
-cursor_policy.LeaseCursor.accept
-cursor_policy.LeaseCursor.accept_no_progress
-cursor_policy.LeaseCursor.accept_replayable
-
-# The generic supervisor lands before CollectorRuntime delegates its legacy
-# Feed lifecycle to it. Vulture excludes the focused contract tests, so retain
-# only the public handoff surface until the next runtime-migration PR.
-grant_supervisor.GrantSupervisor
+# GrantSupervisor exposes admission state for focused lifecycle tests. Vulture
+# excludes tests from its analysis.
 grant_supervisor.GrantSupervisor.admission_enabled
-grant_supervisor.GrantSupervisor.integrity_failure_event
-grant_supervisor.GrantSupervisor.integrity_failure
-grant_supervisor.GrantSupervisor.admit_cycle
-grant_supervisor.GrantSupervisor.heartbeat_cycle
-grant_supervisor.GrantSupervisor.active_count
 
-# The private Feed-affine shard lands before the public scheduler facade that
-# consumes it. Vulture excludes its focused shard tests, so allowlist this
-# dormant package only until the next stacked scheduler PR wires the facade.
-from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
-
-_shard._Shard
-_shard._Shard.fatal_failure
-_shard._Shard.admit
-_shard._Shard.purge_exact
-_shard._Shard.cancel_active_exact
-_shard._Shard.abandon_cancellation
-_shard._Shard.wait_for_held
-_types._shard_index
-cohort_timestamp
-
-# The shared Calls provider lands before the SID polling runtime consumes its
-# SID-specific selector. Vulture excludes the focused provider tests.
-from backend.pipeline.ingestion.collectors.bcfy_calls.provider import (
-    CallsProviderClient,
-)
-
-CallsProviderClient.fetch_sid_page
-
+# Release causes are a public telemetry vocabulary with one storage policy.
+ingestion_lease_store.LeaseReleaseCause.SHUTDOWN
+ingestion_lease_store.LeaseReleaseCause.REBALANCE
+ingestion_lease_store.LeaseReleaseCause.CANCELLATION
+ingestion_lease_store.LeaseReleaseCause.ABANDONMENT
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.

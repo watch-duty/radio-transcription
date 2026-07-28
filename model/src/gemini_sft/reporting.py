@@ -31,6 +31,8 @@ class ReportArtifacts:
     Attributes:
         raw_output_uri: Raw batch-provider output location, when applicable.
         online_predictions_uri: Online prediction-attempt cache location.
+        rolling_history_index_uri: Rolling wave-artifact index location.
+        rolling_history_audit_uri: Transcript-free history audit location.
         normalized_manifest_uri: Normalized inference manifest location.
         summary_json_uri: Published JSON summary location.
         summary_markdown_uri: Published Markdown summary location.
@@ -38,6 +40,8 @@ class ReportArtifacts:
 
     raw_output_uri: str | None = None
     online_predictions_uri: str | None = None
+    rolling_history_index_uri: str | None = None
+    rolling_history_audit_uri: str | None = None
     normalized_manifest_uri: str | None = None
     summary_json_uri: str | None = None
     summary_markdown_uri: str | None = None
@@ -232,6 +236,8 @@ def _artifacts_to_dict(artifacts: ReportArtifacts) -> dict[str, str]:
     pairs = {
         "raw_output_uri": artifacts.raw_output_uri,
         "online_predictions_uri": artifacts.online_predictions_uri,
+        "rolling_history_index_uri": artifacts.rolling_history_index_uri,
+        "rolling_history_audit_uri": artifacts.rolling_history_audit_uri,
         "normalized_manifest_uri": artifacts.normalized_manifest_uri,
         "summary_json_uri": artifacts.summary_json_uri,
         "summary_markdown_uri": artifacts.summary_markdown_uri,
