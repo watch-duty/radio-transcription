@@ -4,12 +4,15 @@ import collections.abc  # noqa: TC003 - public hints resolve at runtime.
 import dataclasses
 import logging
 import time
+import typing
 
 from aiohttp import web
 
 from backend.pipeline.ingestion import settings  # noqa: TC001
 
 logger = logging.getLogger(__name__)
+
+BCFY_CALLS_AUTHORITY_MODE: typing.Final = "sid_lease"
 
 
 @dataclasses.dataclass
@@ -32,7 +35,6 @@ class HealthState:
         active_feed_count: Process-local active Feed-grant count provider.
         active_sid_count: Process-local active SID-grant count provider.
         integrity_failed: Process-local fatal supervisor signal provider.
-        bcfy_calls_authority_mode: Selected process authority mode.
         startup_time: Monotonic process startup observation.
         last_heartbeat_tick: Latest monotonic heartbeat-dispatch observation.
     """
@@ -40,7 +42,6 @@ class HealthState:
     active_feed_count: collections.abc.Callable[[], int]
     active_sid_count: collections.abc.Callable[[], int]
     integrity_failed: collections.abc.Callable[[], bool]
-    bcfy_calls_authority_mode: str
     startup_time: float = dataclasses.field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
 
@@ -65,7 +66,7 @@ def _response_payload(
         "status": status,
         "active_feeds": state.active_feed_count(),
         "active_sids": state.active_sid_count(),
-        "bcfy_calls_authority_mode": state.bcfy_calls_authority_mode,
+        "bcfy_calls_authority_mode": BCFY_CALLS_AUTHORITY_MODE,
         "last_heartbeat_age_sec": heartbeat_age_sec,
     }
 

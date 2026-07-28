@@ -35,6 +35,75 @@ async def _update_feed_bookmark(
     await conn.close()
 
 
+async def _activate_bcfy_calls_sid_membership(
+    feed_id: str,
+    sid: str,
+    group_id: str,
+) -> None:
+    """Activate one current-contract Calls child beneath a durable SID lease."""
+    conn = await asyncpg.connect(**_CONN_KWARGS)
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE public.feed_properties
+                SET bcfy_calls_sid = $2,
+                    bcfy_calls_group_id = $3,
+                    bcfy_calls_is_trunked = TRUE
+                WHERE feed_id = $1::uuid
+                """,
+                feed_id,
+                sid,
+                group_id,
+            )
+            await conn.execute(
+                """
+                UPDATE public.feeds
+                SET status = 'active'::public.feed_status,
+                    worker_id = NULL,
+                    last_heartbeat = NULL,
+                    unclaimed_since = NULL
+                WHERE id = $1::uuid
+                """,
+                feed_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO public.ingestion_leases (
+                    source_type,
+                    lease_key,
+                    status
+                ) VALUES (
+                    'bcfy_calls',
+                    $1,
+                    'unclaimed'::public.feed_status
+                )
+                """,
+                sid,
+            )
+    finally:
+        await conn.close()
+
+
+async def _deactivate_bcfy_calls_sid_lease(sid: str) -> None:
+    """Fence the temporary parent lease before deactivating its child Feed."""
+    conn = await asyncpg.connect(**_CONN_KWARGS)
+    try:
+        await conn.execute(
+            """
+            UPDATE public.ingestion_leases
+            SET status = 'deactivated'::public.feed_status,
+                worker_id = NULL,
+                last_heartbeat = NULL
+            WHERE source_type = 'bcfy_calls'
+              AND lease_key = $1
+            """,
+            sid,
+        )
+    finally:
+        await conn.close()
+
+
 def _create_and_cleanup_feed(
     payload: dict[str, Any],
 ) -> Generator[tuple[str, str]]:
@@ -95,20 +164,41 @@ def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
     yield from _create_and_cleanup_feed(payload)
 
 
-@pytest.fixture(name="test_polling_feed")
-def create_test_polling_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary polling feed for testing.
+@pytest.fixture(name="test_sid_polling_feed")
+def create_test_sid_polling_feed() -> Generator[tuple[str, str]]:
+    """Create a temporary Calls Feed beneath its current SID authority.
 
     Yields:
         tuple[str, str]: A tuple containing (feed_id, feed_name).
     """
+    sid = str(uuid.uuid4().fields[0])
+    group_id = "2912"
     feed_name = f"integration-test-polling-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
         "source_type": "bcfy_calls",
-        "source_feed_id": f"{uuid.uuid4().fields[0]}-{uuid.uuid4().fields[1]}",
+        "source_feed_id": f"{sid}-{group_id}",
     }
-    yield from _create_and_cleanup_feed(payload)
+    gen = _create_and_cleanup_feed(payload)
+    feed_id, _ = next(gen)
+    lease_created = False
+    try:
+        asyncio.run(
+            _activate_bcfy_calls_sid_membership(
+                feed_id,
+                sid,
+                group_id,
+            )
+        )
+        lease_created = True
+        yield feed_id, feed_name
+    finally:
+        if lease_created:
+            asyncio.run(_deactivate_bcfy_calls_sid_lease(sid))
+        try:
+            next(gen)
+        except StopIteration:
+            pass
 
 
 @pytest.fixture(name="test_echo_feed")
