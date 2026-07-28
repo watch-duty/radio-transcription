@@ -40,6 +40,16 @@ no extra install step needed):
 audio/bcfy_calls_oversampled \
       --out-train-uri gs://wd-transcription-data/sft/runs/<round-id>/\
 manifests/canonical/train.jsonl'
+
+Validating the result: run gemini-sft prepare against --out-train-uri
+plus this reconstruction's own, untouched validation/eval manifests:
+  validation_manifest_uri = "gs://wd-transcription-data/sft/dataset_versions/\
+20260724-production-shaped-reconstruction/manifests/canonical/validation.jsonl"
+  eval_manifest_uri = "gs://wd-transcription-data/sft/dataset_versions/\
+20260724-production-shaped-reconstruction/manifests/canonical/eval.jsonl"
+Use a round_id distinct from --dest-prefix's round-id -- prepare treats
+its own sft/runs/<round_id>/ as exclusively owned state and fails
+(with an actionable error) if it finds pre-existing files there.
 """
 
 from __future__ import annotations
