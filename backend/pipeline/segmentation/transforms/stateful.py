@@ -769,12 +769,12 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _record_clamping_diagnostics(
         self,
         *,
-        task_logger: std_logging.LoggerAdapter,
         clamped_by_items: bool,
         clamped_by_time: bool,
         elements_to_emit_count: int,
         remaining_buffer_count: int,
         context_label: str,
+        task_logger: std_logging.LoggerAdapter | None = None,
         rescheduled_deadline: Timestamp | None = None,
         elapsed_sec: float | None = None,
     ) -> None:
@@ -793,22 +793,23 @@ class OrderedStitchAudioFn(beam.DoFn):
                 f"wall_clock_timeout ({elapsed_sec:.2f}s/{trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC:.0f}s)"
             )
 
-        reason_str = ", ".join(reasons) or "clamped"
-        if rescheduled_deadline is not None:
-            task_logger.info(
-                "[Windmill Clamp] %s (%s). Buffer remaining: %d. Rescheduled timer at %s",
-                context_label,
-                reason_str,
-                remaining_buffer_count,
-                rescheduled_deadline,
-            )
-        else:
-            task_logger.info(
-                "[Windmill Clamp] %s (%s). Buffer remaining: %d",
-                context_label,
-                reason_str,
-                remaining_buffer_count,
-            )
+        if task_logger is not None:
+            reason_str = ", ".join(reasons) or "clamped"
+            if rescheduled_deadline is not None:
+                task_logger.info(
+                    "[Windmill Clamp] %s (%s). Buffer remaining: %d. Rescheduled timer at %s",
+                    context_label,
+                    reason_str,
+                    remaining_buffer_count,
+                    rescheduled_deadline,
+                )
+            else:
+                task_logger.info(
+                    "[Windmill Clamp] %s (%s). Buffer remaining: %d",
+                    context_label,
+                    reason_str,
+                    remaining_buffer_count,
+                )
 
     def _handle_budget_exhausted(
         self,
@@ -863,24 +864,24 @@ class OrderedStitchAudioFn(beam.DoFn):
         deferred_drain_timer.set(next_deadline)
 
         # Diagnostics & Metrics
-        if task_logger is not None:
-            clamped_by_items = (
-                self.processed_in_bundle
-                >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-            )
-            elapsed_sec = time.monotonic() - self._get_bundle_start_time()
-            clamped_by_time = (
-                elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
-            )
-            self._record_clamping_diagnostics(
-                task_logger=task_logger,
-                clamped_by_items=clamped_by_items,
-                clamped_by_time=clamped_by_time,
-                elements_to_emit_count=0,
-                remaining_buffer_count=len(buffer_elements),
-                context_label="Process budget exhausted",
-                rescheduled_deadline=next_deadline,
-            )
+        clamped_by_items = (
+            self.processed_in_bundle
+            >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+        )
+        elapsed_sec = time.monotonic() - self._get_bundle_start_time()
+        clamped_by_time = (
+            elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
+        )
+        self._record_clamping_diagnostics(
+            task_logger=task_logger,
+            clamped_by_items=clamped_by_items,
+            clamped_by_time=clamped_by_time,
+            elements_to_emit_count=0,
+            remaining_buffer_count=len(buffer_elements),
+            context_label="Process budget exhausted",
+            rescheduled_deadline=next_deadline,
+            elapsed_sec=elapsed_sec,
+        )
 
     @override
     def process(
@@ -926,7 +927,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
 
         task_logger = _get_task_logger(
-            feed_id, metadata.session_id, "sequence-buffer"
+            feed_id, metadata.session_id, "ordered-stitcher"
         )
         curr_context, session_changed = _handle_session_transition(
             curr_context=curr_context,
