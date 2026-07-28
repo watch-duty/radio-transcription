@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { decodeJwt } from 'jose';
 
@@ -26,13 +26,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   } = useUserInfo(token);
 
   const isAdmin = userInfo?.isAdmin ?? false;
-  const setIsAdmin = useCallback(() => {
-    if (import.meta.env.DEV) {
-      console.warn(
-        'setIsAdmin is deprecated: isAdmin is derived directly from backend user info.'
-      );
-    }
-  }, []);
 
   /**
    * Effect which checks the user's session.
@@ -156,7 +149,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         token,
         setToken,
         isAdmin,
-        setIsAdmin,
         isLoading: isUserInfoLoading,
         isError: isUserInfoError,
       }}
