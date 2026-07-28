@@ -31,6 +31,27 @@ To build the `validation_manifest_uri` input itself, see the runbook's
 ["Build A Validation Manifest"](runbook.md#build-a-validation-manifest)
 section — do not hand-copy `eval.jsonl` without relabeling `split`.
 
+## Prompt Contract
+
+System and user prompts occupy distinct Gemini request fields: the system prompt
+is the system instruction, while the user prompt belongs to each current user
+turn. Prompt file fields are unsupported; configure only inline prompt strings
+so the resolved values can be recorded in the durable config.
+
+Omitting `[prompts].user` preserves the legacy default text instruction. Exact
+production parity instead uses an audio-only current user turn:
+
+```toml
+[prompts]
+# Omit `user` to keep the default text instruction.
+# Set an explicit empty string for production's audio-only user turn.
+user = ""
+```
+
+The system prompt must be non-empty, and whitespace-only system or user values
+are invalid. An explicit empty user value is valid only without prior context:
+positive `context.prior_turn_count` requires a non-empty user prompt.
+
 ## Prior Context Contract
 
 Use `[context]` to control the number and representation of prior same-source

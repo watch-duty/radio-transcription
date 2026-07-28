@@ -84,6 +84,27 @@ use an external wrapper that invokes the CLI once per config. The committed
 example contains training manifests and a publisher-model eval target. A
 training-only config may omit `[eval.model]`, but it cannot be evaluated.
 
+### Prompt Configuration
+
+System and user prompts are separate Gemini request fields: the system prompt
+is the system instruction, and the user prompt is placed in each current user
+turn. Use inline prompt strings only; prompt file fields are unsupported so the
+resolved values remain reproducible in the durable config.
+
+Omit `[prompts].user` to retain the legacy default text instruction. To match
+production's audio-only user turn exactly, use:
+
+```toml
+[prompts]
+# Omit `user` to keep the default text instruction.
+# Set an explicit empty string for production's audio-only user turn.
+user = ""
+```
+
+System prompts cannot be empty, and whitespace-only system or user values are
+invalid. The explicit empty user value is allowed only with no prior context;
+positive `context.prior_turn_count` requires a non-empty user prompt.
+
 The tuned endpoint does not exist when its training round is prepared, and
 tuning never mutates the round's eval target. After tuning completes, create a
 new eval-only config with a new `round_id`, omit both `train_manifest_uri` and

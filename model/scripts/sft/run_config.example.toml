@@ -75,4 +75,6 @@ max_retries = 3
 # Optional inline overrides only. Prompt files are intentionally unsupported so
 # the resolved prompt text can be stored in config.json for resume/eval.
 # system = "..."
-# user = "..."
+# Omit `user` to keep the default text instruction.
+# Set an explicit empty string for production's audio-only user turn.
+user = ""
