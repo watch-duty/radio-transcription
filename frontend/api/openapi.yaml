@@ -322,6 +322,8 @@ components:
           $ref: "#/components/schemas/FeedStatus"
         substatus:
           $ref: "#/components/schemas/BackendFeedStatus"
+        childStatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
           type: number
           format: double
@@ -336,6 +338,15 @@ components:
           format: double
         statusReasonDetail:
           type: string
+        bcfyCallsSid:
+          type: string
+        leaseStatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
+        leaseLastHeartbeat:
+          type: number
+          format: double
+        leaseStatusReason:
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
