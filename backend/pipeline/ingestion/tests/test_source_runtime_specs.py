@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from backend.pipeline.ingestion import main as ingestion_main
 from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.router import _COLLECTORS
 from backend.pipeline.storage import feed_store
@@ -22,6 +23,43 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
             set(_COLLECTORS),
             set(source_runtime_specs.SOURCE_RUNTIME_SPECS),
         )
+
+    def test_startup_rejects_collector_outside_current_authorities(
+        self,
+    ) -> None:
+        settings = mock.Mock(
+            feed_claim_caps={
+                feed_store.SourceType.BCFY_FEEDS: 240,
+                feed_store.SourceType.OPENMHZ: 900,
+                feed_store.SourceType.FIRE_NOTIFICATIONS: 600,
+            }
+        )
+        registered_collectors = [
+            feed_store.SourceType.BCFY_FEEDS.value,
+            feed_store.SourceType.BCFY_CALLS.value,
+            feed_store.SourceType.OPENMHZ.value,
+            feed_store.SourceType.FIRE_NOTIFICATIONS.value,
+            feed_store.SourceType.ECHO.value,
+        ]
+
+        with (
+            mock.patch.object(ingestion_main, "setup_logging"),
+            mock.patch.object(ingestion_main, "setup_tracing"),
+            mock.patch.object(
+                ingestion_main,
+                "CollectorSettings",
+                return_value=settings,
+            ),
+            mock.patch.object(
+                ingestion_main,
+                "supported_source_types",
+                return_value=registered_collectors,
+            ),
+            mock.patch.object(ingestion_main, "resolve_topic_path"),
+            mock.patch.object(ingestion_main, "CollectorRuntime"),
+            self.assertRaisesRegex(RuntimeError, "collector registry"),
+        ):
+            ingestion_main.main()
 
     def test_feed_claimable_specs_exclude_non_feed_authorities(self) -> None:
         self.assertEqual(

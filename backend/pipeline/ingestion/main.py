@@ -32,18 +32,30 @@ def main() -> None:
             msg = f"Startup check failed for source type {st}: {e}"
             raise RuntimeError(msg) from e
 
-    # Cross-registry invariant: Feed-claimable SourceRuntimeSpec entries must
-    # match configured Feed caps. Drift in either direction is silent in
-    # production: workers either claim feeds they cannot process or omit an
-    # intended Feed-authority source.
-    expected_cap_types = set(source_runtime_specs.feed_claimable_source_specs())
+    # Configured Feed caps must cover exactly the Feed-authority sources.
+    feed_claimable_types = set(
+        source_runtime_specs.feed_claimable_source_specs()
+    )
     cap_types = set(settings.feed_claim_caps)
-    if expected_cap_types != cap_types:
+    if feed_claimable_types != cap_types:
         msg = (
             "Startup invariant violated: Feed-claimable source registry "
-            f"{sorted(t.value for t in expected_cap_types)} differs from "
+            f"{sorted(t.value for t in feed_claimable_types)} differs from "
             "Feed-claim caps registry "
             f"{sorted(t.value for t in cap_types)}."
+        )
+        raise RuntimeError(msg)
+
+    # Registered collectors must cover every Feed-authority source plus the
+    # legacy Calls route retained pending separate collector-code removal.
+    collector_types = {SourceType(st) for st in supported_source_types()}
+    expected_collector_types = feed_claimable_types | {SourceType.BCFY_CALLS}
+    if collector_types != expected_collector_types:
+        msg = (
+            "Startup invariant violated: collector registry "
+            f"{sorted(t.value for t in collector_types)} differs from "
+            "current authority sources "
+            f"{sorted(t.value for t in expected_collector_types)}."
         )
         raise RuntimeError(msg)
 
