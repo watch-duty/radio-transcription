@@ -1,10 +1,12 @@
 """Tests for Gemini evaluation artifact paths."""
 
 import dataclasses
+import json
 import unittest
 
-from common.gemini import context, eval_artifacts
+from common.gemini import context, eval_artifacts, vertex
 from gemini_sft import artifacts as sft_artifacts
+from gemini_sft import target_execution
 
 
 def _eval_row(
@@ -70,6 +72,16 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
             paths.online_metadata_uri,
             "gs://bucket/sft/runs/run-a/evals/checkpoint_6/"
             "online_predictions.meta.json",
+        )
+        self.assertEqual(
+            paths.rolling_history_index_uri,
+            "gs://bucket/sft/runs/run-a/evals/checkpoint_6/"
+            "rolling_history_index.json",
+        )
+        self.assertEqual(
+            paths.rolling_history_audit_uri,
+            "gs://bucket/sft/runs/run-a/evals/checkpoint_6/"
+            "rolling_history_audit.jsonl",
         )
         self.assertEqual(
             eval_artifacts.batch_prediction_metadata_uri(
@@ -319,6 +331,83 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
         self.assertEqual(segment.start_seconds, 12.5)
         self.assertEqual(segment.end_seconds, 13.5)
 
+    def test_manifest_references_cannot_affect_rolling_request_bytes(
+        self,
+    ) -> None:
+        def render_requests(reference_texts: tuple[str, str]) -> list[str]:
+            rows = [
+                {
+                    **_eval_row(
+                        "gs://bucket/audio/001.flac",
+                        reference_texts[0],
+                        example_id="example-a",
+                        segment_id="001",
+                        offset=0.0,
+                    ),
+                    "original_audio_uri": ("gs://bucket/source/original.wav"),
+                    "original_offset": 0.0,
+                },
+                {
+                    **_eval_row(
+                        "gs://bucket/audio/002.flac",
+                        reference_texts[1],
+                        example_id="example-a",
+                        segment_id="002",
+                        offset=2.0,
+                    ),
+                    "original_audio_uri": ("gs://bucket/source/original.wav"),
+                    "original_offset": 2.0,
+                },
+            ]
+            prepared = sft_artifacts.eval_rows_for_inference_from_entries(
+                rows,
+                source="test",
+                prior_context_count=1,
+            )
+            schedule = context.build_strict_causal_schedule(
+                prepared.segments,
+                max_turns=1,
+            )
+            attempts: dict[str, dict[str, object]] = {}
+            request_payloads: list[str] = []
+            for scheduled in sorted(
+                schedule,
+                key=lambda row: (row.wave, row.segment.manifest_index),
+            ):
+                history, _ = (
+                    target_execution._predicted_history_for_schedule_row(
+                        scheduled,
+                        attempts,
+                    )
+                )
+                request = vertex.build_request(
+                    scheduled.segment.audio_uri,
+                    system_prompt="system",
+                    user_prompt="transcribe current audio",
+                    history=history,
+                    history_mode="text_turns",
+                )
+                request_payloads.append(json.dumps(request, sort_keys=True))
+                attempts[scheduled.segment.audio_uri] = {
+                    "audio_filepath": scheduled.segment.audio_uri,
+                    "pred_text": (
+                        f"PREDICTION_{scheduled.segment.manifest_index}"
+                    ),
+                    "error": None,
+                }
+            return request_payloads
+
+        original = render_requests(("REFERENCE_SECRET_0", "REFERENCE_SECRET_1"))
+        mutated = render_requests(
+            ("MUTATED_REFERENCE_0", "MUTATED_REFERENCE_1")
+        )
+
+        self.assertEqual(original, mutated)
+        self.assertNotIn("REFERENCE", "".join(original))
+        self.assertIn("PREDICTION_0", original[1])
+        self.assertNotIn("gs://bucket/audio/001.flac", original[1])
+        self.assertEqual(original[1].count("gs://bucket/audio/002.flac"), 1)
+
     def test_eval_segment_source_key_uses_source_audio_identity(
         self,
     ) -> None:
@@ -504,53 +593,6 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
         self.assertNotIn("text", dataclasses.asdict(segment))
         self.assertEqual(segment.source_key, "example")
         self.assertEqual(segment.start_seconds, 3.0)
-
-    def test_legacy_history_loader_remains_available_to_main_callers(
-        self,
-    ) -> None:
-        rows = [
-            {
-                **_eval_row(
-                    "gs://bucket/audio/001.flac",
-                    "first",
-                    example_id="example",
-                    segment_id="001",
-                    offset=0.0,
-                ),
-                "original_audio_uri": "gs://bucket/source/original.wav",
-                "original_offset": 0.0,
-            },
-            {
-                **_eval_row(
-                    "gs://bucket/audio/002.flac",
-                    "second",
-                    example_id="example",
-                    segment_id="002",
-                    offset=1.0,
-                ),
-                "original_audio_uri": "gs://bucket/source/original.wav",
-                "original_offset": 1.0,
-            },
-        ]
-
-        prepared = sft_artifacts.eval_rows_with_histories_from_entries(
-            rows,
-            source="test",
-            prior_context_count=1,
-        )
-
-        self.assertEqual(
-            prepared.histories,
-            [
-                [],
-                [
-                    context.ContextTurn(
-                        "gs://bucket/audio/001.flac",
-                        "first",
-                    )
-                ],
-            ],
-        )
 
 
 if __name__ == "__main__":
