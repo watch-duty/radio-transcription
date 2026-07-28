@@ -423,6 +423,35 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(gen_cfg["temperature"], 0.0)
         self.assertEqual(gen_cfg["max_output_tokens"], 512)
 
+    def test_default_batch_request_disables_thinking(self) -> None:
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+
+        self.assertEqual(
+            result["request"]["generationConfig"]["thinkingConfig"],
+            {"thinkingBudget": 0},
+        )
+
+    @unittest.skipIf(
+        vertex._VERTEX_MISSING is not None,
+        "requires the [vertex] extra",
+    )
+    def test_default_online_config_disables_thinking(self) -> None:
+        request = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )["request"]
+
+        config = vertex.types.GenerateContentConfig(
+            **request["generationConfig"]
+        )
+
+        self.assertEqual(config.thinking_config.thinking_budget, 0)
+
     def test_generation_config_is_copied(self) -> None:
         """Mutating request generation config leaves defaults intact."""
         result = self.build_request(

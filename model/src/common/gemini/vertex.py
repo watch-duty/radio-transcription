@@ -41,7 +41,11 @@ logger = logging.getLogger(__name__)
 # Canonical Gemini transcription inference setup shared by ``gemini_sft.evaluate``
 # and the ``gemini_transcribe_audio`` notebook. Keep these as plain stdlib
 # dict/list values so prompt/config tests can import them without the [vertex] extra.
-GEMINI_GENERATION_CONFIG = {"temperature": 0.0, "max_output_tokens": 512}
+GEMINI_GENERATION_CONFIG = {
+    "temperature": 0.0,
+    "max_output_tokens": 512,
+    "thinkingConfig": {"thinkingBudget": 0},
+}
 
 GEMINI_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},

@@ -221,7 +221,8 @@ def build_training_transcription_contents(
 
     Raises:
         TypeError: If a turn is not a ``TrainingReferenceTurn``.
-        ValueError: If ``history_mode`` is unsupported.
+        ValueError: If ``history_mode`` is unsupported, or if transcript history
+            is provided with an empty ``user_prompt``.
     """
     history_turns = _validated_training_history(history)
     return _build_transcription_contents(
@@ -253,7 +254,8 @@ def build_evaluation_transcription_contents(
     Raises:
         TypeError: If history contains a training reference or unknown turn.
         ValueError: If ``history_mode`` is unsupported or the rendered request
-            does not contain exactly the current audio part.
+            does not contain exactly the current audio part, or if transcript
+            history is provided with an empty ``user_prompt``.
     """
     history_turns = _validated_evaluation_history(history)
     contents = _build_transcription_contents(
@@ -285,7 +287,8 @@ def _build_transcription_contents(
         Provider contents ending with exactly one current-audio part.
 
     Raises:
-        ValueError: If ``history_mode`` is unsupported.
+        ValueError: If ``history_mode`` is unsupported, or if transcript history
+            is provided with an empty ``user_prompt``.
     """
     history_mode = validate_history_mode(history_mode)
     if not user_prompt:
