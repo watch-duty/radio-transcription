@@ -8,12 +8,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
 import { type Feed, SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
-import { listFeeds } from '../../service/listFeeds';
+import { useFeeds } from '../../hooks/useFeeds';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -28,9 +28,6 @@ interface FeedSearchViewProps {
   onFeedSelect?: (feedId: string) => void;
 }
 
-const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
-const QUERY_DEBOUNCE_TIME_MS = 300;
-
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   filters: FeedFilters;
@@ -38,6 +35,9 @@ interface CondensedFeedSearchResultsProps {
   feedsLoading: boolean;
   feedTotal: number;
   onFeedSelect?: (feedId: string) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function CondensedFeedSearchResults({
@@ -46,6 +46,9 @@ function CondensedFeedSearchResults({
   onFiltersChange,
   feedsLoading,
   onFeedSelect,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: CondensedFeedSearchResultsProps) {
   const [inputValue, setInputValue] = useState('');
 
@@ -71,12 +74,23 @@ function CondensedFeedSearchResults({
           setInputValue(newInputValue);
           onFiltersChange({ ...filters, searchQuery: newInputValue });
         }}
-        loading={feedsLoading}
+        loading={feedsLoading || isFetchingNextPage}
         loadingText={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CircularProgress size={16} /> Loading feeds...
           </Box>
         }
+        slotProps={{
+          listbox: {
+            onScroll: (event) =>
+              handleListboxScroll(
+                event,
+                onLoadMore,
+                hasNextPage,
+                isFetchingNextPage
+              ),
+          },
+        }}
         renderInput={(params) => (
           <TextField
             {...params}
@@ -177,6 +191,9 @@ interface TableFeedSearchResultsProps {
   feedTotal: number;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function TableFeedSearchResults({
@@ -189,6 +206,9 @@ function TableFeedSearchResults({
   feedTotal,
   filters,
   onFiltersChange,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: TableFeedSearchResultsProps) {
   return (
     <Box
@@ -210,6 +230,9 @@ function TableFeedSearchResults({
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={onFiltersChange}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={onLoadMore}
       />
     </Box>
   );
@@ -230,48 +253,21 @@ export function FeedSearchView({
     tags: [],
   });
 
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
-    filters.searchQuery
-  );
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchQuery(filters.searchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [filters.searchQuery]);
-
   const {
-    data: feedsData,
+    feeds,
+    total: feedTotal,
     error: feedsError,
     isLoading: feedsLoading,
-  } = useQuery({
-    queryKey: [
-      'listFeeds',
-      token,
-      debouncedSearchQuery,
-      filters.sourceTypes,
-      filters.sourceTypes.length,
-      filters.statuses,
-      filters.statuses.length,
-      filters.tags,
-      filters.tags.length,
-    ],
-    queryFn: () =>
-      listFeeds(token!, {
-        name: debouncedSearchQuery || undefined,
-        sourceTypes:
-          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
-        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
-        tags: filters.tags.length > 0 ? filters.tags : undefined,
-      }),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-    refetchInterval: FEED_REFETCH_INTERVAL_MS,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useFeeds({
+    token,
+    searchQuery: filters.searchQuery,
+    sourceTypes: filters.sourceTypes,
+    statuses: filters.statuses,
+    tags: filters.tags,
   });
-
-  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
-  const feedTotal = feedsData?.total ?? 0;
 
   const { data: searchOptionsData } = useFeedSearchOptions(token);
 
@@ -296,6 +292,9 @@ export function FeedSearchView({
         feedsLoading={feedsLoading}
         feedTotal={feedTotal}
         onFeedSelect={onFeedSelect}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
       />
     );
   }
@@ -311,6 +310,9 @@ export function FeedSearchView({
       feedTotal={feedTotal}
       filters={filters}
       onFiltersChange={setFilters}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadMore={fetchNextPage}
     />
   );
 }
