@@ -776,9 +776,11 @@ class OrderedStitchAudioFn(beam.DoFn):
         remaining_buffer_count: int,
         context_label: str,
         rescheduled_deadline: Timestamp | None = None,
+        elapsed_sec: float | None = None,
     ) -> None:
         """Records Beam metrics counters and structured logging when bundle drain is clamped."""
-        elapsed_sec = time.monotonic() - self._get_bundle_start_time()
+        if elapsed_sec is None:
+            elapsed_sec = time.monotonic() - self._get_bundle_start_time()
         reasons = []
         if clamped_by_items:
             self.bundle_clamped_item_limit.inc()
@@ -1211,6 +1213,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     remaining_buffer_count=len(remaining_elements),
                     context_label="Mid-execution bundle budget exhausted",
                     rescheduled_deadline=next_deadline,
+                    elapsed_sec=elapsed_sec,
                 )
                 if not isinstance(curr_context, datatypes.ActiveStitchingState):
                     msg = "curr_context must be an ActiveStitchingState"

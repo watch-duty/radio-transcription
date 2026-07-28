@@ -14,8 +14,6 @@ import apache_beam as beam
 import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from apache_beam.metrics.execution import MetricsEnvironment
-from apache_beam.metrics.metric import MetricName
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
 )
@@ -1220,6 +1218,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # Reset bundle counter
             fn.processed_in_bundle = 0
 
+            fn.bundle_clamped_item_limit = MagicMock()
+
             for i, chunk in enumerate(chunks):
                 # Call process directly
                 outputs = list(
@@ -1314,14 +1314,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 },
             )
 
-            # Verify Beam metric counter for bundle clamping
-            container = MetricsEnvironment.process_wide_container()
-            item_clamp_metric = container.get_counter(
-                MetricName(
-                    OrderedStitchAudioFn.__name__, "bundle_clamped_item_limit"
-                )
-            )
-            self.assertGreaterEqual(item_clamp_metric.value, 1)
+            # Verify Beam metric counter for bundle clamping was incremented
+            fn.bundle_clamped_item_limit.inc.assert_called()
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
@@ -2252,6 +2246,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             mock_mono.side_effect = [
                 101.0,  # inside _is_bundle_budget_exhausted for i=1
                 200.0,  # inside _is_bundle_budget_exhausted for i=2
+                200.0,  # inside _record_clamping_diagnostics
             ]
 
             fn._execute_bundle_chunks(
