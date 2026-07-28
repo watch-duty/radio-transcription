@@ -68,7 +68,6 @@ describe('AuthProvider', () => {
     // Should render loading state initially
     expect(screen.getByText(/loading/i)).toBeTruthy();
 
-    // Resolve the promise
     await act(async () => {
       await Promise.resolve();
     });

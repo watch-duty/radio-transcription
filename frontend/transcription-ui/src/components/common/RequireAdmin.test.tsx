@@ -140,7 +140,7 @@ describe('RequireAdmin component', () => {
     expect(router.state.location.pathname).toBe('/');
   });
 
-  it('redirects to / if auth query fails with error', () => {
+  it('renders error alert when auth query fails with error', () => {
     mockToken = 'test-token';
     mockIsLoading = false;
     mockIsError = true;
@@ -166,6 +166,9 @@ describe('RequireAdmin component', () => {
 
     render(<RouterProvider router={router} />);
 
-    expect(router.state.location.pathname).toBe('/');
+    expect(
+      screen.getByText('Failed to load user permissions. Please try again.')
+    ).toBeTruthy();
+    expect(router.state.location.pathname).toBe('/admin');
   });
 });
