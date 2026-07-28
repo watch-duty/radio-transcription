@@ -3174,7 +3174,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 # Samples should correspond to [1000ms, 3000ms], which is [16000, 48000]
                 # Samples should correspond to [1000ms, 3000ms], which is [16000, 48000]
                 assert req_1.start_audio_offset_ms == 1000
-                assert req_1.end_audio_offset_ms == 2000
+                assert req_1.end_audio_offset_ms == 3000
                 assert req_1.speech_segments == [
                     TimeRange(start_ms=101000, end_ms=103000)
                 ]
@@ -3187,7 +3187,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     == AudioClassification.AUDIO_CLASSIFICATION_OTHER
                 )
                 assert req_2.start_audio_offset_ms == 3000
-                assert req_2.end_audio_offset_ms == 4000
+                assert req_2.end_audio_offset_ms == 7000
                 assert len(req_2.speech_segments) == 0
 
                 # Check Flush 3 (Speech 2)
@@ -3198,7 +3198,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     == AudioClassification.AUDIO_CLASSIFICATION_SPEECH
                 )
                 assert req_3.start_audio_offset_ms == 7000
-                assert req_3.end_audio_offset_ms == 2000
+                assert req_3.end_audio_offset_ms == 9000
                 assert req_3.speech_segments == [
                     TimeRange(start_ms=107000, end_ms=109000)
                 ]
@@ -3211,7 +3211,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     == AudioClassification.AUDIO_CLASSIFICATION_OTHER
                 )
                 assert req_4.start_audio_offset_ms == 9000
-                assert req_4.end_audio_offset_ms == 1000
+                assert req_4.end_audio_offset_ms == 10000
                 assert len(req_4.speech_segments) == 0
 
             assert_that(results, assert_results)

@@ -2266,6 +2266,98 @@ class TestIcecastTimelineManager(unittest.TestCase):
             now + datetime.timedelta(seconds=75),
         )
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.logger"
+    )
+    def test_audio_lag_warning_logged_when_lag_exceeds_timeout(
+        self, mock_logger: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test that [Ingestion Audio Lag] warning behavior is controlled by AUDIO_LAG_WARN_THRESHOLD_SEC and previous_receipt_time."""
+        fixed_now = datetime.datetime(
+            2026, 7, 27, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.return_value = fixed_now
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_pcm = Path(tmp_dir) / "mock_test_lag_segment.pcm"
+                tmp_pcm.write_bytes(
+                    b"\x00\x00" * 16000 * 10
+                )  # 10 seconds of 16kHz audio
+
+                # Case 1: Above threshold (120s lag) on an established stream -> Warning logged
+                anchor_above = fixed_now - datetime.timedelta(seconds=120)
+                (
+                    chunk,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=1,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk)
+                mock_logger.warning.assert_called_once()
+                warning_call = mock_logger.warning.call_args[0]
+                self.assertIn("[Ingestion Audio Lag]", warning_call[0])
+                self.assertEqual(warning_call[1], "test-feed-id")
+
+                mock_logger.reset_mock()
+
+                # Case 2: Below threshold (10s lag) -> Warning NOT logged
+                anchor_below = fixed_now - datetime.timedelta(seconds=10)
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_below,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=2,
+                    stream_anchor_time=anchor_below,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_below)
+                mock_logger.warning.assert_not_called()
+
+                # Case 3: Initial stream startup chunk (previous_receipt_time is None) -> Warning NOT logged
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_startup,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=0,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=None,
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_startup)
+                mock_logger.warning.assert_not_called()
+
+        asyncio.run(_run())
+
 
 if __name__ == "__main__":
     unittest.main()

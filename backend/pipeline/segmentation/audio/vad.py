@@ -47,8 +47,11 @@ from backend.pipeline.segmentation.constants import (
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_DEFAULT_WARMUP_SEC,
+    VAD_GAP_MIDPOINT_DIVISOR,
+    VAD_MIN_AUDIO_OFFSET_SEC,
     VAD_NORMALIZATION_MIN_PEAK,
     VAD_NORMALIZATION_TARGET_PEAK,
+    VAD_QUALIFYING_GAP_SEC,
     VAD_SPECTRAL_MIN_TOTAL_ENERGY,
     VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
     VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
@@ -101,6 +104,7 @@ class VoiceActivityDetector:
         min_speech_duration_ms: int = VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
         min_silence_duration_ms: int = VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
         pad_sec: float = VAD_DEFAULT_PAD_SEC,
+        min_qualifying_gap_sec: float = VAD_QUALIFYING_GAP_SEC,
         priming_sec: float = VAD_DEFAULT_WARMUP_SEC,
         fallback_priming_sec: float = VAD_DEFAULT_FALLBACK_PRIMING_SEC,
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
@@ -123,6 +127,7 @@ class VoiceActivityDetector:
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
         self.pad_sec = pad_sec
+        self.min_qualifying_gap_sec = min_qualifying_gap_sec
         self.priming_sec = priming_sec
         self.fallback_priming_sec = fallback_priming_sec
         self.normalization_target_peak = normalization_target_peak
@@ -279,18 +284,98 @@ class VoiceActivityDetector:
         segments: list[tuple[float, float]],
         audio_len_sec: float,
     ) -> list[tuple[float, float]]:
-        """Pads and merges overlapping speech segments using the configured padding limits."""
-        padded_segments = []
+        """Pads speech segments using configured padding limits.
+
+        Clamps padding to gap midpoints between adjacent speech segments to
+        maintain non-overlapping segment invariants.
+
+        Args:
+            segments: List of raw (start, end) speech segment boundaries in
+                seconds (assumed sorted by start time).
+            audio_len_sec: Total duration of the audio payload in seconds.
+
+        Returns:
+            List of padded, non-overlapping (start, end) speech segment
+            boundaries in seconds.
+        """
+        merged_raw = self._merge_raw_segments(segments)
+        return self._apply_clamped_padding(merged_raw, audio_len_sec)
+
+    def _merge_raw_segments(
+        self,
+        segments: list[tuple[float, float]],
+    ) -> list[tuple[float, float]]:
+        """Merges raw speech segments that overlap in unpadded time boundaries.
+
+        Args:
+            segments: List of raw (start, end) speech segment boundaries
+                (assumed sorted by start time).
+
+        Returns:
+            List of merged raw (start, end) speech segment boundaries.
+        """
+        merged_raw: list[tuple[float, float]] = []
         for start, end in segments:
-            p_start = max(0.0, start - self.pad_sec)
-            p_end = min(audio_len_sec, end + self.pad_sec)
-            if padded_segments and padded_segments[-1][1] >= p_start:
-                padded_segments[-1] = (
-                    padded_segments[-1][0],
-                    max(padded_segments[-1][1], p_end),
+            if merged_raw and merged_raw[-1][1] >= start:
+                prev_start, prev_end = merged_raw[-1]
+                merged_raw[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged_raw.append((start, end))
+        return merged_raw
+
+    def _apply_clamped_padding(
+        self,
+        merged_raw: list[tuple[float, float]],
+        audio_len_sec: float,
+    ) -> list[tuple[float, float]]:
+        """Pads merged speech segments with midpoint clamping between adjacent gaps.
+
+        Args:
+            merged_raw: List of non-overlapping raw (start, end) speech
+                boundaries (assumed sorted by start time).
+            audio_len_sec: Total duration of the audio payload in seconds.
+
+        Returns:
+            List of padded (start, end) speech segment boundaries in seconds.
+        """
+        padded_segments = []
+        for i, (start, end) in enumerate(merged_raw):
+            if i > 0:
+                _, prev_end = merged_raw[i - 1]
+                gap = start - prev_end
+                if gap >= self.min_qualifying_gap_sec:
+                    max_pre_pad = max(
+                        0.0,
+                        (gap - self.min_qualifying_gap_sec)
+                        / VAD_GAP_MIDPOINT_DIVISOR,
+                    )
+                else:
+                    max_pre_pad = gap / VAD_GAP_MIDPOINT_DIVISOR
+                p_start = max(
+                    VAD_MIN_AUDIO_OFFSET_SEC,
+                    start - min(self.pad_sec, max_pre_pad),
                 )
             else:
-                padded_segments.append((p_start, p_end))
+                p_start = max(VAD_MIN_AUDIO_OFFSET_SEC, start - self.pad_sec)
+
+            if i < len(merged_raw) - 1:
+                next_start, _ = merged_raw[i + 1]
+                gap = next_start - end
+                if gap >= self.min_qualifying_gap_sec:
+                    max_post_pad = max(
+                        0.0,
+                        (gap - self.min_qualifying_gap_sec)
+                        / VAD_GAP_MIDPOINT_DIVISOR,
+                    )
+                else:
+                    max_post_pad = gap / VAD_GAP_MIDPOINT_DIVISOR
+                p_end = min(
+                    audio_len_sec, end + min(self.pad_sec, max_post_pad)
+                )
+            else:
+                p_end = min(audio_len_sec, end + self.pad_sec)
+
+            padded_segments.append((p_start, p_end))
         return padded_segments
 
     def _peak_normalize(self, audio_array: np.ndarray) -> np.ndarray:

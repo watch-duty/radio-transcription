@@ -3,6 +3,7 @@ import json
 import logging
 from unittest import TestCase, mock
 
+from backend.pipeline.common import log_helper
 from backend.pipeline.common.log_helper import (
     StructuredMessageFilter,
     TaskJsonFormatter,
@@ -110,6 +111,40 @@ class TestLogging(TestCase):
         self.assertEqual(data["event_type"], "pipeline_stage")
         self.assertEqual(data["stage"], "transcription_status")
         self.assertEqual(data["status"], "fallback")
+
+    @mock.patch("backend.pipeline.common.log_helper.get_logger")
+    def test_task_logger_merges_call_site_fields(
+        self,
+        mock_get_logger: mock.Mock,
+    ) -> None:
+        """Preserves context and structured fields on one task log record."""
+        mock_get_logger.return_value = logging.getLogger("task-test")
+        task_logger = log_helper.get_task_logger(
+            "task-test",
+            {"system": "transcription", "component": "gemini"},
+        )
+
+        _, kwargs = task_logger.process(
+            "Gemini inference attempt",
+            {
+                "extra": {
+                    "json_fields": {
+                        "event_type": "gemini_inference_attempt",
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(
+            kwargs["extra"],
+            {
+                "system": "transcription",
+                "component": "gemini",
+                "json_fields": {
+                    "event_type": "gemini_inference_attempt",
+                },
+            },
+        )
 
     def test_task_json_formatter_flattens_json_fields(self) -> None:
         """Pins the contract that extra={"json_fields": {...}} lands as

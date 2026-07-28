@@ -18,10 +18,9 @@ MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 
 # Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
 # and prefetched per bundle during backfills, acting alongside the wall-clock budget
-# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
-# ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
-# instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit to prevent
+# instantaneous heap unrolls from flooding memory with in-flight GCS futures.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 1000
 
 # Number of chunks to prefetch ahead in the sliding window to bound background task queue
 # length and prevent connection pool exhaustion and task duplicates when bundles are clamped.
@@ -55,7 +54,12 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"
 )
-GCS_CONNECTION_POOL_SIZE: Final = SHARED_DOWNLOAD_POOL_SIZE + 16
+# Scaled to 1.5x max download thread pool to provide sufficient HTTP connection
+# pool headroom without triggering urllib3 connection pool eviction.
+GCS_CONNECTION_POOL_MULTIPLIER: Final = 1.5
+GCS_CONNECTION_POOL_SIZE: Final = int(
+    SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER
+)
 GCS_CONNECTION_MAX_RETRIES: Final = 3
 
 # Structured watermark and FSM recovery configurations
@@ -77,6 +81,15 @@ VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 150
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
+# Absolute lower bound (in seconds) for padded audio segment start offsets
+VAD_MIN_AUDIO_OFFSET_SEC: Final = 0.0
+# Divisor used to split silence gaps between adjacent speech bursts into equal
+# halves for midpoint padding clamping
+VAD_GAP_MIDPOINT_DIVISOR: Final = 2.0
+# Minimum silence gap duration (in seconds) that represents a qualifying dispatch split threshold.
+# Padding is clamped for gaps between 0.8s and 1.4s to preserve a padded silence gap >= 800ms
+# for downstream stitcher dispatch splitting.
+VAD_QUALIFYING_GAP_SEC: Final = DEFAULT_SIGNIFICANT_GAP_MS / 1000.0
 
 # VAD Priming Terminology Glossary:
 # 1. prior_audio_tail (VAD_DEFAULT_PRIMING_SEC = 6.0s):

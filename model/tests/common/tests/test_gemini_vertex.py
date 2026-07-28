@@ -8,7 +8,7 @@ import typing
 import unittest
 import unittest.mock
 
-from common.gemini import context, vertex
+from common.gemini import context, request_identity, vertex
 
 
 class TestPublicRequestAnnotations(unittest.TestCase):
@@ -354,7 +354,7 @@ class TestImportGuard(unittest.TestCase):
 
 
 class TestBuildRequest(unittest.TestCase):
-    """Tests for common.gemini.vertex.build_request — no GCP calls, pure dict construction."""
+    """Tests for provenance-safe evaluation request construction."""
 
     def setUp(self) -> None:
         self.build_request = vertex.build_request
@@ -402,15 +402,24 @@ class TestBuildRequest(unittest.TestCase):
         )
         self.assertNotIn("extra_key", self.default_gen_config)
 
-    def test_default_safety_settings_four_block_none(self) -> None:
-        """Default safety_settings has 4 BLOCK_NONE entries."""
+    def test_default_safety_settings_match_production_categories(self) -> None:
+        """Default safety settings disable every production harm filter."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
         safety = result["request"]["safetySettings"]
-        self.assertEqual(len(safety), 4)
+        self.assertEqual(
+            {entry["category"] for entry in safety},
+            {
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_CIVIC_INTEGRITY",
+            },
+        )
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
 
@@ -423,7 +432,7 @@ class TestBuildRequest(unittest.TestCase):
         )
         result["request"]["safetySettings"].pop()
         result["request"]["safetySettings"][0]["threshold"] = "CHANGED"
-        self.assertEqual(len(self.default_safety), 4)
+        self.assertEqual(len(self.default_safety), 5)
         self.assertEqual(self.default_safety[0]["threshold"], "BLOCK_NONE")
 
     def test_system_prompt_preserved_exactly(self) -> None:
@@ -458,8 +467,12 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt=user_prompt,
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
             ],
         )
 
@@ -494,8 +507,12 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
             ],
             history_mode="transcript",
         )
@@ -523,10 +540,10 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="IMPORTANT: current prompt",
             history=[
-                context.ContextTurn(
+                context.PredictedHistoryTurn(
                     "gs://bucket/prev-1.flac", " first   transcript "
                 ),
-                context.ContextTurn(
+                context.PredictedHistoryTurn(
                     "gs://bucket/prev-2.flac", "second transcript"
                 ),
             ],
@@ -568,8 +585,12 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt=user_prompt,
             history=[
-                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
-                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
             ],
             history_mode="text_turns",
         )
@@ -594,6 +615,80 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
         self.assertEqual(contents[3]["parts"][0]["text"], "second")
         self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+
+    def test_provider_boundary_rejects_training_reference(self) -> None:
+        history = [context.TrainingReferenceTurn("REFERENCE_SECRET")]
+
+        with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
+            vertex.build_request(
+                "gs://bucket/current.flac",
+                system_prompt="S",
+                user_prompt="U",
+                history=history,
+            )
+
+    def test_request_bytes_use_prediction_not_reference(self) -> None:
+        request = vertex.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prior.flac", "PREDICTION_SECRET"
+                )
+            ],
+        )
+
+        payload = json.dumps(request, sort_keys=True)
+        self.assertIn("PREDICTION_SECRET", payload)
+        self.assertNotIn("REFERENCE_SECRET", payload)
+        self.assertEqual(payload.count("gs://bucket/current.flac"), 1)
+
+
+class TestEvaluationRequestIdentity(unittest.TestCase):
+    def build_identity(
+        self,
+        *,
+        count: int,
+        histories: list[list[context.PredictedHistoryTurn]],
+    ) -> dict[str, typing.Any]:
+        return request_identity.build_gemini_eval_request_identity(
+            target_label="target",
+            model="gemini-3.1-flash-lite",
+            eval_manifest_uri="gs://bucket/eval.jsonl",
+            audio_uris=["gs://bucket/current.flac"],
+            system_prompt="S",
+            user_prompt="U",
+            prior_context_count=count,
+            prior_context_mode="text_turns",
+            histories=histories,
+        )
+
+    def test_rejects_training_turn_and_window_mismatch(self) -> None:
+        with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
+            request_identity.build_gemini_eval_request_identity(
+                target_label="target",
+                model="gemini-3.1-flash-lite",
+                eval_manifest_uri="gs://bucket/eval.jsonl",
+                audio_uris=["gs://bucket/current.flac"],
+                system_prompt="S",
+                user_prompt="U",
+                prior_context_count=1,
+                prior_context_mode="text_turns",
+                histories=[[context.TrainingReferenceTurn("REFERENCE_SECRET")]],
+            )
+
+        with self.assertRaisesRegex(ValueError, "prior_context_count"):
+            self.build_identity(
+                count=0,
+                histories=[
+                    [
+                        context.PredictedHistoryTurn(
+                            "gs://bucket/prior.flac", "prediction"
+                        )
+                    ]
+                ],
+            )
 
 
 class TestParseBatchOutput(unittest.TestCase):
@@ -647,69 +742,6 @@ class TestParseBatchOutput(unittest.TestCase):
             "duplicate audio URI in batch output: gs://bucket/a.flac",
         ):
             vertex.parse_batch_output([json.dumps(output), json.dumps(output)])
-
-    def test_parses_snake_case_request_echo(self) -> None:
-        output = {
-            "request": {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "file_data": {
-                                    "file_uri": "gs://bucket/legacy.flac",
-                                }
-                            }
-                        ]
-                    }
-                ]
-            },
-            "response": {
-                "candidates": [
-                    {"content": {"parts": [{"text": "legacy output"}]}}
-                ]
-            },
-        }
-
-        self.assertEqual(
-            vertex.parse_batch_output([json.dumps(output)]),
-            {"gs://bucket/legacy.flac": "legacy output"},
-        )
-
-    def test_parses_last_file_uri_when_request_contains_history(self) -> None:
-        output = {
-            "request": {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "fileData": {
-                                    "fileUri": "gs://bucket/prior.flac",
-                                }
-                            }
-                        ]
-                    },
-                    {"parts": [{"text": "prior transcript"}]},
-                    {
-                        "parts": [
-                            {"text": "current prompt"},
-                            {
-                                "fileData": {
-                                    "fileUri": "gs://bucket/current.flac",
-                                }
-                            },
-                        ]
-                    },
-                ]
-            },
-            "response": {
-                "candidates": [{"content": {"parts": [{"text": "current"}]}}]
-            },
-        }
-
-        self.assertEqual(
-            vertex.parse_batch_output([json.dumps(output)]),
-            {"gs://bucket/current.flac": "current"},
-        )
 
     def test_skips_status_and_malformed_rows(self) -> None:
         lines = [

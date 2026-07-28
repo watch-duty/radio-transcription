@@ -10,7 +10,9 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.ingestion import grant_control, models
+from opentelemetry import baggage
+
+from backend.pipeline.ingestion import audio_pipeline, grant_control, models
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
@@ -70,13 +72,17 @@ def _chunk(index: int) -> models.CapturedChunk:
     )
 
 
-def _batch(*works: pipeline.CallWork) -> pipeline.FeedBatch:
+def _batch(
+    *works: pipeline.CallWork,
+    grant_lost: asyncio.Event | None = None,
+) -> pipeline.FeedBatch:
     return pipeline.FeedBatch(
         grant=_grant(),
         member=_member(),
         session_id="session-1",
         starting_sequence=10,
         calls=tuple(works),
+        grant_lost=grant_lost or asyncio.Event(),
     )
 
 
@@ -199,6 +205,8 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
 
         async def send(*args: object, **kwargs: object) -> str:
             del kwargs
+            self.assertEqual(len(args), 11)
+            self.assertEqual(args[10], _NOW)
             gcs_uri = typing.cast("str", args[4])
             events.append(f"publish-{gcs_uri.rsplit('/', 1)[-1]}")
             return "message-id"
@@ -352,6 +360,62 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
         bcfy_calls_collector,
         "_create_chunk_from_call",
         new_callable=mock.AsyncMock,
+    )
+    @mock.patch.object(
+        pipeline.gcp_helper,
+        "upload_staged_audio",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_confirmed_loss_stops_before_prebookmark_work(
+        self,
+        upload: mock.AsyncMock,
+        create_chunk: mock.AsyncMock,
+    ) -> None:
+        grant_lost = asyncio.Event()
+        grant_lost.set()
+
+        result = await _executor(_Store()).execute(
+            _batch(_work(0), grant_lost=grant_lost)
+        )
+
+        self.assertEqual(result.attempted_count, 0)
+        self.assertIsInstance(result.terminal, grant_control.RunLost)
+        create_chunk.assert_not_awaited()
+        upload.assert_not_awaited()
+
+    @mock.patch.object(
+        bcfy_calls_collector,
+        "_create_chunk_from_call",
+        new_callable=mock.AsyncMock,
+        return_value=bcfy_calls_collector._CallChunkResult(chunk=_chunk(0)),
+    )
+    async def test_loss_during_upload_is_authority_loss(
+        self,
+        _create_chunk: mock.AsyncMock,
+    ) -> None:
+        grant_lost = asyncio.Event()
+
+        async def lose_authority(*_args: object) -> str:
+            grant_lost.set()
+            message = "gcs unavailable after grant loss"
+            raise OSError(message)
+
+        with mock.patch.object(
+            pipeline.gcp_helper,
+            "upload_staged_audio",
+            side_effect=lose_authority,
+        ):
+            result = await _executor(_Store()).execute(
+                _batch(_work(0), grant_lost=grant_lost)
+            )
+
+        self.assertEqual(result.attempted_count, 1)
+        self.assertIsInstance(result.terminal, grant_control.RunLost)
+
+    @mock.patch.object(
+        bcfy_calls_collector,
+        "_create_chunk_from_call",
+        new_callable=mock.AsyncMock,
         return_value=bcfy_calls_collector._CallChunkResult(chunk=_chunk(0)),
     )
     @mock.patch.object(
@@ -485,10 +549,16 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
             publish_settled.set()
             return "message-id"
 
-        with mock.patch.object(
-            pipeline.gcp_helper,
-            "publish_audio_chunk",
-            side_effect=publish,
+        with (
+            mock.patch.object(
+                pipeline.gcp_helper,
+                "publish_audio_chunk",
+                side_effect=publish,
+            ),
+            mock.patch.object(
+                audio_pipeline,
+                "log_chunk_ingested",
+            ) as log_chunk_ingested,
         ):
             task = asyncio.create_task(
                 _executor(_Store(_committed())).execute(_batch(_work(0)))
@@ -505,6 +575,12 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 await task
 
         self.assertTrue(publish_settled.is_set())
+        log_chunk_ingested.assert_called_once_with(
+            pipeline.logger,
+            feed_id=_FEED_ID,
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            chunk=_chunk(0),
+        )
 
     async def test_publish_completion_race_still_propagates_cancellation(
         self,
@@ -519,8 +595,50 @@ class TestFeedBatchExecution(unittest.IsolatedAsyncioTestCase):
                 )
                 return "message-id"
 
-            return await pipeline._settle_postcommit_publish(publish())
+            return await audio_pipeline.settle_post_bookmark_publish(
+                publish(),
+                event_logger=pipeline.logger,
+            )
 
         task = asyncio.create_task(exercise_race())
         with self.assertRaises(asyncio.CancelledError):
             await task
+
+    @mock.patch.object(
+        bcfy_calls_collector,
+        "_create_chunk_from_call",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch.object(
+        pipeline.gcp_helper,
+        "upload_staged_audio",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_execute_sets_opentelemetry_baggage(
+        self,
+        upload: mock.AsyncMock,
+        create_chunk: mock.AsyncMock,
+    ) -> None:
+        create_chunk.return_value = bcfy_calls_collector._CallChunkResult(
+            chunk=_chunk(0)
+        )
+        upload.return_value = "gs://audio/10.mp3"
+
+        captured_baggage: dict[str, object] = {}
+
+        async def fake_publish(*args: object, **kwargs: object) -> str:
+            captured_baggage["ingest_time_ms"] = baggage.get_baggage(
+                "ingest_time_ms"
+            )
+            captured_baggage["feed_type"] = baggage.get_baggage("feed_type")
+            return "msg-123"
+
+        with mock.patch.object(
+            pipeline.gcp_helper,
+            "publish_audio_chunk",
+            side_effect=fake_publish,
+        ):
+            await _executor(_Store(_committed())).execute(_batch(_work(0)))
+
+        self.assertEqual(captured_baggage["feed_type"], "bcfy_calls")
+        self.assertIsNotNone(captured_baggage["ingest_time_ms"])
