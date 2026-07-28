@@ -413,6 +413,31 @@ model = "gemini-3.1-flash-lite"
                 ):
                     config_module.load_run_config(self._write_config(body))
 
+    def test_prepare_rejects_batch_backend_with_prior_context(self) -> None:
+        body = self._valid_toml(
+            context="""
+[context]
+prior_turn_count = 8
+prior_context_mode = "text_turns"
+""",
+            eval_section="""
+[eval]
+
+[eval.execution]
+backend = "batch"
+
+[eval.model]
+label = "base"
+model = "gemini-3.1-flash-lite"
+""",
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            "predicted-history evaluation requires the online backend",
+        ):
+            config_module.load_prepare_run_config(self._write_config(body))
+
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
         body = self._valid_toml(
             train_manifest_uri="123",
@@ -577,13 +602,9 @@ model = "gemini-3.1-flash-lite"
                 }
             )
 
-    def test_require_config_eval_execution_defaults_when_missing(self) -> None:
-        execution = config_module.require_config_eval_execution({})
-
-        self.assertIsNone(execution.backend)
-        self.assertIsNone(execution.limit)
-        self.assertEqual(execution.concurrency, 16)
-        self.assertEqual(execution.max_retries, 3)
+    def test_require_config_eval_execution_rejects_missing_field(self) -> None:
+        with self.assertRaisesRegex(TypeError, "eval_execution"):
+            config_module.require_config_eval_execution({})
 
     def test_require_config_eval_execution_returns_valid_config(self) -> None:
         execution = config_module.require_config_eval_execution(
@@ -607,12 +628,14 @@ model = "gemini-3.1-flash-lite"
     ) -> None:
         cases = (
             {"unexpected": "value"},
-            {"backend": "auto"},
-            {"backend": 123},
-            {"limit": 0},
-            {"limit": True},
-            {"concurrency": 0},
-            {"max_retries": 0},
+            {"concurrency": 16},
+            {"max_retries": 3},
+            {"backend": "auto", "concurrency": 16, "max_retries": 3},
+            {"backend": 123, "concurrency": 16, "max_retries": 3},
+            {"limit": 0, "concurrency": 16, "max_retries": 3},
+            {"limit": True, "concurrency": 16, "max_retries": 3},
+            {"concurrency": 0, "max_retries": 3},
+            {"concurrency": 16, "max_retries": 0},
         )
         for execution in cases:
             with self.subTest(execution=execution):

@@ -15,8 +15,6 @@ from common.gemini import eval_artifacts, request_identity, vertex
 if typing.TYPE_CHECKING:
     from google.cloud import storage
 
-    from common.gemini import context
-
 logger = logging.getLogger(__name__)
 
 BatchSubmitFn = collections.abc.Callable[..., str]
@@ -44,13 +42,8 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
     audio_uris: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
-    prior_context_count: int,
     prior_context_mode: str,
     eval_manifest_uri: str,
-    histories: collections.abc.Sequence[
-        collections.abc.Sequence[context.ContextTurn]
-    ]
-    | None = None,
     submit_fn: BatchSubmitFn = vertex.submit_batch_inference,
     poll_fn: BatchPollFn = vertex.poll_batch_inference_job,
 ) -> BatchPredictionMap | None:
@@ -67,26 +60,25 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
         audio_uris: Ordered audio URIs to transcribe.
         system_prompt: System instruction included in every request.
         user_prompt: User instruction included in every current audio turn.
-        prior_context_count: Context-window size recorded in request identity.
         prior_context_mode: Context encoding mode used to build each request.
         eval_manifest_uri: Canonical evaluation manifest URI recorded in
             request identity.
-        histories: Prior turns aligned one-for-one with ``audio_uris``. Empty
-            histories are used when omitted.
         submit_fn: Batch submission callable, injectable for tests.
         poll_fn: Existing-job polling callable, injectable for tests.
 
     Returns:
         Parsed predictions with their raw output URI, or ``None`` when the
         input has duplicate audio URIs, submission fails, output is missing,
-        or output contains no successful, duplicate, or unexpected audio URIs.
+        contains no successful predictions, or contains duplicate or
+        unexpected audio URIs.
 
     Raises:
         TypeError: If reusable output metadata lacks an object identity.
-        ValueError: If histories are misaligned, the context mode is invalid,
-            or existing output metadata is missing or does not match.
+        ValueError: If context mode is invalid or existing output metadata is
+            missing or does not match.
     """
-    expected_audio_uris = _unique_audio_uris(audio_uris)
+    audio_uri_list = list(audio_uris)
+    expected_audio_uris = _unique_audio_uris(audio_uri_list)
     if expected_audio_uris is None:
         logger.error(
             "[%s] eval rows contain duplicate audio_filepath values; one "
@@ -94,11 +86,6 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
             label,
         )
         return None
-    audio_uri_list = list(audio_uris)
-    if histories is None:
-        history_list = [[] for _ in audio_uri_list]
-    else:
-        history_list = [list(history) for history in histories]
     identity = request_identity.build_gemini_eval_request_identity(
         target_label=label,
         model=model_id,
@@ -106,9 +93,8 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
         audio_uris=audio_uri_list,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        prior_context_count=prior_context_count,
+        prior_context_count=0,
         prior_context_mode=prior_context_mode,
-        histories=history_list,
     )
     paths = eval_artifacts.eval_target_artifact_paths(run_gcs_prefix, label)
     batch_output_gcs = paths.output_uri
@@ -130,12 +116,33 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
             storage_client,
             job_metadata_uri,
         )
+        has_input = gcs_utils.blob_exists(storage_client, paths.input_uri)
         reused_completed_output = bool(pred_blobs and has_completion_metadata)
         if reused_completed_output:
+            missing_artifacts = [
+                uri
+                for uri, exists in (
+                    (paths.input_uri, has_input),
+                    (job_metadata_uri, has_job_metadata),
+                )
+                if not exists
+            ]
+            if missing_artifacts:
+                msg = (
+                    "completed batch prediction artifacts missing: "
+                    + ", ".join(missing_artifacts)
+                )
+                raise ValueError(msg)
             _validate_reusable_batch_output(
                 storage_client=storage_client,
                 metadata_uri=metadata_uri,
                 metadata_path=metadata_path,
+                request_identity_payload=identity,
+            )
+            _load_batch_job_name(
+                storage_client=storage_client,
+                metadata_uri=job_metadata_uri,
+                metadata_path=job_metadata_path,
                 request_identity_payload=identity,
             )
             preds = _load_batch_predictions(
@@ -193,7 +200,6 @@ def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
                 audio_uris=audio_uris,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                histories=history_list,
                 history_mode=prior_context_mode,
                 tmp_dir=tmp_dir,
             )
@@ -269,10 +275,6 @@ def build_batch_jsonl(
     audio_uris: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
-    histories: collections.abc.Sequence[
-        collections.abc.Sequence[context.ContextTurn]
-    ]
-    | None = None,
     history_mode: str = "text_turns",
     tmp_dir: pathlib.Path,
 ) -> tuple[str, str]:
@@ -285,7 +287,6 @@ def build_batch_jsonl(
         audio_uris: Ordered audio URIs to encode as batch requests.
         system_prompt: System instruction included in every request.
         user_prompt: User instruction included in every current audio turn.
-        histories: Prior turns aligned one-for-one with ``audio_uris``.
         history_mode: Context encoding mode used to build each request.
         tmp_dir: Existing local directory in which to write the JSONL file.
 
@@ -293,12 +294,9 @@ def build_batch_jsonl(
         A pair containing the uploaded input URI and batch output prefix.
 
     Raises:
-        ValueError: If histories are misaligned, audio URIs are duplicated, or
-            ``history_mode`` is unsupported.
+        ValueError: If audio URIs are duplicated or ``history_mode`` is
+            unsupported.
     """
-    if histories is not None and len(histories) != len(audio_uris):
-        msg = "histories must have one entry per audio URI"
-        raise ValueError(msg)
     if _unique_audio_uris(audio_uris) is None:
         msg = (
             "duplicate audio_uri in batch eval input; cannot map predictions "
@@ -307,15 +305,14 @@ def build_batch_jsonl(
         raise ValueError(msg)
     batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
     with batch_input_path.open("w", encoding="utf-8") as fh:
-        for index, audio_uri in enumerate(audio_uris):
-            history = histories[index] if histories is not None else None
+        for audio_uri in audio_uris:
             fh.write(
                 json.dumps(
                     vertex.build_request(
                         audio_uri,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
-                        history=history,
+                        history=[],
                         history_mode=history_mode,
                     )
                 )
@@ -338,7 +335,6 @@ def _load_batch_predictions(
     label: str,
     tmp_dir: pathlib.Path,
     pred_blobs: collections.abc.Sequence[typing.Any] | None = None,
-    missing_ok: bool = False,
 ) -> BatchPredictionMap | None:
     """Download and merge prediction shards without ambiguous duplicates.
 
@@ -348,23 +344,22 @@ def _load_batch_predictions(
         label: Target label included in diagnostics.
         tmp_dir: Local directory used for downloaded shards.
         pred_blobs: Optional prelisted output blobs beneath ``output_uri``.
-        missing_ok: Whether absent output should avoid an error log.
 
     Returns:
         Predictions keyed by audio URI, or ``None`` when output is absent or
-        multiple blobs contain the same audio URI.
+        contains no successful predictions, or multiple blobs contain the
+        same audio URI.
     """
     pred_blobs = pred_blobs or _list_batch_prediction_blobs(
         storage_client,
         output_uri,
     )
     if not pred_blobs:
-        if not missing_ok:
-            logger.error(
-                "[%s] no .jsonl prediction output under %s.",
-                label,
-                output_uri,
-            )
+        logger.error(
+            "[%s] no .jsonl prediction output under %s.",
+            label,
+            output_uri,
+        )
         return None
     out_bucket, _ = gcs_utils.parse_gcs_uri(output_uri.rstrip("/") + "/")
     preds = BatchPredictionMap()

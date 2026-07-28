@@ -217,9 +217,8 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
         self,
     ) -> None:
         lifecycle_sql = [
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             feed_queries.RELEASE_FEED_SQL,
-            feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
         ]
 
@@ -263,12 +262,6 @@ class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.UPDATE_PROGRESS_SQL)
 
         self.assertNotIn("AND status = 'active'::feed_status", sql)
-
-    def test_batch_worker_release_requires_active_status(self) -> None:
-        sql = _sql_without_comments(feed_queries.RELEASE_FEEDS_BATCH_SQL)
-
-        self.assertIn("WHERE worker_id = $1", sql)
-        self.assertIn("AND status = 'active'::feed_status", sql)
 
     def test_admin_reset_and_delete_refuse_active_feeds(self) -> None:
         """Active feeds must be deactivated before reset or hard delete."""

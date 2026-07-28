@@ -9,6 +9,7 @@ import typing
 
 from common import gcs_utils, inference_manifest, scoring
 from common.gemini import batch as gemini_batch
+from common.gemini import context as gemini_context
 from common.gemini import eval_artifacts, prompts, vertex
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
@@ -22,10 +23,6 @@ if typing.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = artifacts_lib.DEFAULT_RESULTS_DIR
-# Preserve the existing patch seams used by workflow tests and operators.
-download_jsonl_manifest_strict = gcs_utils.download_jsonl_manifest_strict
-submit_batch_inference = vertex.submit_batch_inference
-run_online_target_inference = target_execution.run_online_target_inference
 _LOCAL_DURABLE_EVAL_FIELDS = (
     "round_id",
     "run_gcs_prefix",
@@ -69,7 +66,7 @@ def evaluate(args: argparse.Namespace) -> int:
             run_cfg.paths.config_uri,
         )
         _validate_local_eval_config_matches_durable(run_cfg, config)
-        return evaluate_run(args, run_cfg, storage_client, config)
+        return evaluate_run(run_cfg, storage_client, config)
     except (
         ImportError,
         OSError,
@@ -103,7 +100,6 @@ def _eval_model_family_id(
 
 
 def evaluate_run(  # noqa: PLR0915
-    args: argparse.Namespace,
     run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
     config: dict[str, typing.Any],
@@ -111,14 +107,13 @@ def evaluate_run(  # noqa: PLR0915
     """Run the configured eval model and score one config-driven run.
 
     Args:
-        args: Parsed CLI arguments retained for handler compatibility.
         run_cfg: Validated local configuration for the eval run.
         storage_client: Client used to read and write GCS artifacts.
         config: Durable run configuration loaded from GCS ``config.json``.
 
     Returns:
         Zero after evaluation and report publication complete, or one when
-        batch inference does not produce predictions.
+        inference produces no successful predictions.
 
     Raises:
         ImportError: If a required provider or scoring dependency is missing.
@@ -128,7 +123,6 @@ def evaluate_run(  # noqa: PLR0915
         RuntimeError: If a provider operation reaches a failed state.
         TimeoutError: If a provider operation exceeds its timeout.
     """
-    del args
     system_prompt = config_lib.require_config_str(config, "system_prompt")
     user_prompt = config_lib.require_config_str(config, "user_prompt")
     base_model = config_lib.require_config_str(config, "base_model")
@@ -143,12 +137,16 @@ def evaluate_run(  # noqa: PLR0915
         config, "inference_dataset_slug"
     )
     gcs_bucket = config_lib.require_config_str(config, "gcs_bucket")
-    prior_context_count = _optional_config_nonnegative_int(
+    prior_context_count = _require_config_nonnegative_int(
         config,
         "prior_context_count",
     )
-    prior_context_mode = config_lib.optional_config_prior_context_mode(
+    prior_context_mode = config_lib.require_config_prior_context_mode(
         config, "prior_context_mode"
+    )
+    prior_context_mode = gemini_context.validate_evaluation_context_contract(
+        prior_context_count,
+        prior_context_mode,
     )
     target = config_lib.require_config_eval_model(config)
     durable_eval_execution = config_lib.require_config_eval_execution(config)
@@ -161,26 +159,30 @@ def evaluate_run(  # noqa: PLR0915
         target.label,
     )
 
-    eval_entries = download_jsonl_manifest_strict(
+    eval_entries = gcs_utils.download_jsonl_manifest_strict(
         storage_client,
         eval_manifest_uri,
     )
-    eval_data = artifacts_lib.eval_rows_with_histories_from_entries(
+    eval_data = artifacts_lib.eval_rows_for_inference_from_entries(
         eval_entries,
         source=eval_manifest_uri,
-        prior_context_count=prior_context_count,
         limit=eval_execution.limit,
+        prior_context_count=prior_context_count,
     )
     source_rows = eval_data.source_rows
     eval_rows = eval_data.eval_rows
-    histories = eval_data.histories
+    segments = eval_data.segments
     model_family_slug = inference_manifest.model_family_slug_from_model_id(
         _eval_model_family_id(target, base_model)
     )
-    audio_uris = [row.audio_filepath for row in eval_rows]
-    refs = [row.text for row in eval_rows]
     normalizer = scoring.build_normalizer()
-    backend = target_execution.resolve_target_backend(target, eval_execution)
+    backend = target_execution.resolve_target_backend(
+        target,
+        eval_execution,
+        prior_context_count=prior_context_count,
+    )
+    rolling_history_index_uri = None
+    rolling_history_audit_uri = None
     if backend == "batch":
         preds = batch_infer(
             storage_client=storage_client,
@@ -189,11 +191,9 @@ def evaluate_run(  # noqa: PLR0915
             location=location,
             model_id=target.model,
             label=target.label,
-            eval_rows=eval_rows,
+            segments=segments,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            histories=histories,
-            prior_context_count=prior_context_count,
             prior_context_mode=prior_context_mode,
             eval_manifest_uri=eval_manifest_uri,
         )
@@ -204,15 +204,13 @@ def evaluate_run(  # noqa: PLR0915
         metadata: dict[str, typing.Any] = {"backend": "batch"}
     elif backend == "online":
         preds = asyncio.run(
-            run_online_target_inference(
+            target_execution.run_online_target_inference(
                 storage_client=storage_client,
                 run_gcs_prefix=run_gcs_prefix,
                 project=gcp_project,
-                default_location=location,
                 target_label=target.label,
                 target_model=target.model,
-                audio_uris=audio_uris,
-                histories=histories,
+                segments=segments,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 prior_context_count=prior_context_count,
@@ -233,13 +231,13 @@ def evaluate_run(  # noqa: PLR0915
             return 1
         raw_output_uri = None
         online_predictions_uri = preds.online_predictions_uri
+        rolling_history_index_uri = preds.rolling_history_index_uri
+        rolling_history_audit_uri = preds.rolling_history_audit_uri
         metadata = {
             "backend": "online",
             "online_error_count": preds.error_count,
+            "request_identity_hash": preds.request_identity_hash,
         }
-        request_identity_hash = getattr(preds, "request_identity_hash", None)
-        if request_identity_hash:
-            metadata["request_identity_hash"] = request_identity_hash
     else:
         msg = f"unsupported eval backend: {backend}"
         raise ValueError(msg)
@@ -260,10 +258,15 @@ def evaluate_run(  # noqa: PLR0915
     artifacts = reporting.ReportArtifacts(
         raw_output_uri=raw_output_uri,
         online_predictions_uri=online_predictions_uri,
+        rolling_history_index_uri=rolling_history_index_uri,
+        rolling_history_audit_uri=rolling_history_audit_uri,
         normalized_manifest_uri=inference_manifest_uri,
         summary_json_uri=summary_json_uri,
         summary_markdown_uri=summary_markdown_uri,
     )
+    # References remain isolated in scoring rows while provider requests and
+    # rolling-history artifacts are built, then pair with finalized predictions.
+    refs = [row.text for row in eval_rows]
     # Empty-string fallback is intentional: skipped/missing provider outputs
     # score as deletions instead of disappearing from the denominator.
     hyps = [preds.get(row.audio_filepath, "") for row in eval_rows]
@@ -333,11 +336,11 @@ def _validate_local_eval_config_matches_durable(
     """
     local_record = run_cfg.to_record_dict()
     durable_record = dict(config)
-    durable_record["prior_context_count"] = _optional_config_nonnegative_int(
+    durable_record["prior_context_count"] = _require_config_nonnegative_int(
         config, "prior_context_count"
     )
     durable_record["prior_context_mode"] = (
-        config_lib.optional_config_prior_context_mode(
+        config_lib.require_config_prior_context_mode(
             config,
             "prior_context_mode",
         )
@@ -429,13 +432,11 @@ def batch_infer(
     location: str,
     model_id: str,
     label: str,
-    eval_rows: list[typing.Any],
+    segments: typing.Sequence[gemini_context.EvaluationSegment],
     system_prompt: str,
     user_prompt: str,
-    prior_context_count: int,
     prior_context_mode: str,
     eval_manifest_uri: str,
-    histories: list[typing.Any] | None = None,
 ) -> gemini_batch.BatchPredictionMap | None:
     """Build, submit, download, and parse one batch inference target.
 
@@ -446,13 +447,11 @@ def batch_infer(
         location: Preferred Vertex location for batch inference.
         model_id: Publisher model ID or full model resource name.
         label: Stable target label used in artifact paths and logs.
-        eval_rows: Canonical eval rows containing ``audio_filepath`` values.
+        segments: Transcript-free provider rows containing current audio URIs.
         system_prompt: System instruction included in every request.
         user_prompt: User instruction included in every current audio turn.
-        prior_context_count: Context-window size recorded in request identity.
         prior_context_mode: Context encoding mode used for requests.
         eval_manifest_uri: Canonical eval manifest URI recorded in identity.
-        histories: Prior turns aligned one-for-one with ``eval_rows``.
 
     Returns:
         Parsed predictions with their raw output URI, or ``None`` when batch
@@ -471,14 +470,12 @@ def batch_infer(
         location=location,
         model_id=model_id,
         label=label,
-        audio_uris=[str(row.audio_filepath) for row in eval_rows],
+        audio_uris=[segment.audio_uri for segment in segments],
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
         eval_manifest_uri=eval_manifest_uri,
-        histories=histories,
-        submit_fn=submit_batch_inference,
+        submit_fn=vertex.submit_batch_inference,
     )
 
 
@@ -487,14 +484,11 @@ def _log_cli_error(exc: Exception) -> int:
     return 1
 
 
-def _optional_config_nonnegative_int(
+def _require_config_nonnegative_int(
     config: dict[str, typing.Any],
     key: str,
 ) -> int:
-    value = config.get(key, 0)
-    if isinstance(value, bool) or not isinstance(value, int):
-        msg = f"config.json field must be a non-negative integer: {key}"
-        raise TypeError(msg)
+    value = config_lib.require_config_int(config, key)
     if value < 0:
         msg = f"config.json field must be a non-negative integer: {key}"
         raise ValueError(msg)
