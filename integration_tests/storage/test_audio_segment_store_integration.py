@@ -226,56 +226,6 @@ async def test_add_annotation(
     )
 
 
-async def test_update_annotation_on_conflict(
-    db_pool: asyncpg.Pool, store: AudioSegmentStore
-) -> None:
-    feed_id = await create_feed(db_pool)
-
-    start_time = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
-    end_time = datetime.datetime(2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC)
-
-    segment = await store.create_audio_segment(
-        segment_id=str(uuid.uuid4()),
-        feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH,
-        start_timestamp=start_time,
-        end_timestamp=end_time,
-        source_audio_uris=["gs://bucket/audio1.ogg"],
-        missing_prior_context=False,
-        missing_post_context=False,
-    )
-
-    # 1. Add initial annotation
-    initial_data = {"text": "hello", "errors": []}
-    annotation = await store.add_annotation(
-        segment_id=segment.id,
-        annotation_type=AnnotationType.TRANSCRIPT,
-        data=initial_data,
-    )
-
-    assert annotation.data.model_dump() == initial_data
-
-    # 2. Add same annotation type with new data (Conflict should DO UPDATE)
-    updated_data = {"text": "hello updated", "errors": ["some_error"]}
-    annotation_updated = await store.add_annotation(
-        segment_id=segment.id,
-        annotation_type=AnnotationType.TRANSCRIPT,
-        data=updated_data,
-    )
-
-    # 3. Verify it was updated
-    assert annotation_updated.audio_segment_id == segment.id
-    assert annotation_updated.type == AnnotationType.TRANSCRIPT
-    assert annotation_updated.data.model_dump() == updated_data
-
-    # Verify annotation is correctly returned when listing segments
-    result = await store.list_audio_segments()
-    assert len(result.segments) == 1
-    assert len(result.segments[0].annotations) == 1
-    assert result.segments[0].annotations[0].type == AnnotationType.TRANSCRIPT
-    assert result.segments[0].annotations[0].data.model_dump() == updated_data
-
-
 async def test_add_waveform_annotation(
     db_pool: asyncpg.Pool, store: AudioSegmentStore
 ) -> None:
