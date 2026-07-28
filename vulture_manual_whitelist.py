@@ -20,6 +20,13 @@ _.get_value
 current_worker
 current_fencing_token
 
+# Feed TypedDict and pydantic response-model lease-health fields are read
+# by key / serialized by pydantic; Vulture cannot connect that access to
+# their declarations.
+bcfy_calls_sid
+lease_last_heartbeat
+lease_status_reason
+
 # Vulture excludes focused tests and cannot follow runtime-selected Lease
 # adapters, so retain the public lifecycle methods, returned result fields, and
 # lifecycle telemetry causes exercised through those dynamic boundaries.
