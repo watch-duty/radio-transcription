@@ -186,4 +186,35 @@ describe('AuthProvider', () => {
       'new-refreshed-jwt-from-focus'
     );
   });
+
+  it('derives isAdmin from user info query result', async () => {
+    const { getUserInfo } = await import('../service/getUserInfo');
+    vi.mocked(getUserInfo).mockResolvedValueOnce({
+      email: 'admin@email.org',
+      isAdmin: true,
+    });
+    vi.mocked(authSession).mockResolvedValueOnce('fake-jwt-123');
+
+    const AdminConsumer = () => {
+      const { isAdmin, isLoading } = useAuth();
+      return (
+        <div>
+          <span data-testid="is-loading">{String(isLoading)}</span>
+          <span data-testid="is-admin">{String(isAdmin)}</span>
+        </div>
+      );
+    };
+
+    renderWithQueryClient(
+      <AuthProvider>
+        <AdminConsumer />
+      </AuthProvider>
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('is-admin').textContent).toBe('true');
+  });
 });
