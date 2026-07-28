@@ -17,6 +17,8 @@ from backend.pipeline.storage.audio_segment_store import (
 from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
+    TranscriptFlagAction,
+    TranscriptFlagAnnotationData,
     WaveformAnnotationData,
 )
 from integration_tests.storage.storage_feed_util import create_feed
@@ -431,3 +433,75 @@ class TestListAudioSegmentsFilters:
         assert len(res3.segments) == 1
         assert res3.next_token is None
         assert res3.segments[0].id == test_segments["segment_no_alert"].id
+
+
+async def test_flag_transcript(
+    db_pool: asyncpg.Pool, store: AudioSegmentStore
+) -> None:
+
+    feed_id = await create_feed(db_pool)
+
+    segment = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
+        feed_id=str(feed_id),
+        classification=AudioClassification.SPEECH,
+        start_timestamp=datetime.datetime(
+            2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC
+        ),
+        end_timestamp=datetime.datetime(
+            2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC
+        ),
+        source_audio_uris=["gs://bucket/audio1.ogg"],
+        missing_prior_context=False,
+        missing_post_context=False,
+    )
+
+    # 1. Flag transcript for user A
+    annotation = await store.flag_transcript(
+        segment_id=segment.id, user_id="userA", action=TranscriptFlagAction.FLAG
+    )
+    assert annotation.type == AnnotationType.TRANSCRIPT_FLAG
+    data = annotation.data
+    assert isinstance(data, TranscriptFlagAnnotationData)
+    assert "userA" in data.flagged_by_user_ids
+    assert len(data.flagged_by_user_ids) == 1
+
+    # 2. Flag transcript for user B
+    annotation = await store.flag_transcript(
+        segment_id=segment.id, user_id="userB", action=TranscriptFlagAction.FLAG
+    )
+    data = annotation.data
+    assert isinstance(data, TranscriptFlagAnnotationData)
+    assert "userA" in data.flagged_by_user_ids
+    assert "userB" in data.flagged_by_user_ids
+    assert len(data.flagged_by_user_ids) == 2
+
+    # 3. Re-flag for user A (idempotency check)
+    annotation = await store.flag_transcript(
+        segment_id=segment.id, user_id="userA", action=TranscriptFlagAction.FLAG
+    )
+    data = annotation.data
+    assert isinstance(data, TranscriptFlagAnnotationData)
+    assert len(data.flagged_by_user_ids) == 2
+
+    # 4. Unflag for user A
+    annotation = await store.flag_transcript(
+        segment_id=segment.id,
+        user_id="userA",
+        action=TranscriptFlagAction.UNFLAG,
+    )
+    data = annotation.data
+    assert isinstance(data, TranscriptFlagAnnotationData)
+    assert "userA" not in data.flagged_by_user_ids
+    assert "userB" in data.flagged_by_user_ids
+    assert len(data.flagged_by_user_ids) == 1
+
+    # 5. Unflag for user B
+    annotation = await store.flag_transcript(
+        segment_id=segment.id,
+        user_id="userB",
+        action=TranscriptFlagAction.UNFLAG,
+    )
+    data = annotation.data
+    assert isinstance(data, TranscriptFlagAnnotationData)
+    assert len(data.flagged_by_user_ids) == 0
