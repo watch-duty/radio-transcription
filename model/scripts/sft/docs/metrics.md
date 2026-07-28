@@ -48,17 +48,20 @@ explicit unusable-audio token.
 ## Missing Predictions
 
 Provider outputs are matched back to eval rows by audio URI. If no successful
-provider prediction exists, `gemini-sft eval` supplies an empty hypothesis for
-scoring so the reference row remains in the WER/CER denominator.
+provider prediction exists for an individual row, `gemini-sft eval` supplies
+an empty hypothesis for scoring so the reference row remains in the WER/CER
+denominator. If every online request fails, evaluation exits nonzero without
+publishing a scoring report; this distinguishes total provider failure from a
+partially successful run.
 
 `missing_prediction_count` stays operationally separate from exact empty model
 responses. A missing provider row means no successful prediction record was
 returned for that audio URI. An exact empty response means the provider
 successfully returned a prediction record whose stripped text was empty.
 
-For online endpoint eval, errored rows are retried on resume. If an eval report
-is generated while errors remain unresolved, those rows count in both
-`missing_prediction_count` and metadata `online_error_count`.
+For online endpoint eval, errored rows are retried on resume. If a partially
+successful eval report is generated while errors remain unresolved, those rows
+count in both `missing_prediction_count` and metadata `online_error_count`.
 
 ## Artifact URI Fields
 
@@ -68,9 +71,15 @@ The `artifacts` object can include:
 | --- | --- |
 | `raw_output_uri` | Durable GCS prefix for raw Vertex batch output when the target used batch inference. |
 | `online_predictions_uri` | Durable GCS JSONL for online endpoint prediction attempts when the target used online inference. It can include the latest errored attempt rows for diagnosis. |
+| `rolling_history_index_uri` | Durable transcript-free index of causal waves and their online prediction artifacts for nonzero-context evaluation. |
+| `rolling_history_audit_uri` | Durable transcript-free per-row audit of eligible, supplied, and omitted prior-prediction dependencies. |
 | `normalized_manifest_uri` | Durable normalized inference manifest with source rows and successful prediction fields. |
 | `summary_json_uri` | Stable GCS URI for the target run's JSON report summary. |
 | `summary_markdown_uri` | Stable GCS URI for the target run's Markdown report summary. |
 
 These fields point to durable GCS artifacts. Local files under `results/` are a
 cache or mirror, not the source of truth for report reuse.
+
+Rolling-history audits never contain transcript or reference text. Evaluation
+references are unavailable to provider requests and are joined only after
+inference finalizes for scoring.

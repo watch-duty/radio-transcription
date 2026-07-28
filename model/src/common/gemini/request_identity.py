@@ -46,14 +46,19 @@ def build_request_identity(
         A JSON-compatible identity dictionary with copied mutable values.
 
     Raises:
-        ValueError: If ``request_digests`` and ``audio_uris`` have different
-            lengths.
+        TypeError: If ``prior_context_count`` is not an integer.
+        ValueError: If request sequences have different lengths or the context
+            count is negative.
     """
     audio_uri_list = list(audio_uris)
     request_digest_list = list(request_digests)
     if len(audio_uri_list) != len(request_digest_list):
         msg = "request_digests length must match audio_uris length"
         raise ValueError(msg)
+    prior_context_mode = context.validate_evaluation_context_contract(
+        prior_context_count,
+        prior_context_mode,
+    )
     return {
         "schema_version": 2,
         "target_label": target_label,
@@ -81,7 +86,7 @@ def build_gemini_eval_request_identity(
     prior_context_count: int,
     prior_context_mode: str,
     histories: collections.abc.Sequence[
-        collections.abc.Sequence[context.ContextTurn]
+        collections.abc.Sequence[context.PredictedHistoryTurn]
     ]
     | None = None,
 ) -> dict[str, typing.Any]:
@@ -96,14 +101,17 @@ def build_gemini_eval_request_identity(
         user_prompt: User instruction used for each current audio turn.
         prior_context_count: Configured prior-turn window size.
         prior_context_mode: Context encoding mode used to build each request.
-        histories: Prior turns aligned one-for-one with ``audio_uris``. Empty
-            histories are used when omitted.
+        histories: Own earlier model predictions aligned one-for-one with
+            ``audio_uris``. Empty histories are used when omitted.
 
     Returns:
         A request identity containing one deterministic digest per audio URI.
 
     Raises:
-        ValueError: If histories are misaligned or ``prior_context_mode`` is
+        TypeError: If context count is not an integer or a history turn is not
+            a model prediction.
+        ValueError: If histories are misaligned, exceed the configured window,
+            conflict with a zero window, or ``prior_context_mode`` is
             unsupported.
     """
     audio_uri_list = list(audio_uris)
@@ -111,7 +119,16 @@ def build_gemini_eval_request_identity(
         history_list = [[] for _ in audio_uri_list]
     else:
         history_list = [list(history) for history in histories]
-
+    if len(history_list) != len(audio_uri_list):
+        msg = "histories length must match audio_uris length"
+        raise ValueError(msg)
+    prior_context_mode = context.validate_evaluation_context_contract(
+        prior_context_count,
+        prior_context_mode,
+    )
+    if any(len(history) > prior_context_count for history in history_list):
+        msg = "history length must not exceed prior_context_count"
+        raise ValueError(msg)
     return build_request_identity(
         target_label=target_label,
         model=model,
@@ -200,7 +217,8 @@ def load_metadata_identity(
         The validated request identity dictionary.
 
     Raises:
-        TypeError: If the sidecar or its request identity is not an object.
+        TypeError: If the sidecar, request identity, or identity hash has an
+            invalid shape.
         ValueError: If a stored identity hash does not match its payload.
     """
     metadata = json.loads(path.read_text(encoding="utf-8"))
@@ -212,7 +230,10 @@ def load_metadata_identity(
         msg = f"{error_message}: missing identity"
         raise TypeError(msg)
     expected_hash = metadata.get("request_identity_hash")
-    if expected_hash and expected_hash != request_identity_hash(identity):
+    if not isinstance(expected_hash, str) or not expected_hash:
+        msg = f"{error_message}: missing request_identity_hash"
+        raise TypeError(msg)
+    if expected_hash != request_identity_hash(identity):
         msg = f"{error_message}: hash mismatch"
         raise ValueError(msg)
     return identity
@@ -237,56 +258,11 @@ def validate_exact_identity(
         raise ValueError(error_message)
 
 
-def validate_prefix_identity(
-    existing_identity: dict[str, typing.Any],
-    request_identity: dict[str, typing.Any],
-    error_message: str,
-) -> None:
-    """Validate that stored requests form a reusable prefix.
-
-    Args:
-        existing_identity: Identity loaded from reusable online output.
-        request_identity: Identity required by the current evaluation.
-        error_message: Message used when validation fails.
-
-    Raises:
-        ValueError: If fixed identity fields differ, URI and digest sequence
-            lengths disagree, or stored URI and request-digest sequences are
-            not prefixes of the requested sequences.
-    """
-    existing_audio = list(existing_identity.get("audio_uris") or [])
-    request_audio = list(request_identity.get("audio_uris") or [])
-    existing_digests = list(existing_identity.get("request_digests") or [])
-    request_digests = list(request_identity.get("request_digests") or [])
-    if _identity_without_sequences(
-        existing_identity
-    ) != _identity_without_sequences(request_identity):
-        raise ValueError(error_message)
-    if len(existing_audio) != len(existing_digests) or len(
-        request_audio
-    ) != len(request_digests):
-        raise ValueError(error_message)
-    if request_audio[: len(existing_audio)] != existing_audio:
-        raise ValueError(error_message)
-    if request_digests[: len(existing_digests)] == existing_digests:
-        return
-    raise ValueError(error_message)
-
-
-def _identity_without_sequences(
-    identity: dict[str, typing.Any],
-) -> dict[str, typing.Any]:
-    result = dict(identity)
-    result.pop("audio_uris", None)
-    result.pop("request_digests", None)
-    return result
-
-
 def _request_digests(
     *,
     audio_uris: collections.abc.Sequence[str],
     histories: collections.abc.Sequence[
-        collections.abc.Sequence[context.ContextTurn]
+        collections.abc.Sequence[context.PredictedHistoryTurn]
     ],
     system_prompt: str,
     user_prompt: str,
