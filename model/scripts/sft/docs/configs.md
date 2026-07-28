@@ -42,14 +42,14 @@ prior_turn_count = 8
 prior_context_mode = "text_turns"
 ```
 
-The representation is shared, but transcript provenance is deliberately
-different:
+The same representation is used for SFT and eval, but transcript provenance is
+deliberately different:
 
-- During SFT preparation, prior reference transcripts are supervised training
-  data.
-- During evaluation, references are never provider input. History may contain
-  only finalized predictions from the evaluated target model for eligible
-  earlier rows. References are joined only after inference for scoring.
+- During SFT input preparation, prior reference transcripts are supervised
+  training data.
+- During evaluation, references are never provider input. Every history turn is
+  the evaluated target model's own finalized prediction for an eligible earlier
+  row. References are joined only after inference for scoring.
 
 Supported context representations:
 
@@ -58,6 +58,11 @@ Supported context representations:
 | `text_turns` | Prior `user(text prompt) -> model(prior transcript)` turns, then the current user turn with audio. | Recommended default for SFT prior context. |
 | `transcript` | One current user turn with a simple numbered prior-transcript block plus current audio. | Compact one-turn context. |
 | `guarded_transcript_block` | One current user turn with a guarded numbered prior-transcript block plus current audio. | Compact context with explicit "do not re-transcribe or continue prior turns" instructions. |
+
+With a nonzero count, omitting `[eval.execution].backend` automatically
+selects causal online evaluation. Explicit batch evaluation with a nonzero
+count is rejected before provider submission because one batch cannot consume
+predictions that earlier rows in that same evaluation have not produced yet.
 
 For positive K, training and rolling evaluation use the same transcript-free
 structural schedule. Rows are grouped by split and source. Within floating-point
