@@ -16,6 +16,43 @@ def _first_file_part(turn: dict) -> dict:
 
 
 class TestBuildExample(unittest.TestCase):
+    def test_empty_user_prompt_builds_complete_audio_only_sft_example(
+        self,
+    ) -> None:
+        example = tuning_data.build_audio_tuning_example(
+            audio_uri="gs://bucket/seg001.flac",
+            gt_text="Engine 41 copy",
+            system_prompt="You are a transcriber.",
+            user_prompt="",
+        )
+
+        self.assertEqual(
+            example,
+            {
+                "systemInstruction": {
+                    "role": "system",
+                    "parts": [{"text": "You are a transcriber."}],
+                },
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/seg001.flac",
+                                    "mimeType": "audio/flac",
+                                }
+                            }
+                        ],
+                    },
+                    {
+                        "role": "model",
+                        "parts": [{"text": "Engine 41 copy"}],
+                    },
+                ],
+            },
+        )
+
     def test_public_annotations_resolve_at_runtime(self) -> None:
         hints = typing.get_type_hints(tuning_data.build_audio_tuning_example)
 

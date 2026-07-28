@@ -4,6 +4,7 @@ import pathlib
 import tempfile
 import unittest
 
+from common.gemini import prompts as prompt_defaults
 from gemini_sft import config as config_module
 
 
@@ -685,6 +686,96 @@ user = "custom user"
 
         self.assertEqual(cfg.system_prompt, "custom system")
         self.assertEqual(cfg.user_prompt, "custom user")
+
+    def test_omitted_user_prompt_resolves_default(self) -> None:
+        cfg = config_module.load_run_config(
+            self._write_config(self._valid_toml())
+        )
+
+        self.assertEqual(
+            cfg.user_prompt,
+            prompt_defaults.GEMINI_TRANSCRIBE_USER_PROMPT,
+        )
+
+    def test_empty_system_prompt_is_rejected(self) -> None:
+        body = self._valid_toml(
+            prompts="""
+[prompts]
+system = ""
+"""
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            "prompts.system must be a non-empty string",
+        ):
+            config_module.load_run_config(self._write_config(body))
+
+    def test_whitespace_only_user_prompt_is_rejected(self) -> None:
+        body = self._valid_toml(
+            prompts="""
+[prompts]
+user = "   "
+"""
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            "prompts.user must be a non-empty string",
+        ):
+            config_module.load_run_config(self._write_config(body))
+
+    def test_explicit_empty_user_prompt_is_preserved(self) -> None:
+        body = self._valid_toml(
+            prompts="""
+[prompts]
+user = ""
+"""
+        )
+
+        cfg = config_module.load_run_config(self._write_config(body))
+
+        self.assertEqual(cfg.user_prompt, "")
+        self.assertEqual(cfg.to_record_dict()["user_prompt"], "")
+
+    def test_empty_user_prompt_rejects_prior_context(self) -> None:
+        body = self._valid_toml(
+            context="""
+[context]
+prior_turn_count = 1
+""",
+            prompts="""
+[prompts]
+user = ""
+""",
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            "prior_turn_count.*non-empty user prompt",
+        ):
+            config_module.load_run_config(self._write_config(body))
+
+    def test_require_config_str_allows_exact_empty_only_with_opt_in(
+        self,
+    ) -> None:
+        self.assertEqual(
+            config_module.require_config_str(
+                {"user_prompt": ""},
+                "user_prompt",
+                allow_empty=True,
+            ),
+            "",
+        )
+        for config in (
+            {},
+            {"user_prompt": None},
+            {"user_prompt": 1},
+            {"user_prompt": ""},
+        ):
+            with self.subTest(config=config):
+                with self.assertRaisesRegex(ValueError, "user_prompt"):
+                    config_module.require_config_str(config, "user_prompt")
 
     def test_context_prior_turn_count_is_recorded(self) -> None:
         body = self._valid_toml(

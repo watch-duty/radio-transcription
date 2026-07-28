@@ -116,6 +116,42 @@ class TestTrainingReferenceHistories(unittest.TestCase):
 
 
 class TestEvaluationContextBoundary(unittest.TestCase):
+    def test_training_empty_user_prompt_is_audio_only_current_turn(
+        self,
+    ) -> None:
+        contents = context.build_training_transcription_contents(
+            audio_uri="gs://audio/current.flac",
+            user_prompt="",
+        )
+
+        self.assertEqual(
+            contents,
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "fileData": {
+                                "fileUri": "gs://audio/current.flac",
+                                "mimeType": "audio/flac",
+                            }
+                        }
+                    ],
+                }
+            ],
+        )
+
+    def test_training_empty_user_prompt_rejects_history(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "transcript history requires a non-empty user prompt",
+        ):
+            context.build_training_transcription_contents(
+                audio_uri="gs://audio/current.flac",
+                user_prompt="",
+                history=[context.TrainingReferenceTurn("prior transcript")],
+            )
+
     def test_zero_context_preserves_configured_backend(self) -> None:
         for backend in (None, "batch", "online"):
             with self.subTest(backend=backend):

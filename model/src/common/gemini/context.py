@@ -288,6 +288,16 @@ def _build_transcription_contents(
         ValueError: If ``history_mode`` is unsupported.
     """
     history_mode = validate_history_mode(history_mode)
+    if not user_prompt:
+        if history:
+            msg = "transcript history requires a non-empty user prompt"
+            raise ValueError(msg)
+        return [
+            {
+                "role": "user",
+                "parts": [audio_file_data_part(audio_uri)],
+            }
+        ]
     contents: list[dict[str, typing.Any]] = []
     if history_mode == "text_turns":
         for turn in history:

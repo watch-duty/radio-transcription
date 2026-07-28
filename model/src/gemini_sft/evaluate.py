@@ -124,7 +124,11 @@ def evaluate_run(  # noqa: PLR0915
         TimeoutError: If a provider operation exceeds its timeout.
     """
     system_prompt = config_lib.require_config_str(config, "system_prompt")
-    user_prompt = config_lib.require_config_str(config, "user_prompt")
+    user_prompt = config_lib.require_config_str(
+        config,
+        "user_prompt",
+        allow_empty=True,
+    )
     base_model = config_lib.require_config_str(config, "base_model")
     eval_manifest_uri = config_lib.require_config_str(
         config,

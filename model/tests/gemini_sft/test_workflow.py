@@ -72,6 +72,7 @@ def _config_text(
     prior_context_count: int | None = None,
     eval_label: str = "base",
     eval_model: str = "gemini-3.1-flash-lite",
+    prompts: str = "",
 ) -> str:
     context_section = ""
     if prior_context_count is not None:
@@ -97,6 +98,7 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 {context_section}
+{prompts}
 
 [eval.model]
 label = "{eval_label}"
@@ -782,6 +784,47 @@ class TestPrepareRun(unittest.TestCase):
                 "gs://test-bucket/sft/runs/round-a/evals/README.txt",
             }
             self.assertTrue(required.issubset(set(storage.uploads)))
+
+    def test_prepare_empty_user_prompt_emits_audio_only_training_turn(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(
+                _config_text(
+                    prompts="""
+[prompts]
+user = ""
+"""
+                ),
+                encoding="utf-8",
+            )
+            run_cfg = config_module.load_run_config(cfg_path)
+
+            _, config = prepare.prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+            example = json.loads(
+                storage.get(run_cfg.paths.gemini_train_uri).splitlines()[0]
+            )
+
+        self.assertEqual(
+            example["contents"][0]["parts"],
+            [
+                {
+                    "fileData": {
+                        "fileUri": "gs://audio/train.flac",
+                        "mimeType": "audio/flac",
+                    }
+                }
+            ],
+        )
+        self.assertEqual(config["user_prompt"], "")
 
     def test_prepare_uploads_config_after_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -1605,6 +1648,58 @@ class TestTuneRun(unittest.TestCase):
 
 
 class TestEvaluateRun(unittest.TestCase):
+    def test_evaluate_reloads_empty_user_prompt_for_request_construction(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(
+                _config_text(
+                    prompts="""
+[prompts]
+user = ""
+"""
+                ),
+                encoding="utf-8",
+            )
+            run_cfg = config_module.load_run_config(cfg_path)
+            prepare.prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "prepare-results",
+            )
+            predictions = _batch_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"}
+            )
+
+            with (
+                _patched_eval_scoring(),
+                unittest.mock.patch.object(
+                    evaluate_module.storage,
+                    "Client",
+                    return_value=storage,
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "RESULTS_DIR",
+                    tmp / "eval-results",
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "batch_infer",
+                    return_value=predictions,
+                ) as batch_infer,
+            ):
+                result = evaluate_module.evaluate(
+                    argparse.Namespace(config=str(cfg_path))
+                )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(batch_infer.call_args.kwargs["user_prompt"], "")
+
     def test_eval_model_family_uses_publisher_target_model(self) -> None:
         target = config_module.EvalModelTarget(
             label="base",

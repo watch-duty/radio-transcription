@@ -412,7 +412,14 @@ def _load_run_config(
         key="user",
         file_key="user_file",
         default=prompt_defaults.GEMINI_TRANSCRIBE_USER_PROMPT,
+        allow_empty=True,
     )
+    if not user_prompt and prior_context_count:
+        msg = (
+            "context.prior_turn_count requires a non-empty user prompt "
+            "when it is positive"
+        )
+        raise RunConfigError(msg)
 
     paths = _build_paths(gcs_bucket, round_id)
     return RunConfig(
@@ -474,21 +481,28 @@ def _validated_evaluation_context(
     return mode
 
 
-def require_config_str(config: dict[str, typing.Any], key: str) -> str:
+def require_config_str(
+    config: dict[str, typing.Any],
+    key: str,
+    *,
+    allow_empty: bool = False,
+) -> str:
     """Return a required string from durable GCS config.json state.
 
     Args:
         config: Parsed durable config record.
         key: Top-level field to retrieve.
+        allow_empty: Whether an exact empty string is valid for this caller.
 
     Returns:
-        The non-empty string stored at ``key``.
+        The stored string, including an exact empty string when explicitly
+        allowed.
 
     Raises:
-        ValueError: If ``key`` is absent, empty, or not a string.
+        ValueError: If ``key`` is absent, invalidly empty, or not a string.
     """
     value = config.get(key)
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or (not value and not allow_empty):
         msg = f"config.json missing required string field: {key}"
         raise ValueError(msg)
     return value
@@ -1056,7 +1070,12 @@ def _required_lr_multiplier(data: dict[str, typing.Any], key: str) -> float:
 
 
 def _resolve_prompt(
-    prompts: dict[str, typing.Any], *, key: str, file_key: str, default: str
+    prompts: dict[str, typing.Any],
+    *,
+    key: str,
+    file_key: str,
+    default: str,
+    allow_empty: bool = False,
 ) -> str:
     if file_key in prompts:
         msg = (
@@ -1065,7 +1084,11 @@ def _resolve_prompt(
         )
         raise RunConfigError(msg)
     value = prompts.get(key, default)
-    if not isinstance(value, str) or not value.strip():
+    if (
+        not isinstance(value, str)
+        or (not value and not allow_empty)
+        or (value and not value.strip())
+    ):
         msg = f"prompts.{key} must be a non-empty string"
         raise RunConfigError(msg)
     if value.startswith("@"):
