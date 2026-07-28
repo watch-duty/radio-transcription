@@ -245,7 +245,15 @@ class HeartbeatResult(TypedDict):
 
 
 class Feed(TypedDict):
-    """Full feed details."""
+    """Full feed details.
+
+    ``status`` and its reason/heartbeat columns are the raw child
+    lifecycle, used by admin action eligibility. The ``effective_*``
+    fields project the parent ingestion Lease health for maintained SID
+    members (and mirror the child for every other row); the display layer
+    should use them. ``bcfy_calls_sid``/``lease_*`` expose the raw SID
+    management metadata.
+    """
 
     id: uuid.UUID
     name: str
@@ -263,6 +271,14 @@ class Feed(TypedDict):
     source_feed_id: str | None
     tags: list[dict[str, str]] | None
     last_speech_segment_timestamp: datetime.datetime | None
+    bcfy_calls_sid: str | None
+    lease_status: FeedStatus | None
+    lease_last_heartbeat: datetime.datetime | None
+    lease_status_reason: FeedStatusReason | None
+    effective_status: FeedStatus
+    effective_status_reason: FeedStatusReason | None
+    effective_status_reason_detail: str | None
+    effective_last_heartbeat: datetime.datetime | None
 
 
 @dataclass
@@ -295,6 +311,32 @@ def _require_actor_id(actor_id: str | None) -> str:
         msg = "actor_id is required for audited feed lifecycle writes"
         raise ValueError(msg)
     return actor_id
+
+
+def _feed_status_from_value(
+    value: object,
+    feed_id: object,
+    field_name: str,
+) -> FeedStatus:
+    try:
+        return FeedStatus(value)
+    except ValueError as e:
+        msg = f"Unknown {field_name} {value!r} for feed {feed_id}"
+        raise ValueError(msg) from e
+
+
+def _feed_status_reason_from_value(
+    value: object,
+    feed_id: object,
+    field_name: str,
+) -> FeedStatusReason | None:
+    if value is None:
+        return None
+    try:
+        return FeedStatusReason(value)
+    except ValueError as e:
+        msg = f"Unknown {field_name} {value!r} for feed {feed_id}"
+        raise ValueError(msg) from e
 
 
 def _parse_sid_source_feed_id(source_feed_id: str) -> tuple[str, str]:
@@ -407,8 +449,45 @@ class FeedStore:
         if tags is not None:
             tags = json.loads(tags)
 
+        # Read queries project lease-aware effective health; audited
+        # mutation rows do not carry those columns and fall back to the
+        # child's own lifecycle so one decoder serves both row shapes.
+        feed_id = row["id"]
+        effective_status_raw = row.get("effective_status")
+        if effective_status_raw is None:
+            effective_status = status
+            effective_status_reason = status_reason
+            effective_status_reason_detail = row["status_reason_detail"]
+            effective_last_heartbeat = row["last_heartbeat"]
+        else:
+            effective_status = _feed_status_from_value(
+                effective_status_raw,
+                feed_id,
+                "effective status",
+            )
+            effective_status_reason = _feed_status_reason_from_value(
+                row.get("effective_status_reason"),
+                feed_id,
+                "effective status reason",
+            )
+            effective_status_reason_detail = row.get(
+                "effective_status_reason_detail"
+            )
+            effective_last_heartbeat = row.get("effective_last_heartbeat")
+
+        lease_status_raw = row.get("lease_status")
+        lease_status = (
+            None
+            if lease_status_raw is None
+            else _feed_status_from_value(
+                lease_status_raw,
+                feed_id,
+                "lease status",
+            )
+        )
+
         return Feed(
-            id=row["id"],
+            id=feed_id,
             name=row["name"],
             source_type=source_type,
             status=status,
@@ -424,6 +503,18 @@ class FeedStore:
             source_feed_id=row["source_feed_id"],
             tags=tags,
             last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
+            bcfy_calls_sid=row.get("bcfy_calls_sid"),
+            lease_status=lease_status,
+            lease_last_heartbeat=row.get("lease_last_heartbeat"),
+            lease_status_reason=_feed_status_reason_from_value(
+                row.get("lease_status_reason"),
+                feed_id,
+                "lease status reason",
+            ),
+            effective_status=effective_status,
+            effective_status_reason=effective_status_reason,
+            effective_status_reason_detail=effective_status_reason_detail,
+            effective_last_heartbeat=effective_last_heartbeat,
         )
 
     @staticmethod

@@ -3998,5 +3998,145 @@ class TestDeleteSidFeed(unittest.IsolatedAsyncioTestCase):
         pool.transaction_context.__aenter__.assert_not_awaited()
 
 
+class TestLeaseAwareHealthSqlProjection(unittest.TestCase):
+    """Contract tests for the lease-aware Feed health projection."""
+
+    _READ_QUERIES = (
+        feed_queries.GET_FEED_SQL,
+        feed_queries.LIST_FEEDS_DESC_SQL,
+        feed_queries.LIST_FEEDS_ASC_SQL,
+        feed_queries.COUNT_FEEDS_SQL,
+        feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL,
+    )
+
+    def test_read_queries_left_join_parent_lease_by_primary_key(self) -> None:
+        for sql in self._READ_QUERIES:
+            self.assertIn("LEFT JOIN ingestion_leases il", sql)
+            self.assertIn("AND il.lease_key = fp.bcfy_calls_sid", sql)
+
+    def test_read_queries_share_one_effective_expression(self) -> None:
+        for sql in self._READ_QUERIES:
+            self.assertIn(
+                "WHEN il.lease_key IS NULL THEN 'quarantined'::feed_status",
+                sql,
+            )
+
+    def test_missing_lease_projects_configuration_error_reason(self) -> None:
+        for sql in (
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertIn("'system_configuration_invalid'", sql)
+
+    def test_list_and_count_filter_and_display_the_same_status(self) -> None:
+        """List filters and total counts use effective, not raw, status."""
+        for sql in (
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertNotIn("f.status::text = ANY($4)", sql)
+            self.assertIn("::text = ANY($4)", sql)
+        self.assertNotIn(
+            "f.status::text = ANY($2)",
+            feed_queries.COUNT_FEEDS_SQL,
+        )
+        self.assertIn("::text = ANY($2)", feed_queries.COUNT_FEEDS_SQL)
+
+    def test_read_queries_expose_raw_lease_columns(self) -> None:
+        for sql in (
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertIn("il.status AS lease_status", sql)
+            self.assertIn("il.last_heartbeat AS lease_last_heartbeat", sql)
+            self.assertIn("il.status_reason AS lease_status_reason", sql)
+            self.assertIn("fp.bcfy_calls_sid", sql)
+
+
+class TestLeaseAwareRowMapping(unittest.TestCase):
+    """Tests for decoding effective-health columns into a Feed."""
+
+    def test_effective_columns_decode_when_present(self) -> None:
+        store = FeedStore(make_mock_pool())
+        heartbeat = datetime.datetime(2026, 7, 20, 12, 0, tzinfo=datetime.UTC)
+        row = _full_feed_row(
+            source_type="bcfy_calls",
+            status="active",
+            source_feed_id=_SID_SOURCE_FEED_ID,
+            bcfy_calls_sid=_SID,
+            lease_status="failing",
+            lease_last_heartbeat=heartbeat,
+            lease_status_reason="source_unreachable",
+            effective_status="failing",
+            effective_status_reason="source_unreachable",
+            effective_status_reason_detail="calls API unreachable",
+            effective_last_heartbeat=heartbeat,
+        )
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertIs(result["status"], FeedStatus.ACTIVE)
+        self.assertIs(result["effective_status"], FeedStatus.FAILING)
+        self.assertIs(
+            result["effective_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            result["effective_status_reason_detail"],
+            "calls API unreachable",
+        )
+        self.assertEqual(result["effective_last_heartbeat"], heartbeat)
+        self.assertEqual(result["bcfy_calls_sid"], _SID)
+        self.assertIs(result["lease_status"], FeedStatus.FAILING)
+        self.assertEqual(result["lease_last_heartbeat"], heartbeat)
+        self.assertIs(
+            result["lease_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+    def test_mutation_rows_fall_back_to_child_lifecycle(self) -> None:
+        store = FeedStore(make_mock_pool())
+        heartbeat = datetime.datetime(2026, 7, 20, 12, 0, tzinfo=datetime.UTC)
+        row = _full_feed_row(
+            status="failing",
+            status_reason="source_offline",
+            status_reason_detail="stream offline",
+            last_heartbeat=heartbeat,
+        )
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertIs(result["effective_status"], FeedStatus.FAILING)
+        self.assertIs(
+            result["effective_status_reason"],
+            FeedStatusReason.SOURCE_OFFLINE,
+        )
+        self.assertEqual(
+            result["effective_status_reason_detail"],
+            "stream offline",
+        )
+        self.assertEqual(result["effective_last_heartbeat"], heartbeat)
+        self.assertIsNone(result["bcfy_calls_sid"])
+        self.assertIsNone(result["lease_status"])
+        self.assertIsNone(result["lease_last_heartbeat"])
+        self.assertIsNone(result["lease_status_reason"])
+
+    def test_unknown_effective_status_raises_value_error(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(effective_status="not-a-status")
+
+        with self.assertRaisesRegex(ValueError, "effective status"):
+            store._row_to_feed(cast("asyncpg.Record", row))
+
+    def test_unknown_lease_status_reason_raises_value_error(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(lease_status_reason="free-form raw error")
+
+        with self.assertRaisesRegex(ValueError, "lease status reason"):
+            store._row_to_feed(cast("asyncpg.Record", row))
+
+
 if __name__ == "__main__":
     unittest.main()

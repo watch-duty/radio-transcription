@@ -674,12 +674,89 @@ SELECT after_row.*,
 FROM after_row
 """
 
-GET_FEED_SQL = """\
+# Lease-aware health projection: SID members left-join their parent
+# Lease by primary key; other rows never match and keep their raw child
+# lifecycle as the effective one. The same expression drives returned
+# columns, list filtering, counts, and search options so the table
+# cannot display one status while filtering by another.
+_SID_MEMBER_PREDICATE_SQL = (
+    "fp.source_type = 'bcfy_calls' AND fp.bcfy_calls_is_trunked IS TRUE"
+)
+
+_FEED_LEASE_JOIN_SQL = f"""\
+LEFT JOIN ingestion_leases il
+  ON {_SID_MEMBER_PREDICATE_SQL}
+ AND il.source_type = fp.source_type
+ AND il.lease_key = fp.bcfy_calls_sid"""
+
+# Precedence: child terminal/error states win; a member with a missing
+# parent Lease row is a configuration error; otherwise the parent
+# lifecycle projects through.
+_EFFECTIVE_STATUS_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status
+           WHEN il.lease_key IS NULL THEN 'quarantined'::feed_status
+           ELSE il.status
+       END"""
+
+_EFFECTIVE_STATUS_REASON_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status_reason
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status_reason
+           WHEN il.lease_key IS NULL THEN 'system_configuration_invalid'
+           ELSE il.status_reason
+       END"""
+
+_EFFECTIVE_STATUS_REASON_DETAIL_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status_reason_detail
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status_reason_detail
+           WHEN il.lease_key IS NULL
+               THEN 'bcfy_calls SID parent lease row is missing'
+           ELSE il.status_reason_detail
+       END"""
+
+_EFFECTIVE_LAST_HEARTBEAT_SQL = f"""\
+CASE
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.last_heartbeat
+           ELSE il.last_heartbeat
+       END"""
+
+_LEASE_HEALTH_PROJECTION_SQL = f"""\
+fp.bcfy_calls_sid,
+       il.status AS lease_status,
+       il.last_heartbeat AS lease_last_heartbeat,
+       il.status_reason AS lease_status_reason,
+       {_EFFECTIVE_STATUS_SQL} AS effective_status,
+       {_EFFECTIVE_STATUS_REASON_SQL} AS effective_status_reason,
+       {_EFFECTIVE_STATUS_REASON_DETAIL_SQL}
+           AS effective_status_reason_detail,
+       {_EFFECTIVE_LAST_HEARTBEAT_SQL} AS effective_last_heartbeat"""
+
+_EFFECTIVE_STATUS_FILTER_SQL = (
+    f"($4::text[] IS NULL OR ({_EFFECTIVE_STATUS_SQL})::text = ANY($4))"
+)
+
+GET_FEED_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -690,15 +767,17 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE f.id = $1
 """
 
-LIST_FEEDS_DESC_SQL = """\
+LIST_FEEDS_DESC_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -709,22 +788,24 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE ($1::timestamptz IS NULL OR f.created_at < $1
        OR (f.created_at = $1 AND f.id < $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
-  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND {_EFFECTIVE_STATUS_FILTER_SQL}
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
   AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at DESC, f.id DESC
 LIMIT $7
 """
 
-LIST_FEEDS_ASC_SQL = """\
+LIST_FEEDS_ASC_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -735,10 +816,11 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE ($1::timestamptz IS NULL OR f.created_at > $1
        OR (f.created_at = $1 AND f.id > $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
-  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND {_EFFECTIVE_STATUS_FILTER_SQL}
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
   AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at ASC, f.id ASC
@@ -994,12 +1076,13 @@ FROM result_row
 """
 
 
-COUNT_FEEDS_SQL = """\
+COUNT_FEEDS_SQL = f"""\
 SELECT COUNT(*)
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
-  AND ($2::text[] IS NULL OR f.status::text = ANY($2))
+  AND ($2::text[] IS NULL OR ({_EFFECTIVE_STATUS_SQL})::text = ANY($2))
   AND ($3::jsonb IS NULL OR fp.tags @> $3::jsonb)
   AND ($4::text IS NULL OR f.name ILIKE '%' || $4 || '%')
 """
@@ -1054,8 +1137,11 @@ FROM feeds
 ORDER BY source_type;
 """
 
-GET_FEED_SEARCH_OPTIONS_STATUSES_SQL = """\
-SELECT DISTINCT status
-FROM feeds
+# Effective statuses, so filter options match what filtering uses.
+GET_FEED_SEARCH_OPTIONS_STATUSES_SQL = f"""\
+SELECT DISTINCT {_EFFECTIVE_STATUS_SQL} AS status
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 ORDER BY status;
 """
