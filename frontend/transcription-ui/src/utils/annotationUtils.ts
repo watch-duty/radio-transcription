@@ -5,7 +5,6 @@ import {
   type AudioSegment,
   type EvaluationAnnotationData,
   type TranscriptAnnotationData,
-  type TranscriptFlagAnnotationData,
   type WaveformAnnotationData,
 } from '@transcription/common';
 
@@ -49,12 +48,12 @@ export function findWaveformAnnotationData(
   return null;
 }
 
-export function findTranscriptFlagAnnotationData(
+export function findTranscriptFlagAnnotation(
   annotations: Annotation[]
-): TranscriptFlagAnnotationData | null {
+): Annotation | null {
   for (const annotation of annotations) {
     if (annotation.type === AnnotationType.TRANSCRIPT_FLAG) {
-      return annotation.data as TranscriptFlagAnnotationData;
+      return annotation;
     }
   }
   return null;

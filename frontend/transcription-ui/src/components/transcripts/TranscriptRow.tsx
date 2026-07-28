@@ -11,7 +11,6 @@ import { useTheme } from '@mui/material/styles';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   type Annotation,
-  AnnotationType,
   AudioClassification,
   type TranscriptAnnotationData,
 } from '@transcription/common';
@@ -19,13 +18,13 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { useUserInfo } from '../../hooks/useUserInfo';
-import { flagTranscript } from '../../service/flagTranscript';
+import { flagSegment } from '../../service/flagSegment';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
-  findTranscriptFlagAnnotationData,
+  findTranscriptFlagAnnotation,
 } from '../../utils/annotationUtils';
-import { updateAudioSegmentInCache } from '../../utils/cacheUtils';
+import { cacheAudioSegment } from '../../utils/cacheUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
@@ -83,7 +82,10 @@ export function TranscriptRow({
     audioSegment.annotations
   );
 
-  const flagData = findTranscriptFlagAnnotationData(audioSegment.annotations);
+  const flagAnnotation = findTranscriptFlagAnnotation(audioSegment.annotations);
+  const flagData = flagAnnotation?.data as
+    | { flaggedByUserIds: string[] }
+    | undefined;
   const flaggedByUserIds = flagData?.flaggedByUserIds || [];
   const hasUserFlagged = !!user && flaggedByUserIds.includes(user.email);
 
@@ -173,7 +175,7 @@ export function TranscriptRow({
     mutationFn: async () => {
       if (!user || !token) return;
 
-      const newAnnotation = await flagTranscript(
+      const newAnnotation = await flagSegment(
         audioSegment.id,
         !hasUserFlagged,
         token
@@ -186,9 +188,12 @@ export function TranscriptRow({
       );
       if (!updatedAnnotation) return;
       // Update cache immediately to avoid flashing
-      updateAudioSegmentInCache(queryClient, audioSegment.id, (segment) => {
+      cacheAudioSegment(queryClient, audioSegment.id, (segment) => {
+        const oldFlagAnnotation = findTranscriptFlagAnnotation(
+          segment.annotations
+        );
         const newAnnotations = segment.annotations.filter(
-          (a: Annotation) => a.type !== AnnotationType.TRANSCRIPT_FLAG
+          (a: Annotation) => a !== oldFlagAnnotation
         );
         newAnnotations.push(updatedAnnotation);
         return {

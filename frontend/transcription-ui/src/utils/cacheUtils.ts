@@ -1,7 +1,7 @@
 import { type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { type AudioSegment } from '@transcription/common';
 
-export function updateAudioSegmentInCache(
+export function cacheAudioSegment(
   queryClient: QueryClient,
   segmentId: string,
   updateFn: (segment: AudioSegment) => AudioSegment

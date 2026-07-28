@@ -2,13 +2,13 @@ import { type Annotation } from '@transcription/common';
 
 import { apiFetch } from '../utils/apiUtils';
 
-export async function flagTranscript(
+export async function flagSegment(
   segmentId: string,
   isFlagged: boolean,
   token: string
 ): Promise<Annotation> {
   return apiFetch<Annotation>(
-    `${import.meta.env.VITE_API_BASE_URL}/api/v1/audioSegments/${segmentId}/flagTranscript`,
+    `${import.meta.env.VITE_API_BASE_URL}/api/v1/audioSegments/${segmentId}/flagSegment`,
     {
       method: 'POST',
       headers: {
