@@ -17,6 +17,8 @@ from backend.services.audio_segments.models import (
     ListAudioSegmentsResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
+    TranscriptFlagAnnotation,
+    TranscriptFlagAnnotationData,
     WaveformAnnotation,
     WaveformAnnotationData,
 )
@@ -272,6 +274,35 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data["data"]["peaks"], [[0.0, 0.5, 0.25, 1.0]])
         self.assertEqual(data["data"]["duration_seconds"], 4.0)
         self.mock_service.add_annotation.assert_called_once()
+
+    def test_flag_transcript_success(self) -> None:
+        """Test flagging a transcript successfully."""
+        payload = {
+            "user_id": "test@example.com",
+            "action": "flag",
+        }
+        mock_annotation = TranscriptFlagAnnotation(
+            audio_segment_id=_SEGMENT_ID,
+            type=AnnotationType.TRANSCRIPT_FLAG,
+            data=TranscriptFlagAnnotationData(
+                flagged_by_user_ids=["test@example.com"]
+            ),
+            created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.mock_service.flag_transcript.return_value = mock_annotation
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/flag", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["type"], "TRANSCRIPT_FLAG")
+        self.assertEqual(
+            data["data"]["flagged_by_user_ids"], ["test@example.com"]
+        )
+        self.mock_service.flag_transcript.assert_called_once_with(
+            _SEGMENT_ID, "test@example.com", "flag"
+        )
 
     def test_add_annotation_segment_not_found(self) -> None:
         """Test adding an annotation to a non-existent segment."""
