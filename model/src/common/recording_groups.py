@@ -18,9 +18,10 @@ def reject_split_leakage(
 ) -> None:
     """Reject physical recordings shared by training and a holdout split.
 
-    Rows are joined by explicit physical-source URI and, when present, equal
-    source-encoding SHA-256. Different hashes never disprove an exact URI
-    match. Validation and eval may intentionally share recordings.
+    A row's explicit physical-source URIs alias each other. Rows are also joined
+    by equal URI and, when present, equal source-encoding SHA-256. Different
+    hashes never disprove an exact URI match. Validation and eval may
+    intentionally share recordings.
 
     Args:
         rows_by_split: Canonical manifest rows keyed by split.
@@ -33,12 +34,12 @@ def reject_split_leakage(
         ValueError: If source metadata is invalid or a training recording also
             appears in validation or eval.
     """
-    nodes_by_split: dict[str, list[_PhysicalSourceKey]] = {}
+    nodes_by_split: dict[str, list[tuple[_PhysicalSourceKey, ...]]] = {}
     physical_nodes: set[_PhysicalSourceKey] = set()
     for split in ("train", "validation", "eval"):
-        nodes: list[_PhysicalSourceKey] = []
+        nodes: list[tuple[_PhysicalSourceKey, ...]] = []
         for row_index, row in enumerate(rows_by_split.get(split, ())):
-            source_uri = _source_uri(
+            source_uris = _source_uris(
                 row,
                 split=split,
                 row_index=row_index,
@@ -48,9 +49,11 @@ def reject_split_leakage(
                 split=split,
                 row_index=row_index,
             )
-            physical = (source_uri, source_sha)
-            physical_nodes.add(physical)
-            nodes.append(physical)
+            aliases = tuple(
+                (source_uri, source_sha) for source_uri in source_uris
+            )
+            physical_nodes.update(aliases)
+            nodes.append(aliases)
         nodes_by_split[split] = nodes
 
     groups = _UnionFind(physical_nodes)
@@ -61,11 +64,15 @@ def reject_split_leakage(
         by_uri.setdefault(source_uri, []).append(node)
         if source_sha is not None:
             by_sha.setdefault(source_sha, []).append(node)
-    for matches in itertools.chain(by_uri.values(), by_sha.values()):
+    for matches in itertools.chain(
+        itertools.chain.from_iterable(nodes_by_split.values()),
+        by_uri.values(),
+        by_sha.values(),
+    ):
         groups.merge_all(matches)
 
     sources_by_split = {
-        split: {groups.root(node) for node in nodes}
+        split: {groups.root(node) for aliases in nodes for node in aliases}
         for split, nodes in nodes_by_split.items()
     }
     for holdout in ("validation", "eval"):
@@ -104,13 +111,13 @@ def _source_sample(
     return ", ".join(matches[:5])
 
 
-def _source_uri(
+def _source_uris(
     row: collections.abc.Mapping[str, typing.Any],
     *,
     split: str,
     row_index: int,
-) -> str:
-    """Return the canonical physical-source locator for a manifest row.
+) -> tuple[str, ...]:
+    """Return every explicit physical-source locator for a manifest row.
 
     Args:
         row: Canonical manifest row.
@@ -118,12 +125,13 @@ def _source_uri(
         row_index: Zero-based row index used in validation errors.
 
     Returns:
-        Top-level original source URI when present, otherwise the canonical
-        nested source-audio URI.
+        One or two source locators. When both representations are present,
+        they are aliases for the same physical recording.
 
     Raises:
         ValueError: If authoritative source metadata is blank or absent.
     """
+    source_uris: list[str] = []
     original_audio_uri = row.get("original_audio_uri")
     if original_audio_uri is not None:
         if (
@@ -135,7 +143,7 @@ def _source_uri(
                 "nonblank string"
             )
             raise ValueError(msg)
-        return original_audio_uri.strip()
+        source_uris.append(original_audio_uri.strip())
 
     source_audio = row.get("source_audio")
     if isinstance(source_audio, collections.abc.Mapping):
@@ -150,7 +158,9 @@ def _source_uri(
                     "source_audio.audio_filepath must be a nonblank string"
                 )
                 raise ValueError(msg)
-            return source_audio_uri.strip()
+            source_uris.append(source_audio_uri.strip())
+    if source_uris:
+        return tuple(dict.fromkeys(source_uris))
     msg = (
         f"{split} row {row_index} lacks physical source provenance: "
         "original_audio_uri or source_audio.audio_filepath"

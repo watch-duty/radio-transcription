@@ -102,10 +102,11 @@ For a training round, it copies canonical manifests into the run prefix,
 validates exact-row and physical-recording split overlap, derives Gemini JSONL
 for train and validation, writes preflight output, and stores resolved prompts
 in durable GCS `config.json`. Every training-round row must provide explicit
-physical-source provenance through `original_audio_uri` or
-`source_audio.audio_filepath`. Physical identity uses the complete source
-locator and equal optional source SHA-256 values; it does not infer identity
-from filenames or model-ready clip paths. For an eval-only round, `prepare`
+physical-source provenance through `original_audio_uri`,
+`source_audio.audio_filepath`, or both. When both are present, they are treated
+as aliases for the same recording. Physical identity also uses equal optional
+source SHA-256 values; it does not infer identity from filenames or model-ready
+clip paths. For an eval-only round, `prepare`
 validates and publishes only `run_config.toml`, `config.json`, and the canonical
 eval manifest. Its durable config status is `eval_prepared`; it intentionally
 does not publish the training-only root `status.json`.

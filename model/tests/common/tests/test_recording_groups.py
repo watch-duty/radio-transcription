@@ -48,7 +48,7 @@ class TestRejectSplitLeakage(unittest.TestCase):
         message = str(raised.exception)
         self.assertIn("gs://sources/recording.flac", message)
 
-    def test_top_level_original_source_takes_precedence(
+    def test_rejects_matching_top_level_original_source(
         self,
     ) -> None:
         train = _row(
@@ -61,6 +61,29 @@ class TestRejectSplitLeakage(unittest.TestCase):
             "gs://sources/intermediate-eval.flac",
         )
         evaluation["original_audio_uri"] = "gs://sources/original.flac"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "train and eval share 1 physical recording group",
+        ):
+            recording_groups.reject_split_leakage(
+                {
+                    "train": [train],
+                    "validation": [],
+                    "eval": [evaluation],
+                }
+            )
+
+    def test_row_with_both_source_uris_bridges_their_aliases(self) -> None:
+        train = _row(
+            "gs://clips/train.flac",
+            "gs://sources/intermediate.flac",
+        )
+        train["original_audio_uri"] = "gs://sources/original.flac"
+        evaluation = _row(
+            "gs://clips/eval.flac",
+            "gs://sources/intermediate.flac",
+        )
 
         with self.assertRaisesRegex(
             ValueError,
