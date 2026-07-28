@@ -14,6 +14,8 @@ import apache_beam as beam
 import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
+from apache_beam.metrics.execution import MetricsEnvironment
+from apache_beam.metrics.metric import MetricName
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
 )
@@ -1297,14 +1299,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # - Fire 2 (at 104.002): drains chunk 5, buffer is now empty, timer is cleared (deadline is None)
             self.assertEqual(iterations, 2)
 
-            # Extract all processed GCS URIs
-            processed_uris = set()
-            for res in results:
-                if isinstance(res, tuple) and isinstance(res[1], FlushRequest):
-                    for chunk in res[1].contributing_chunks:
-                        processed_uris.add(chunk.gcs_uri)
-
-            # Verify that ALL 5 chunks were fully processed and emitted without any data loss!
+            processed_uris = {
+                chunk.gcs_uri
+                for res in results
+                if isinstance(res, tuple) and isinstance(res[1], FlushRequest)
+                for chunk in res[1].contributing_chunks
+            }
             self.assertEqual(len(processed_uris), 5)
             self.assertEqual(
                 processed_uris,
@@ -1313,6 +1313,15 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     for i in range(1, 6)
                 },
             )
+
+            # Verify Beam metric counter for bundle clamping
+            container = MetricsEnvironment.process_wide_container()
+            item_clamp_metric = container.get_counter(
+                MetricName(
+                    OrderedStitchAudioFn.__name__, "bundle_clamped_item_limit"
+                )
+            )
+            self.assertGreaterEqual(item_clamp_metric.value, 1)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"

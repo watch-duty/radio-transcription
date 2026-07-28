@@ -603,7 +603,7 @@ class OrderedStitchAudioFn(beam.DoFn):
        network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
        SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
     3. Bounded Self-Chaining Drains: When unrolling out-of-order backlogs, emissions are
-       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (300 chunks) and a watermark timer is
+       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (1000 chunks) and a watermark timer is
        re-armed to open fresh bundles, preventing 300-second bundle lease evictions
        while reducing intermediate timer queuing delays during catch-up.
     """
@@ -769,7 +769,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _record_clamping_diagnostics(
         self,
         *,
-        task_logger: Any,
+        task_logger: std_logging.LoggerAdapter,
         clamped_by_items: bool,
         clamped_by_time: bool,
         elements_to_emit_count: int,
@@ -819,7 +819,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         deferred_drain_timer: RuntimeTimer,
         *,
         state_changed: bool,
-        task_logger: Any = None,
+        task_logger: std_logging.LoggerAdapter | None = None,
     ) -> None:
         """Handles bundle budget exhaustion by buffering the chunk and setting the deferred drain timer."""
         current_ts_ms = (
@@ -1174,6 +1174,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     out_of_order_buffer_state.add(remaining_chunk)
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
+                next_deadline: Timestamp | None = None
                 if deferred_drain_timer is not None and timestamp is not None:
                     oldest_chunk_ts_sec = (
                         chunk.timestamp_ms / common_constants.MS_PER_SECOND
@@ -1184,6 +1185,33 @@ class OrderedStitchAudioFn(beam.DoFn):
                         Timestamp(seconds=oldest_chunk_ts_sec),
                     )
                     deferred_drain_timer.set(next_deadline)
+
+                clamped_by_items = (
+                    self.processed_in_bundle
+                    >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                )
+                elapsed_sec = time.monotonic() - self._get_bundle_start_time()
+                clamped_by_time = (
+                    elapsed_sec
+                    >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
+                )
+                remaining_elements = list(out_of_order_buffer_state.read())
+                clamp_logger = _get_task_logger(
+                    feed_id,
+                    curr_context.session_id
+                    if isinstance(curr_context, datatypes.ActiveStitchingState)
+                    else active_session_id,
+                    "ordered-stitcher",
+                )
+                self._record_clamping_diagnostics(
+                    task_logger=clamp_logger,
+                    clamped_by_items=clamped_by_items,
+                    clamped_by_time=clamped_by_time,
+                    elements_to_emit_count=i,
+                    remaining_buffer_count=len(remaining_elements),
+                    context_label="Mid-execution bundle budget exhausted",
+                    rescheduled_deadline=next_deadline,
+                )
                 if not isinstance(curr_context, datatypes.ActiveStitchingState):
                     msg = "curr_context must be an ActiveStitchingState"
                     raise TypeError(msg)
@@ -1556,7 +1584,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
-            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (300 chunks).
+            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (1000 chunks).
             initial_expected_ts = curr_context.expected_next_chunk_start_ms
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
