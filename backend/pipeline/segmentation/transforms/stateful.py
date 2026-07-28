@@ -98,6 +98,7 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
+from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -661,6 +662,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.order_config = order_config
         self.stitch_config = stitch_config
         self.processed_in_bundle = 0
+        self.bundle_clamped_item_limit = Metrics.counter(
+            self.__class__, "bundle_clamped_item_limit"
+        )
+        self.bundle_clamped_duration_limit = Metrics.counter(
+            self.__class__, "bundle_clamped_duration_limit"
+        )
 
     @property
     def engine(self) -> Any:
@@ -773,6 +780,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         deferred_drain_timer: RuntimeTimer,
         *,
         state_changed: bool,
+        task_logger: Any = None,
     ) -> None:
         """Handles bundle budget exhaustion by buffering the chunk and setting the deferred drain timer."""
         current_ts_ms = (
@@ -807,7 +815,39 @@ class OrderedStitchAudioFn(beam.DoFn):
             min(c.timestamp_ms for c in buffer_elements)
             / common_constants.MS_PER_SECOND
         )
-        deferred_drain_timer.set(Timestamp(seconds=oldest_chunk_ts_sec))
+        next_deadline = max(
+            timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+            Timestamp(seconds=oldest_chunk_ts_sec),
+        )
+        deferred_drain_timer.set(next_deadline)
+
+        # Diagnostics & Metrics
+        elapsed_sec = time.monotonic() - getattr(
+            self, "bundle_start_time_monotonic", time.monotonic()
+        )
+        reasons = []
+        if (
+            self.processed_in_bundle
+            >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+        ):
+            self.bundle_clamped_item_limit.inc()
+            reasons.append(
+                f"item_count_limit ({self.processed_in_bundle}/{trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE})"
+            )
+        if elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC:
+            self.bundle_clamped_duration_limit.inc()
+            reasons.append(
+                f"wall_clock_timeout ({elapsed_sec:.2f}s/{trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC:.0f}s)"
+            )
+
+        reason_str = ", ".join(reasons) or "budget_exhausted"
+        if task_logger is not None:
+            task_logger.info(
+                "[Windmill Clamp] Process budget exhausted (%s). Buffer depth: %d. Rescheduled timer at %s",
+                reason_str,
+                len(buffer_elements),
+                next_deadline,
+            )
 
     @override
     def process(
@@ -882,6 +922,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 out_of_order_buffer_state=out_of_order_buffer_state,
                 deferred_drain_timer=deferred_drain_timer,
                 state_changed=state_changed,
+                task_logger=task_logger,
             )
             return
 
@@ -1184,7 +1225,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         return results, curr_context, last_start_ms
 
-    def _handle_gap_timeout_common(  # noqa: PLR0915
+    def _handle_gap_timeout_common(  # noqa: PLR0915, PLR0912
         self,
         key_str: str,
         transmission_context_state: ReadModifyWriteRuntimeState,
@@ -1278,18 +1319,40 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
+                clamped_by_items = len(elements_to_emit) >= (
+                    trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                    - self.processed_in_bundle
+                )
+                clamped_by_time = (
+                    time.monotonic() >= self._get_bundle_deadline_monotonic()
+                )
                 clamped = bool(
                     new_buffer_elements
-                    and (
-                        len(elements_to_emit)
-                        >= (
-                            trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                            - self.processed_in_bundle
-                        )
-                        or time.monotonic()
-                        >= self._get_bundle_deadline_monotonic()
-                    )
+                    and (clamped_by_items or clamped_by_time)
                 )
+                if new_buffer_elements and clamped:
+                    elapsed_sec = time.monotonic() - getattr(
+                        self, "bundle_start_time_monotonic", time.monotonic()
+                    )
+                    reasons = []
+                    if clamped_by_items:
+                        self.bundle_clamped_item_limit.inc()
+                        reasons.append(
+                            f"item_count_limit (emitted={len(elements_to_emit)}, bundle_processed={self.processed_in_bundle}/{trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE})"
+                        )
+                    if clamped_by_time:
+                        self.bundle_clamped_duration_limit.inc()
+                        reasons.append(
+                            f"wall_clock_timeout ({elapsed_sec:.2f}s/{trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC:.0f}s)"
+                        )
+                    clamp_logger = _get_task_logger(
+                        feed_id, active_session_id, "ordered-stitcher"
+                    )
+                    clamp_logger.info(
+                        "[Windmill Clamp] Backlog drain clamped during process (%s). Buffer remaining: %d",
+                        ", ".join(reasons),
+                        len(new_buffer_elements),
+                    )
                 if new_buffer_elements:
                     timer_active = _reschedule_gap_timeout(
                         gap_timer_event=gap_timer_event,
@@ -1364,7 +1427,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(results)
 
     @on_timer(DEFERRED_DRAIN_TIMER_SPEC)
-    def handle_deferred_drain(
+    def handle_deferred_drain(  # noqa: PLR0915
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
@@ -1400,6 +1463,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
+        task_logger = _get_task_logger(
+            feed_id, active_session_id, "ordered-stitcher"
+        )
 
         results: list[
             tuple[str, datatypes.FlushRequest]
@@ -1431,16 +1497,15 @@ class OrderedStitchAudioFn(beam.DoFn):
             for c in new_buffer_elements:
                 out_of_order_buffer_state.add(c)
 
+            clamped_by_items = len(elements_to_emit) >= (
+                trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                - self.processed_in_bundle
+            )
+            clamped_by_time = (
+                time.monotonic() >= self._get_bundle_deadline_monotonic()
+            )
             clamped = bool(
-                new_buffer_elements
-                and (
-                    len(elements_to_emit)
-                    >= (
-                        trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                        - self.processed_in_bundle
-                    )
-                    or time.monotonic() >= self._get_bundle_deadline_monotonic()
-                )
+                new_buffer_elements and (clamped_by_items or clamped_by_time)
             )
             if new_buffer_elements and clamped:
                 # Still clamped, re-arm the deferral timer to self-chain into
@@ -1457,6 +1522,27 @@ class OrderedStitchAudioFn(beam.DoFn):
                     Timestamp(seconds=oldest_chunk_ts_sec),
                 )
                 deferred_drain_timer.set(next_deadline)
+
+                elapsed_sec = time.monotonic() - getattr(
+                    self, "bundle_start_time_monotonic", time.monotonic()
+                )
+                reasons = []
+                if clamped_by_items:
+                    self.bundle_clamped_item_limit.inc()
+                    reasons.append(
+                        f"item_count_limit (emitted={len(elements_to_emit)}, bundle_processed={self.processed_in_bundle}/{trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE})"
+                    )
+                if clamped_by_time:
+                    self.bundle_clamped_duration_limit.inc()
+                    reasons.append(
+                        f"wall_clock_timeout ({elapsed_sec:.2f}s/{trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC:.0f}s)"
+                    )
+                task_logger.info(
+                    "[Windmill Clamp] Deferred drain clamped (%s). Remaining in buffer: %d. Rescheduled timer at %s",
+                    ", ".join(reasons),
+                    len(new_buffer_elements),
+                    next_deadline,
+                )
 
             curr_context = replace(
                 curr_context,
