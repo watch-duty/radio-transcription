@@ -305,6 +305,8 @@ export function FeedConfigurationView({
             feedTags={tags}
             feedStatus={currentEditingFeed?.status}
             feedSubstatus={currentEditingFeed?.substatus}
+            feedChildStatus={currentEditingFeed?.childStatus}
+            feedBcfyCallsSid={currentEditingFeed?.bcfyCallsSid}
             setFeedName={setName}
             setFeedSourceType={setSourceType}
             setFeedSourceId={setSourceFeedId}
