@@ -2,7 +2,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from backend.pipeline.ingestion import grant_control, worker_profiles
+from backend.pipeline.ingestion import grant_control
 from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -112,10 +112,13 @@ class TestCollectorSettings(unittest.TestCase):
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 200)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 500)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 200)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 700)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            500,
+        )
 
     def test_phase1_expected_inputs(self) -> None:
         """Loads Phase 1 lease-admission settings from environment."""
@@ -185,24 +188,30 @@ class TestCollectorSettings(unittest.TestCase):
             "projects/test-project/topics/test-topic",
         )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 240)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 900)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            600,
+        )
 
     def test_calls_authority_and_work_defaults(self) -> None:
         with patch.dict("os.environ", _required_env(), clear=True):
             settings = CollectorSettings()
 
         self.assertEqual(
-            settings.bcfy_calls_authority_mode,
-            worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
-        )
-        self.assertEqual(
             set(settings.feed_claim_caps),
-            set(settings.caps),
+            {
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            },
         )
-        self.assertEqual(settings.worker_profile.name, "mixed-dormant")
+        self.assertEqual(settings.worker_profile.name, "mixed")
+        _feed, sid = settings.worker_profile.allocations
+        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
+        self.assertTrue(sid.claims_enabled)
         self.assertEqual(settings.bcfy_calls_work_concurrency, 16)
         self.assertEqual(settings.bcfy_calls_work_queue_capacity, 32)
 
@@ -219,23 +228,19 @@ class TestCollectorSettings(unittest.TestCase):
 
         self.assertEqual(settings.bcfy_calls_work_concurrency, 12)
         self.assertEqual(settings.bcfy_calls_work_queue_capacity, 24)
-        sid = worker_profiles.allocation_for_domain(
-            settings.worker_profile,
-            grant_control.DomainId.SID,
-        )
-        self.assertIsNotNone(sid)
-        assert sid is not None
+        _feed, sid = settings.worker_profile.allocations
+        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
         self.assertEqual(sid.owned_cap, 19)
         self.assertEqual(sid.claims_per_cycle, 3)
-        self.assertFalse(sid.claims_enabled)
+        self.assertTrue(sid.claims_enabled)
 
-    def test_sid_authority_removes_only_calls_from_feed_claims(self) -> None:
+    def test_legacy_calls_authority_and_cap_environment_are_ignored(
+        self,
+    ) -> None:
         env = {
             **_required_env(),
-            "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
-            # Historical profile selectors cannot become a second authority
-            # switch. The topology is always mixed and the Calls flag alone
-            # selects which domain may claim Calls.
+            "BCFY_CALLS_AUTHORITY_MODE": "legacy_feed",
+            "CAP_BCFY_CALLS": "999",
             "WORKER_PROFILE": "sid-dormant",
         }
 
@@ -251,26 +256,10 @@ class TestCollectorSettings(unittest.TestCase):
                 SourceType.FIRE_NOTIFICATIONS,
             },
         )
-        sid = worker_profiles.allocation_for_domain(
-            settings.worker_profile,
-            grant_control.DomainId.SID,
-        )
-        self.assertIsNotNone(sid)
-        assert sid is not None
+        _feed, sid = settings.worker_profile.allocations
+        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
         self.assertTrue(sid.claims_enabled)
-        self.assertEqual(settings.worker_profile.name, "mixed-dormant")
-
-    def test_invalid_calls_authority_mode_fails_closed(self) -> None:
-        env = {
-            **_required_env(),
-            "BCFY_CALLS_AUTHORITY_MODE": "both",
-        }
-
-        with (
-            patch.dict("os.environ", env, clear=True),
-            self.assertRaisesRegex(ValueError, "BCFY_CALLS_AUTHORITY_MODE"),
-        ):
-            CollectorSettings()
+        self.assertEqual(settings.worker_profile.name, "mixed")
 
     def test_zero_process_capacity_fails_closed(self) -> None:
         """Reject a topology that cannot own even one selected grant."""
@@ -292,21 +281,22 @@ class TestCollectorSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 600)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 999)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 900)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            600,
+        )
 
-    def test_caps_keys_match_default_caps_registry(self) -> None:
-        """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
+    def test_feed_claim_cap_keys_match_default_registry(self) -> None:
         with patch.dict("os.environ", _required_env(), clear=True):
             settings = CollectorSettings()
 
         self.assertEqual(
-            set(settings.caps),
+            set(settings.feed_claim_caps),
             {
                 SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
                 SourceType.OPENMHZ,
                 SourceType.FIRE_NOTIFICATIONS,
             },

@@ -221,19 +221,11 @@ safe-run -- uv run python -m pytest \
 
 Expected: all selected tests and subtests pass.
 
-- [ ] **Step 8: Commit the Feed-cap separation**
+- [ ] **Step 8: Preserve the green changes for the atomic authority commit**
 
-```bash
-git add \
-  backend/pipeline/ingestion/source_runtime_specs.py \
-  backend/pipeline/ingestion/settings.py \
-  backend/pipeline/ingestion/main.py \
-  backend/pipeline/storage/feed_store.py \
-  backend/pipeline/ingestion/tests/test_source_runtime_specs.py \
-  backend/pipeline/ingestion/tests/test_settings.py \
-  backend/pipeline/ingestion/tests/test_grant_controls.py
-git commit -m "refactor(ingestion): separate Calls from Feed claim caps"
-```
+Do not commit Task 1 independently. Excluding Calls from Feed claims before SID
+claims become unconditional would create an invalid intermediate commit with no
+Calls authority. Proceed directly to Task 2 and commit both changes atomically.
 
 ---
 
@@ -423,16 +415,11 @@ safe-run -- uv run python -m pytest \
 
 Expected: all selected tests and subtests pass.
 
-- [ ] **Step 7: Commit unconditional mixed authority**
+- [ ] **Step 7: Preserve changes for the complete runtime authority commit**
 
-```bash
-git add \
-  backend/pipeline/ingestion/worker_profiles.py \
-  backend/pipeline/ingestion/settings.py \
-  backend/pipeline/ingestion/tests/test_worker_profiles.py \
-  backend/pipeline/ingestion/tests/test_settings.py
-git commit -m "refactor(ingestion): make Calls SID authority unconditional"
-```
+Do not commit Tasks 1-2 until Task 3 removes the runtime's reads of the deleted
+authority setting. Proceed directly to Task 3 so the implementation is
+published as one internally valid commit.
 
 ---
 
@@ -534,15 +521,24 @@ safe-run -- uv run python -m pytest \
 
 Expected: all selected tests and subtests pass.
 
-- [ ] **Step 6: Commit constant SID observability**
+- [ ] **Step 6: Commit the complete SID-only authority change atomically**
 
 ```bash
 git add \
+  backend/pipeline/ingestion/source_runtime_specs.py \
+  backend/pipeline/ingestion/worker_profiles.py \
+  backend/pipeline/ingestion/settings.py \
+  backend/pipeline/ingestion/main.py \
   backend/pipeline/ingestion/health_server.py \
   backend/pipeline/ingestion/collector_runtime.py \
+  backend/pipeline/storage/feed_store.py \
+  backend/pipeline/ingestion/tests/test_source_runtime_specs.py \
+  backend/pipeline/ingestion/tests/test_worker_profiles.py \
+  backend/pipeline/ingestion/tests/test_settings.py \
+  backend/pipeline/ingestion/tests/test_grant_controls.py \
   backend/pipeline/ingestion/tests/test_health_server.py \
   backend/pipeline/ingestion/tests/test_collector_runtime.py
-git commit -m "refactor(ingestion): report constant Calls SID authority"
+git commit -m "refactor(ingestion): make Calls SID authority unconditional"
 ```
 
 ---

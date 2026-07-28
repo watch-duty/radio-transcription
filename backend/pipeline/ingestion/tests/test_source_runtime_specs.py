@@ -17,20 +17,33 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
             set(feed_store.SourceType),
         )
 
-    def test_claimable_specs_match_registered_collectors(self) -> None:
-        self.assertEqual(
-            set(source_runtime_specs.claimable_source_specs()),
+    def test_registered_collectors_have_runtime_specs(self) -> None:
+        self.assertLessEqual(
             set(_COLLECTORS),
+            set(source_runtime_specs.SOURCE_RUNTIME_SPECS),
         )
 
-    def test_default_caps_include_only_claimable_sources(self) -> None:
-        caps = source_runtime_specs.default_caps()
+    def test_feed_claimable_specs_exclude_non_feed_authorities(self) -> None:
+        self.assertEqual(
+            set(source_runtime_specs.feed_claimable_source_specs()),
+            {
+                feed_store.SourceType.BCFY_FEEDS,
+                feed_store.SourceType.OPENMHZ,
+                feed_store.SourceType.FIRE_NOTIFICATIONS,
+            },
+        )
 
-        self.assertEqual(caps[feed_store.SourceType.BCFY_FEEDS], 240)
-        self.assertEqual(caps[feed_store.SourceType.BCFY_CALLS], 600)
-        self.assertEqual(caps[feed_store.SourceType.OPENMHZ], 900)
-        self.assertEqual(caps[feed_store.SourceType.FIRE_NOTIFICATIONS], 600)
-        self.assertNotIn(feed_store.SourceType.ECHO, caps)
+    def test_default_feed_claim_caps_match_feed_claimable_specs(self) -> None:
+        caps = source_runtime_specs.default_feed_claim_caps()
+
+        self.assertEqual(
+            caps,
+            {
+                feed_store.SourceType.BCFY_FEEDS: 240,
+                feed_store.SourceType.OPENMHZ: 900,
+                feed_store.SourceType.FIRE_NOTIFICATIONS: 600,
+            },
+        )
 
     def test_url_base_uses_env_override(self) -> None:
         with mock.patch.dict(

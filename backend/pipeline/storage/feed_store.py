@@ -58,9 +58,10 @@ class SourceType(enum.StrEnum):
            and ``006_seed_source_types.sql``.
         3. **Runtime source spec** — add an entry to
            ``backend.pipeline.ingestion.source_runtime_specs``. This
-           registry drives ``CollectorSettings.caps``, ``FeedStore``'s
-           generated acquire-batch SQL, topic routing metadata, URL base
-           metadata, and the ``claim_types`` filter on the recovery path.
+           registry drives ``CollectorSettings.feed_claim_caps``,
+           ``FeedStore``'s generated acquire-batch SQL, topic routing metadata,
+           URL base metadata, and the ``claim_types`` filter on the recovery
+           path.
            **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
            the primary CTE nor the recovery sweep will pick them up.
@@ -308,8 +309,8 @@ class FeedStore:
             per type. Defaults to every ``SourceType`` except ``ECHO``
             (Echo feeds are served by a separate cloud function and
             are never leased here). ``CollectorRuntime`` passes
-            ``list(settings.caps.keys())`` so the SQL shape and the
-            runtime's per-type budgets are seeded from the same set.
+            ``list(settings.feed_claim_caps)`` so sources owned through
+            non-Feed authority are excluded explicitly.
         heartbeat_timeout_sec: Optional total timeout for heartbeat pool
             checkout, query execution, and connection release.
 

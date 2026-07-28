@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.router import (
     resolve_topic_path,
@@ -31,19 +32,18 @@ def main() -> None:
             msg = f"Startup check failed for source type {st}: {e}"
             raise RuntimeError(msg) from e
 
-    # Cross-registry invariant: VM-claimable SourceRuntimeSpec entries must
-    # match registered collectors and caps. Drift in either direction is silent
-    # in production: workers either claim feeds they cannot process, or ship
-    # code paths that never claim their feeds.
-    collector_types = {SourceType(st) for st in supported_source_types()}
-    cap_types = set(settings.caps.keys())
-    if collector_types != cap_types:
+    # Cross-registry invariant: Feed-claimable SourceRuntimeSpec entries must
+    # match configured Feed caps. Drift in either direction is silent in
+    # production: workers either claim feeds they cannot process or omit an
+    # intended Feed-authority source.
+    expected_cap_types = set(source_runtime_specs.feed_claimable_source_specs())
+    cap_types = set(settings.feed_claim_caps)
+    if expected_cap_types != cap_types:
         msg = (
-            "Startup invariant violated: collector registry "
-            f"{sorted(t.value for t in collector_types)} differs from "
-            f"caps registry {sorted(t.value for t in cap_types)}. "
-            "Both _COLLECTORS (router.py) and SourceRuntimeSpec "
-            "must be updated together when adding or removing a VM source."
+            "Startup invariant violated: Feed-claimable source registry "
+            f"{sorted(t.value for t in expected_cap_types)} differs from "
+            "Feed-claim caps registry "
+            f"{sorted(t.value for t in cap_types)}."
         )
         raise RuntimeError(msg)
 
