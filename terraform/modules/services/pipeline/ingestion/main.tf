@@ -126,7 +126,7 @@ module "echo" {
   topic_segmented_audio_id        = var.topic_segmented_audio_id
   topic_segmented_audio_name      = var.topic_segmented_audio_name
   worker_password_secret_id       = var.worker_password_secret_id
-  echo_ingestion_max_instances   = var.echo_ingestion_max_instances
+  echo_ingestion_max_instances    = var.echo_ingestion_max_instances
 }
 
 # =============================================================================
