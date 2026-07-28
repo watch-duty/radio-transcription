@@ -235,15 +235,6 @@ class SourceObservationResult(TypedDict):
     recorded: bool
 
 
-class HeartbeatResult(TypedDict):
-    """Per-feed diagnostic info returned by diagnostic heartbeat renewal."""
-
-    id: uuid.UUID
-    current_worker: uuid.UUID | None
-    current_status: str
-    renewed: bool
-
-
 class Feed(TypedDict):
     """Full feed details.
 
@@ -657,44 +648,6 @@ class FeedStore:
             row.get("feed_audit_event")
         )
         return result
-
-    async def renew_heartbeats_batch_diagnostic(
-        self,
-        feed_ids: list[uuid.UUID],
-        worker_id: uuid.UUID,
-    ) -> list[HeartbeatResult]:
-        """
-        Batch-renew heartbeats with per-feed diagnostic info.
-
-        Uses an atomic CTE that locks rows, conditionally updates, and
-        always returns per-feed state in a single round-trip. This enables
-        the caller to log *why* a feed wasn't renewed (stolen by another
-        worker, quarantined, etc.) before taking action.
-
-        Args:
-            feed_ids: List of feed UUIDs to renew.
-            worker_id: UUID of the worker holding the leases.
-
-        Returns:
-            List of ``HeartbeatResult`` dicts, one per input feed_id.
-
-        """
-        if not feed_ids:
-            return []
-        rows = await self._pool.fetch(
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
-            feed_ids,
-            worker_id,
-        )
-        return [
-            HeartbeatResult(
-                id=row["id"],
-                current_worker=row["current_worker"],
-                current_status=row["current_status"],
-                renewed=row["renewed"],
-            )
-            for row in rows
-        ]
 
     async def renew_grant_heartbeats(
         self,
@@ -1136,35 +1089,6 @@ class FeedStore:
             except ValueError:
                 continue
         return counts
-
-    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
-        """Release every active lease still owned by this worker.
-
-        Primary use: ``_shutdown_sequence`` calls this once after
-        cancelling all feed tasks. The cancelled tasks return without
-        running their normal-completion ``release_feed`` (see the
-        ``_process_feed`` shutdown branch), so this single UPDATE flips
-        active rows back to ``unclaimed``. Deactivated rows stay deactivated
-        even if they still carry this worker's metadata.
-
-        Secondary defensive role: catches any straggler row where an
-        earlier per-feed ``release_feed`` call failed mid-lifetime
-        (transient DB error, task reaped before the finally block could
-        retry) and the row was sitting in the DB with ``worker_id = us``
-        until pg_cron reclaimed it.
-
-        Args:
-            worker_id: UUID of the worker releasing its leases.
-
-        Returns:
-            The number of feeds actually released.
-        """
-        result = await self._pool.execute(
-            feed_queries.RELEASE_FEEDS_BATCH_SQL, worker_id
-        )
-        if result.startswith("UPDATE "):
-            return int(result.split()[1])
-        return 0
 
     async def create_feed(
         self,

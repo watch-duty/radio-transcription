@@ -116,6 +116,40 @@ class TestTrainingReferenceHistories(unittest.TestCase):
 
 
 class TestEvaluationContextBoundary(unittest.TestCase):
+    def test_zero_context_preserves_configured_backend(self) -> None:
+        for backend in (None, "batch", "online"):
+            with self.subTest(backend=backend):
+                self.assertEqual(
+                    context.resolve_evaluation_backend_for_context(0, backend),
+                    backend,
+                )
+
+    def test_positive_context_requires_online_backend(self) -> None:
+        for backend in (None, "online"):
+            with self.subTest(backend=backend):
+                self.assertEqual(
+                    context.resolve_evaluation_backend_for_context(1, backend),
+                    "online",
+                )
+
+    def test_positive_context_rejects_batch_backend(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "predicted-history evaluation requires the online backend",
+        ):
+            context.resolve_evaluation_backend_for_context(1, "batch")
+
+    def test_backend_contract_rejects_invalid_context_count(self) -> None:
+        for count, error, message in (
+            (True, TypeError, "must be an integer"),
+            (-1, ValueError, "must be non-negative"),
+        ):
+            with (
+                self.subTest(count=count),
+                self.assertRaisesRegex(error, message),
+            ):
+                context.resolve_evaluation_backend_for_context(count, None)
+
     def test_evaluation_rejects_training_reference_turn(self) -> None:
         with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
             context.build_evaluation_transcription_contents(
@@ -508,48 +542,6 @@ class TestStrictCausalSchedule(unittest.TestCase):
                 ],
                 max_turns=1,
             )
-
-
-class TestTemporaryLegacyBridge(unittest.TestCase):
-    def test_context_turn_history_remains_available_to_main_callers(
-        self,
-    ) -> None:
-        rows = [
-            {
-                "audio_filepath": "gs://audio/first.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 0.0,
-                "text": "first",
-            },
-            {
-                "audio_filepath": "gs://audio/second.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 1.0,
-                "text": "second",
-            },
-        ]
-
-        histories = context.build_context_histories(rows, max_turns=1)
-
-        self.assertEqual(
-            histories,
-            [[], [context.ContextTurn("gs://audio/first.flac", "first")]],
-        )
-
-    def test_generic_content_builder_accepts_legacy_context_turn(self) -> None:
-        contents = context.build_transcription_contents(
-            audio_uri="gs://audio/current.flac",
-            user_prompt="Transcribe.",
-            history=[
-                context.ContextTurn(
-                    "gs://audio/prior.flac",
-                    "prior transcript",
-                )
-            ],
-        )
-
-        self.assertEqual(contents[-1]["role"], "user")
-        self.assertIn("prior transcript", json.dumps(contents))
 
 
 if __name__ == "__main__":

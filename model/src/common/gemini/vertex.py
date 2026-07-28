@@ -54,74 +54,7 @@ GEMINI_SAFETY_SETTINGS = [
 _US_BATCH_MODEL_IDS = {"gemini-3.1-flash-lite"}
 
 
-# Temporary stacked-PR bridge. PR #1003 switches every evaluation caller to
-# the prediction-only interface and removes this generic request builder.
 def build_request(
-    audio_uri: str,
-    *,
-    system_prompt: str,
-    user_prompt: str,
-    history: collections.abc.Sequence[context.ContextTurn] | None = None,
-    history_mode: str = "text_turns",
-    generation_config: dict[str, typing.Any] | None = None,
-    safety_settings: list[dict[str, typing.Any]] | None = None,
-) -> dict:
-    """Build the canonical Vertex batch-inference request dict for one audio segment.
-
-    Returns the plain-dict batch request consumed by ``submit_batch_inference`` and the
-    Gemini batch API — the single shape used by both ``gemini_sft.evaluate`` and
-    the ``gemini_transcribe_audio`` notebook. Configuration values are copied
-    so callers cannot mutate module-level defaults. Pure dictionary
-    construction does not require the ``[vertex]`` extra.
-
-    Field keys are canonical camelCase JSON (``fileData``/``fileUri``/
-    ``mimeType``/``systemInstruction``/``generationConfig``/
-    ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
-    all use the same shape.
-
-    Args:
-        audio_uri: GCS URI for the current FLAC audio segment.
-        system_prompt: System instruction included in the request.
-        user_prompt: User instruction for the current audio turn.
-        history: Prior transcript turns ordered from oldest to newest.
-        history_mode: Context encoding mode used to build request contents.
-        generation_config: Generation parameters copied into the request.
-        safety_settings: Safety settings copied into the request.
-
-    Returns:
-        A canonical batch request wrapper containing plain Python objects.
-
-    Raises:
-        ValueError: If ``history_mode`` is unsupported.
-    """
-    contents = context.build_transcription_contents(
-        audio_uri=audio_uri,
-        user_prompt=user_prompt,
-        history=history,
-        history_mode=history_mode,
-    )
-    if generation_config is None:
-        resolved_generation_config = GEMINI_GENERATION_CONFIG
-    else:
-        resolved_generation_config = generation_config
-    if safety_settings is None:
-        resolved_safety_settings = GEMINI_SAFETY_SETTINGS
-    else:
-        resolved_safety_settings = safety_settings
-    return {
-        "request": {
-            "contents": contents,
-            "systemInstruction": {
-                "role": "system",
-                "parts": [{"text": system_prompt}],
-            },
-            "generationConfig": copy.deepcopy(resolved_generation_config),
-            "safetySettings": copy.deepcopy(resolved_safety_settings),
-        }
-    }
-
-
-def build_evaluation_request(
     audio_uri: str,
     *,
     system_prompt: str,
@@ -195,10 +128,9 @@ def parse_batch_output(
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
     Vertex echoes the original request in batch output. This parser accepts the
-    canonical camelCase request shape emitted by ``build_request`` and the
-    legacy snake_case shape used by historical outputs. Error/status rows,
-    malformed JSONL rows, and output rows without an identifiable audio URI
-    are skipped.
+    canonical camelCase request shape emitted by ``build_request``.
+    Error/status rows, malformed JSONL rows, and output rows without exactly
+    one identifiable audio URI are skipped.
 
     Args:
         lines: Iterable of complete JSONL rows from Vertex batch output.
@@ -247,21 +179,19 @@ def _extract_request_audio_uri(
 ) -> str | None:
     """Return the target audio URI echoed in a batch request.
 
-    Historical batch outputs may use snake_case SDK field names, while current
-    requests use canonical camelCase JSON. When history contains audio, the
-    last URI is the current target because request construction appends the
-    current turn last.
+    Evaluation requests use canonical camelCase JSON and contain exactly one
+    audio part: the current target.
 
     Args:
         request: Request object echoed by the Vertex batch API.
 
     Returns:
-        The last non-empty audio URI, or ``None`` when none is identifiable.
+        The sole non-empty audio URI, or ``None`` otherwise.
     """
     contents = request.get("contents", [])
     if not isinstance(contents, list) or not contents:
         return None
-    audio_uri: str | None = None
+    audio_uris: list[str] = []
     for content in contents:
         if not isinstance(content, dict):
             continue
@@ -271,13 +201,15 @@ def _extract_request_audio_uri(
         for part in parts:
             if not isinstance(part, dict):
                 continue
-            file_data = part.get("fileData") or part.get("file_data")
+            file_data = part.get("fileData")
             if not isinstance(file_data, dict):
                 continue
-            candidate = file_data.get("fileUri") or file_data.get("file_uri")
+            candidate = file_data.get("fileUri")
             if isinstance(candidate, str) and candidate:
-                audio_uri = candidate
-    return audio_uri
+                audio_uris.append(candidate)
+    if len(audio_uris) == 1:
+        return audio_uris[0]
+    return None
 
 
 def _extract_prediction_text(response: typing.Any) -> str | None:

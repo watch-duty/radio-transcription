@@ -32,7 +32,6 @@ from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
     FeedStore,
-    HeartbeatResult,
     SourceType,
 )
 from backend.pipeline.storage.pagination_utils import SortOrder, encode_cursor
@@ -642,9 +641,8 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
         self,
     ) -> None:
         lifecycle_sql = [
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             feed_queries.RELEASE_FEED_SQL,
-            feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
         ]
 
@@ -689,12 +687,6 @@ class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.UPDATE_PROGRESS_SQL)
 
         self.assertNotIn("AND status = 'active'::feed_status", sql)
-
-    def test_batch_worker_release_requires_active_status(self) -> None:
-        sql = _sql_without_comments(feed_queries.RELEASE_FEEDS_BATCH_SQL)
-
-        self.assertIn("WHERE worker_id = $1", sql)
-        self.assertIn("AND status = 'active'::feed_status", sql)
 
 
 class TestReportFailureSqlStatusReason(unittest.TestCase):
@@ -1105,118 +1097,6 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
             )
 
         pool.fetchrow.assert_not_awaited()
-
-
-class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.renew_heartbeats_batch_diagnostic."""
-
-    async def test_returns_diagnostic_results(self) -> None:
-        """Returned list contains HeartbeatResult dicts with diagnostic info."""
-        other_worker = uuid.UUID("22222222-3333-4444-5555-666666666666")
-        pool = make_mock_pool(
-            fetch_result=[
-                {
-                    "id": _FEED_ID,
-                    "current_worker": _WORKER_ID,
-                    "current_status": "active",
-                    "renewed": True,
-                },
-                {
-                    "id": _FEED_ID_B,
-                    "current_worker": other_worker,
-                    "current_status": "active",
-                    "renewed": False,
-                },
-            ],
-        )
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeats_batch_diagnostic(
-            [_FEED_ID, _FEED_ID_B],
-            _WORKER_ID,
-        )
-
-        self.assertEqual(len(result), 2)
-        self.assertEqual(
-            result[0],
-            HeartbeatResult(
-                id=_FEED_ID,
-                current_worker=_WORKER_ID,
-                current_status="active",
-                renewed=True,
-            ),
-        )
-        self.assertEqual(
-            result[1],
-            HeartbeatResult(
-                id=_FEED_ID_B,
-                current_worker=other_worker,
-                current_status="active",
-                renewed=False,
-            ),
-        )
-
-    async def test_short_circuits_on_empty_input(self) -> None:
-        """Empty feed_ids list returns empty list without executing a query."""
-        pool = mock.AsyncMock()
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeats_batch_diagnostic([], _WORKER_ID)
-
-        self.assertEqual(result, [])
-        pool.fetch.assert_not_called()
-
-    async def test_passes_correct_parameters(self) -> None:
-        """Parameters are passed as (feed_ids_list, worker_id)."""
-        pool = make_mock_pool(
-            fetch_result=[
-                {
-                    "id": _FEED_ID,
-                    "current_worker": _WORKER_ID,
-                    "current_status": "active",
-                    "renewed": True,
-                },
-            ],
-        )
-        store = FeedStore(pool)
-        feed_ids = [_FEED_ID, _FEED_ID_B]
-
-        await store.renew_heartbeats_batch_diagnostic(feed_ids, _WORKER_ID)
-
-        args = pool.fetch.call_args[0]
-        self.assertEqual(args[1:], (feed_ids, _WORKER_ID))
-
-    async def test_mixed_renewed_and_unrenewed(self) -> None:
-        """Results correctly distinguish renewed vs unrenewed feeds."""
-        pool = make_mock_pool(
-            fetch_result=[
-                {
-                    "id": _FEED_ID,
-                    "current_worker": _WORKER_ID,
-                    "current_status": "active",
-                    "renewed": True,
-                },
-                {
-                    "id": _FEED_ID_B,
-                    "current_worker": None,
-                    "current_status": "unclaimed",
-                    "renewed": False,
-                },
-            ],
-        )
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeats_batch_diagnostic(
-            [_FEED_ID, _FEED_ID_B],
-            _WORKER_ID,
-        )
-
-        renewed = [r for r in result if r["renewed"]]
-        not_renewed = [r for r in result if not r["renewed"]]
-        self.assertEqual(len(renewed), 1)
-        self.assertEqual(renewed[0]["id"], _FEED_ID)
-        self.assertEqual(len(not_renewed), 1)
-        self.assertEqual(not_renewed[0]["current_status"], "unclaimed")
 
 
 class TestFeedGrantHeartbeatValues(unittest.TestCase):
@@ -2435,37 +2315,6 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
         args = pool.fetch.call_args[0]
         self.assertIs(args[0], feed_queries.COUNT_HELD_BY_TYPE_SQL)
         self.assertEqual(args[1], _WORKER_ID)
-
-
-class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.release_feeds_batch."""
-
-    async def test_passes_worker_id(self) -> None:
-        pool = make_mock_pool(execute_result="UPDATE 2")
-        store = FeedStore(pool)
-
-        result = await store.release_feeds_batch(_WORKER_ID)
-
-        self.assertEqual(result, 2)
-        args = pool.execute.call_args[0]
-        self.assertIs(args[0], feed_queries.RELEASE_FEEDS_BATCH_SQL)
-        self.assertEqual(args[1], _WORKER_ID)
-
-    async def test_parses_update_count(self) -> None:
-        pool = make_mock_pool(execute_result="UPDATE 7")
-        store = FeedStore(pool)
-
-        result = await store.release_feeds_batch(_WORKER_ID)
-
-        self.assertEqual(result, 7)
-
-    async def test_returns_zero_for_unparseable_result(self) -> None:
-        pool = make_mock_pool(execute_result="ROLLBACK")
-        store = FeedStore(pool)
-
-        result = await store.release_feeds_batch(_WORKER_ID)
-
-        self.assertEqual(result, 0)
 
 
 class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
