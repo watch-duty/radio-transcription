@@ -203,7 +203,10 @@ class GeminiConfig(utils.ConfigBase):
             for setting in _DEFAULT_SAFETY_SETTINGS
         ]
     )
-    prompt: str | None = prompts.GEMINI_PROMPT
+    prompt: str | None = prompts.GEMINI_SYSTEM_PROMPT
+    user_prompt: str = pydantic.Field(
+        default=prompts.GEMINI_USER_PROMPT, min_length=1
+    )
 
     retry_attempts: int = DEFAULT_GEMINI_RETRY_ATTEMPTS
     retry_initial_delay: float = DEFAULT_GEMINI_RETRY_INITIAL_DELAY
@@ -350,7 +353,8 @@ class GeminiTranscriber(base.Transcriber):
             if guessed_mime:
                 mime_type = guessed_mime
 
-        parts = []
+        parts = [types.Part.from_text(text=self.config.user_prompt)]
+
         if uri:
             parts.append(types.Part.from_uri(file_uri=uri, mime_type=mime_type))
         elif audio_data:

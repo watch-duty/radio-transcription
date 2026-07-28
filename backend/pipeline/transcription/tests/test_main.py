@@ -9,6 +9,30 @@ from backend.pipeline.transcription.transcribers.gemini import (
 )
 
 
+class TestEagerWarmup(unittest.TestCase):
+    def test_eager_warmup_tolerates_missing_output_topic(self) -> None:
+        """A missing OUTPUT_TOPIC is expected in local/test envs and must not raise."""
+        container = transcription_main.TranscriptionServiceContainer()
+        with mock.patch.object(
+            container,
+            "get_processor",
+            side_effect=transcription_main.MissingOutputTopicError("no topic"),
+        ):
+            container.eager_warmup()  # Must not raise.
+        self.assertIsNone(container.processor)
+
+    def test_eager_warmup_propagates_configuration_errors(self) -> None:
+        """A deterministic config error (e.g. bad transcriber config) must not be swallowed."""
+        container = transcription_main.TranscriptionServiceContainer()
+        with mock.patch.object(
+            container,
+            "get_processor",
+            side_effect=ValueError("invalid TRANSCRIBER_CONFIG"),
+        ):
+            with self.assertRaises(ValueError):
+                container.eager_warmup()
+
+
 class TestTranscriptionMain(unittest.IsolatedAsyncioTestCase):
     @mock.patch("backend.pipeline.transcription.main.setup_tracing")
     async def test_transcribe_claim_check_raises_503_on_transient_error(
