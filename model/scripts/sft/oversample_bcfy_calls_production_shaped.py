@@ -60,6 +60,7 @@ import json
 import logging
 import threading
 
+from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 logger = logging.getLogger(__name__)
@@ -97,10 +98,66 @@ def write_jsonl(client: storage.Client, rows: list[dict], path: str) -> None:
     text = "\n".join(json.dumps(row) for row in rows) + "\n"
     if path.startswith("gs://"):
         bucket_name, blob_name = path[len("gs://") :].split("/", 1)
-        client.bucket(bucket_name).blob(blob_name).upload_from_string(text)
+        try:
+            client.bucket(bucket_name).blob(blob_name).upload_from_string(
+                text, if_generation_match=0
+            )
+        except PreconditionFailed as exc:
+            msg = (
+                f"{path} already exists; refusing to overwrite it. Pick a "
+                "fresh --out-train-uri (e.g. a new round-id) instead of "
+                "silently overwriting an existing manifest."
+            )
+            raise SystemExit(msg) from exc
     else:
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
+
+
+_IMMUTABLE_DATASET_VERSIONS_PREFIX = (
+    "gs://wd-transcription-data/sft/dataset_versions/"
+)
+
+
+def _reject_immutable_dataset_aliasing(
+    train_uri: str, dest_prefix: str, out_train_uri: str
+) -> None:
+    """Refuse to run if outputs could alias a published canonical dataset.
+
+    Args:
+        train_uri: Source canonical train.jsonl URI (--train).
+        dest_prefix: gs:// prefix duplicate audio copies are written under
+            (--dest-prefix).
+        out_train_uri: Destination URI for the oversampled train.jsonl
+            (--out-train-uri).
+
+    Raises:
+        SystemExit: If out_train_uri aliases train_uri, or if dest_prefix
+            or out_train_uri fall beneath the immutable dataset_versions/
+            prefix -- either would risk silently mutating a published
+            dataset version while leaving its _SUCCESS marker/publication
+            receipt stale.
+    """
+    if out_train_uri == train_uri:
+        msg = (
+            "--out-train-uri must not equal --train: writing over the "
+            "source manifest risks corrupting a published dataset version."
+        )
+        raise SystemExit(msg)
+    flagged_uris = (
+        ("--dest-prefix", dest_prefix),
+        ("--out-train-uri", out_train_uri),
+    )
+    for flag, uri in flagged_uris:
+        if uri.startswith(_IMMUTABLE_DATASET_VERSIONS_PREFIX):
+            msg = (
+                f"{flag}={uri!r} falls beneath the immutable "
+                f"{_IMMUTABLE_DATASET_VERSIONS_PREFIX} prefix. This script "
+                "must write to an exclusively-owned output namespace (e.g. "
+                "gs://wd-transcription-data/sft/runs/<round-id>/), never "
+                "back into a published dataset version."
+            )
+            raise SystemExit(msg)
 
 
 def _is_bcfy_calls(row: dict) -> bool:
@@ -127,11 +184,16 @@ def _duplicate_blob_uri(source_uri: str, dup_idx: int, dest_prefix: str) -> str:
 
     Returns:
         A gs:// URI distinct from source_uri and from every other
-        duplicate's URI.
+        duplicate's URI. Collision-resistant across source blobs that
+        happen to share a basename: the destination name folds in the
+        source's full object path (bucket-relative), not just its
+        basename.
     """
-    name = source_uri.rsplit("/", 1)[-1]
-    stem, _, suffix = name.rpartition(".")
-    return f"{dest_prefix.rstrip('/')}/{stem}_dup{dup_idx}.{suffix}"
+    _, _, bucket_and_object = source_uri.partition("gs://")
+    _, _, object_path = bucket_and_object.partition("/")
+    stem, _, suffix = object_path.rpartition(".")
+    flattened_stem = stem.replace("/", "__")
+    return f"{dest_prefix.rstrip('/')}/{flattened_stem}_dup{dup_idx}.{suffix}"
 
 
 def _duplicate_row(row: dict, dup_idx: int, dest_prefix: str) -> dict:
@@ -169,8 +231,12 @@ def _copy_blob(project: str | None, source_uri: str, dest_uri: str) -> bool:
         dest_uri: gs:// URI of the destination object.
 
     Returns:
-        True on success (including when the destination already exists,
-        which makes reruns idempotent); False on failure.
+        True on success, including a rerun that finds an existing
+        destination verified byte-identical to source_uri (making reruns
+        idempotent without ever adopting an unverified object); False on
+        failure, including an existing destination whose size/md5 do not
+        match the source -- that object is never silently adopted as a
+        prior copy.
     """
     try:
         client = _thread_local_storage_client(project)
@@ -178,12 +244,28 @@ def _copy_blob(project: str | None, source_uri: str, dest_uri: str) -> bool:
             "/", 1
         )
         dst_bucket_name, dst_blob_name = dest_uri[len("gs://") :].split("/", 1)
-        dst_bucket = client.bucket(dst_bucket_name)
-        if dst_bucket.blob(dst_blob_name).exists():
-            return True
         src_bucket = client.bucket(src_bucket_name)
+        dst_bucket = client.bucket(dst_bucket_name)
         src_blob = src_bucket.blob(src_blob_name)
-        src_bucket.copy_blob(src_blob, dst_bucket, dst_blob_name)
+        try:
+            src_bucket.copy_blob(
+                src_blob, dst_bucket, dst_blob_name, if_generation_match=0
+            )
+        except PreconditionFailed:
+            src_blob.reload()
+            dst_blob = dst_bucket.blob(dst_blob_name)
+            dst_blob.reload()
+            if (src_blob.size, src_blob.md5_hash) != (
+                dst_blob.size,
+                dst_blob.md5_hash,
+            ):
+                logger.warning(
+                    "existing %s does not match source %s (size/md5 "
+                    "mismatch); refusing to adopt it as a prior copy",
+                    dest_uri,
+                    source_uri,
+                )
+                return False
     except Exception as exc:  # per-copy failures are logged/counted, not fatal
         logger.warning(
             "failed to copy %s -> %s: %s: %s",
@@ -277,6 +359,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     args = _parse_args()
+    _reject_immutable_dataset_aliasing(
+        args.train, args.dest_prefix, args.out_train_uri
+    )
     client = storage.Client(project=args.project)
 
     all_rows = read_jsonl(client, args.train)
