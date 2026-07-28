@@ -14,6 +14,7 @@ import unittest.mock
 import fake_gcs
 import sft_eval_fixtures
 from common.gemini import batch, context, eval_artifacts, tuning_data
+from common.gemini import prompts as prompt_defaults
 from gemini_sft import cli, preflight, prepare
 from gemini_sft import config as config_module
 from gemini_sft import evaluate as evaluate_module
@@ -812,6 +813,7 @@ user = ""
             example = json.loads(
                 storage.get(run_cfg.paths.gemini_train_uri).splitlines()[0]
             )
+            system_prompt = prompt_defaults.GEMINI_TRANSCRIBE_SYSTEM_PROMPT
 
         self.assertEqual(
             example["contents"][0]["parts"],
@@ -823,6 +825,13 @@ user = ""
                     }
                 }
             ],
+        )
+        self.assertEqual(
+            example["systemInstruction"],
+            {
+                "role": "system",
+                "parts": [{"text": system_prompt}],
+            },
         )
         self.assertEqual(config["user_prompt"], "")
 

@@ -9,6 +9,7 @@ import unittest
 import unittest.mock
 
 from common.gemini import context, request_identity, vertex
+from common.gemini import prompts as prompt_defaults
 
 
 class TestPublicRequestAnnotations(unittest.TestCase):
@@ -378,6 +379,38 @@ class TestBuildRequest(unittest.TestCase):
         )
         self.assertEqual(part["fileData"]["fileUri"], "gs://bucket/audio.flac")
         self.assertEqual(part["fileData"]["mimeType"], "audio/flac")
+
+    def test_production_parity_request_is_audio_only(self) -> None:
+        system_prompt = prompt_defaults.GEMINI_TRANSCRIBE_SYSTEM_PROMPT
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt=system_prompt,
+            user_prompt="",
+        )
+
+        self.assertEqual(
+            result["request"]["contents"],
+            [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "fileData": {
+                                "fileUri": "gs://bucket/audio.flac",
+                                "mimeType": "audio/flac",
+                            }
+                        }
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(
+            result["request"]["systemInstruction"],
+            {
+                "role": "system",
+                "parts": [{"text": system_prompt}],
+            },
+        )
 
     def test_default_generation_config(self) -> None:
         """Default generation_config has temperature 0.0 and max_output_tokens 512."""

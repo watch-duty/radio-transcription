@@ -39,23 +39,27 @@ turn. Prompt file fields are unsupported; configure only inline prompt strings
 so the resolved values can be recorded in the durable config.
 
 Omitting `[prompts].user` preserves the legacy default text instruction. Exact
-production parity instead uses an audio-only current user turn:
+production parity requires zero prior turns, the inherited canonical production
+system instruction, and an audio-only current user turn:
 
 ```toml
+[context]
+prior_turn_count = 0
+
 [prompts]
-# Omit `user` to keep the default text instruction.
-# Set an explicit empty string for production's audio-only user turn.
+# Omit `system` to inherit the canonical production system instruction.
 user = ""
 ```
 
 The system prompt must be non-empty, and whitespace-only system or user values
 are invalid. An explicit empty user value is valid only without prior context:
-positive `context.prior_turn_count` requires a non-empty user prompt.
+positive `context.prior_turn_count` requires a non-empty user prompt and is a
+contextual SFT setup, not production request parity.
 
 ## Prior Context Contract
 
-Use `[context]` to control the number and representation of prior same-source
-transcripts:
+For a contextual SFT setup, use `[context]` to control the number and
+representation of prior same-source transcripts:
 
 ```toml
 [context]

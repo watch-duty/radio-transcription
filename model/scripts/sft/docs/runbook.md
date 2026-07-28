@@ -91,19 +91,24 @@ is the system instruction, and the user prompt is placed in each current user
 turn. Use inline prompt strings only; prompt file fields are unsupported so the
 resolved values remain reproducible in the durable config.
 
-Omit `[prompts].user` to retain the legacy default text instruction. To match
-production's audio-only user turn exactly, use:
+Omit `[prompts].user` to retain the legacy default text instruction. Exact
+production parity requires zero prior turns, the inherited canonical production
+system instruction, and an audio-only current user turn:
 
 ```toml
+[context]
+prior_turn_count = 0
+
 [prompts]
-# Omit `user` to keep the default text instruction.
-# Set an explicit empty string for production's audio-only user turn.
+# Omit `system` to inherit the canonical production system instruction.
 user = ""
 ```
 
 System prompts cannot be empty, and whitespace-only system or user values are
 invalid. The explicit empty user value is allowed only with no prior context;
-positive `context.prior_turn_count` requires a non-empty user prompt.
+positive `context.prior_turn_count` requires a non-empty user prompt and is not
+production request parity. The committed example uses the production-parity
+recipe above.
 
 The tuned endpoint does not exist when its training round is prepared, and
 tuning never mutates the round's eval target. After tuning completes, create a

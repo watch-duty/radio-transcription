@@ -100,6 +100,23 @@ model = "{model}"
         )
         self.assertIsNone(cfg.eval_model)
 
+    def test_committed_example_is_valid_production_parity_config(self) -> None:
+        example_path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "scripts"
+            / "sft"
+            / "run_config.example.toml"
+        )
+
+        cfg = config_module.load_run_config(example_path)
+
+        self.assertEqual(cfg.prior_context_count, 0)
+        self.assertEqual(cfg.user_prompt, "")
+        self.assertEqual(
+            cfg.system_prompt,
+            prompt_defaults.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+        )
+
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')
 

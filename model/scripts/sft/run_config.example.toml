@@ -31,13 +31,9 @@ adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
 [context]
-# Number of prior same-source transcripts to include. `text_turns` is the
-# recommended SFT shape: prior user turns contain text only, prior model turns
-# contain prior transcripts, and only the current user turn contains audio.
-# SFT preparation may use prior references as supervised training data. Eval
-# never does: it causally uses only this target model's own finalized earlier
-# predictions, and references are joined only after inference for scoring.
-prior_turn_count = 8
+# Production sends no prior transcript turns. Keep this at zero together with
+# an omitted `prompts.system` and `prompts.user = ""` for production parity.
+prior_turn_count = 0
 # Supported SFT/eval context modes:
 # - text_turns: prior text-only user/model turns, closest to conversation setup.
 # - transcript: simple numbered prior-transcript block in the current prompt.
@@ -74,7 +70,8 @@ max_retries = 3
 [prompts]
 # Optional inline overrides only. Prompt files are intentionally unsupported so
 # the resolved prompt text can be stored in config.json for resume/eval.
-# system = "..."
+# Omit `system` to inherit the canonical production system instruction.
 # Omit `user` to keep the default text instruction.
-# Set an explicit empty string for production's audio-only user turn.
+# Production parity uses zero prior turns, omitted `system`, and this explicit
+# empty string so the current user turn contains audio only.
 user = ""
