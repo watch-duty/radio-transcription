@@ -9,7 +9,7 @@ import datetime
 import logging
 import typing
 
-from backend.pipeline.common import gcp_helper
+from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.ingestion import (
     audio_pipeline,
     grant_control,
@@ -163,18 +163,35 @@ class BcfyCallsFeedBatchExecutor:
             sequence = next_sequence
             next_sequence += 1
 
-            try:
-                chunk_result = await (
-                    bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
-                )(
-                    dict(call.payload),
-                    call.audio_url,
-                    batch.grant_lost,
-                    batch.session_id,
-                    datetime.datetime.now(datetime.UTC),
-                    self._calls_provider,
-                )
-            except asyncio.CancelledError:
+            receipt_time = datetime.datetime.now(datetime.UTC)
+            with tracing_utils.with_baggage_and_span(
+                {
+                    "ingest_time_ms": str(int(receipt_time.timestamp() * 1000)),
+                    "feed_type": feed_store.SourceType.BCFY_CALLS.value,
+                },
+                "process_bcfy_call",
+                __name__,
+            ):
+                try:
+                    chunk_result = await (
+                        bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
+                    )(
+                        dict(call.payload),
+                        call.audio_url,
+                        batch.grant_lost,
+                        batch.session_id,
+                        receipt_time,
+                        self._calls_provider,
+                    )
+                except asyncio.CancelledError:
+                    if batch.grant_lost.is_set():
+                        return self._lost_authority_result(
+                            outcome,
+                            published_count,
+                            next_sequence,
+                            committed_urls,
+                        )
+                    raise
                 if batch.grant_lost.is_set():
                     return self._lost_authority_result(
                         outcome,
@@ -182,44 +199,66 @@ class BcfyCallsFeedBatchExecutor:
                         next_sequence,
                         committed_urls,
                     )
-                raise
-            if batch.grant_lost.is_set():
-                return self._lost_authority_result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                )
-            if chunk_result.failure is not None:
-                logger.error(
-                    "Broadcastify Calls item failed for %s: %s",
-                    call.audio_url,
-                    chunk_result.failure.reason,
-                )
-                outcome.record_failure(chunk_result.failure)
-                continue
-            chunk = chunk_result.chunk
-            if chunk is None:
-                message = "call chunk result omitted both chunk and failure"
-                raise grant_control.GrantControlIntegrityError(message)
+                if chunk_result.failure is not None:
+                    logger.error(
+                        "Broadcastify Calls item failed for %s: %s",
+                        call.audio_url,
+                        chunk_result.failure.reason,
+                    )
+                    outcome.record_failure(chunk_result.failure)
+                    continue
+                chunk = chunk_result.chunk
+                if chunk is None:
+                    message = "call chunk result omitted both chunk and failure"
+                    raise grant_control.GrantControlIntegrityError(message)
 
-            try:
-                gcs_uri = await self._upload(
-                    feed,
-                    chunk,
-                    sequence,
-                    batch.grant.fencing_token,
-                    batch.grant_lost,
-                    no_stop,
-                )
-            except retry.LeaseExpiredError:
-                return self._lost_authority_result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                )
-            except asyncio.CancelledError:
+                try:
+                    gcs_uri = await self._upload(
+                        feed,
+                        chunk,
+                        sequence,
+                        batch.grant.fencing_token,
+                        batch.grant_lost,
+                        no_stop,
+                    )
+                except retry.LeaseExpiredError:
+                    return self._lost_authority_result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                    )
+                except asyncio.CancelledError:
+                    if batch.grant_lost.is_set():
+                        return self._lost_authority_result(
+                            outcome,
+                            published_count,
+                            next_sequence,
+                            committed_urls,
+                        )
+                    raise
+                except Exception:
+                    if batch.grant_lost.is_set():
+                        return self._lost_authority_result(
+                            outcome,
+                            published_count,
+                            next_sequence,
+                            committed_urls,
+                        )
+                    logger.exception(
+                        "GCS upload failed for Broadcastify Calls item %s",
+                        call.audio_url,
+                    )
+                    return self._result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                        failure_classification.ItemFailure(
+                            feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                            _GCS_UPLOAD_FAILED,
+                        ),
+                    )
                 if batch.grant_lost.is_set():
                     return self._lost_authority_result(
                         outcome,
@@ -227,102 +266,72 @@ class BcfyCallsFeedBatchExecutor:
                         next_sequence,
                         committed_urls,
                     )
-                raise
-            except Exception:
-                if batch.grant_lost.is_set():
-                    return self._lost_authority_result(
-                        outcome,
-                        published_count,
-                        next_sequence,
-                        committed_urls,
-                    )
-                logger.exception(
-                    "GCS upload failed for Broadcastify Calls item %s",
-                    call.audio_url,
-                )
-                return self._result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                    failure_classification.ItemFailure(
-                        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-                        _GCS_UPLOAD_FAILED,
-                    ),
-                )
-            if batch.grant_lost.is_set():
-                return self._lost_authority_result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                )
 
-            commit_result = await self._commit_progress(
-                batch,
-                chunk,
-                gcs_uri,
-            )
-            if isinstance(
-                commit_result,
-                ingestion_lease_contracts.GrantRejected,
-            ):
-                return self._result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                    commit_result,
-                )
-
-            child = self._committed_child(commit_result, batch)
-            if (
-                child.disposition
-                is ingestion_lease_contracts.ChildDisposition.REJECTED
-            ):
-                return self._result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                    None,
-                )
-            if (
-                child.disposition
-                is not ingestion_lease_contracts.ChildDisposition.COMMITTED
-            ):
-                message = "audio progress returned an invalid disposition"
-                raise grant_control.GrantControlIntegrityError(message)
-
-            committed_urls.append(call.audio_url)
-            try:
-                await self._publish(
-                    batch.member,
+                commit_result = await self._commit_progress(
+                    batch,
                     chunk,
                     gcs_uri,
-                    no_stop,
                 )
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                reason = pubsub.publish_failure_reason(error)
-                logger.exception(
-                    "Post-bookmark publish failed for Calls item %s",
-                    call.audio_url,
-                )
-                return self._result(
-                    outcome,
-                    published_count,
-                    next_sequence,
-                    committed_urls,
-                    failure_classification.ItemFailure(
-                        _PUBLISH_AFTER_BOOKMARK_FAILED,
-                        reason,
-                    ),
-                )
+                if isinstance(
+                    commit_result,
+                    ingestion_lease_contracts.GrantRejected,
+                ):
+                    return self._result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                        commit_result,
+                    )
 
-            published_count += 1
-            outcome.record_chunk_produced()
+                child = self._committed_child(commit_result, batch)
+                if (
+                    child.disposition
+                    is ingestion_lease_contracts.ChildDisposition.REJECTED
+                ):
+                    return self._result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                        None,
+                    )
+                if (
+                    child.disposition
+                    is not ingestion_lease_contracts.ChildDisposition.COMMITTED
+                ):
+                    message = "audio progress returned an invalid disposition"
+                    raise grant_control.GrantControlIntegrityError(message)
+
+                committed_urls.append(call.audio_url)
+                try:
+                    await self._publish(
+                        batch.member,
+                        chunk,
+                        gcs_uri,
+                        no_stop,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    reason = pubsub.publish_failure_reason(error)
+                    logger.exception(
+                        "Post-bookmark publish failed for Calls item %s",
+                        call.audio_url,
+                    )
+                    return self._result(
+                        outcome,
+                        published_count,
+                        next_sequence,
+                        committed_urls,
+                        failure_classification.ItemFailure(
+                            _PUBLISH_AFTER_BOOKMARK_FAILED,
+                            reason,
+                        ),
+                    )
+
+                published_count += 1
+                outcome.record_chunk_produced()
 
         return self._result(
             outcome,

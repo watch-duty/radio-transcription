@@ -64,6 +64,12 @@ current user turn contains audio. Use `transcript` for a simple inline prior
 transcript block, or `guarded_transcript_block` for an inline block with
 explicit instructions not to re-transcribe or continue prior turns.
 
+Transcript provenance differs across training and evaluation. SFT preparation
+may use preceding reference transcripts as supervised training data.
+Evaluation never uses reference transcripts as context: it supplies only the
+evaluated target model's own finalized predictions for eligible earlier rows.
+The reference is joined back only after provider inference for scoring.
+
 For a tuned endpoint or checkpoint endpoint, keep the same table shape and
 change only the label and model resource:
 
@@ -160,6 +166,34 @@ The round must already have been prepared with that target. To evaluate a tuned
 or checkpoint endpoint created by another round, use the separately prepared
 eval-only config from step 1.
 
+Backend routing depends on the context count:
+
+- With `prior_turn_count = 0`, the existing default routing applies: publisher
+  model IDs use batch inference and endpoint resources use online prediction,
+  unless a compatible backend is selected explicitly.
+- With `prior_turn_count > 0`, an omitted backend automatically selects rolling
+  online prediction. Explicit batch selection is rejected before any provider
+  call because causal history depends on earlier predictions from the same
+  evaluation.
+
+Online model and endpoint resources use the location embedded in their full
+resource name. Location-less publisher model IDs use the `us` multi-region
+endpoint by default; this includes the short publisher ID
+[`gemini-3.1-flash-lite`](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-flash-lite).
+
+For nonzero context, `eval` builds transcript-free provider segments from the
+manifest's source and timing metadata. It groups rows by split and source,
+requires each history candidate to start strictly before and end no later than
+the current clip, and
+uses deterministic ordering. The configured last K candidates are selected
+before unusable results are filtered. Errors, missing or blank predictions, and
+case-insensitive `[UNINTELLIGIBLE]` predictions are omitted without refilling
+from older rows. History contains prediction text only; every request contains
+exactly one audio object, the current clip. Reference-bearing scoring rows are
+retained in a separate collection and never passed to scheduling or request
+construction; they are paired with predictions only after provider inference
+has finalized.
+
 The local TOML must match the durable GCS `config.json` for eval-affecting
 fields, including `[eval.model]`, `[eval.execution].backend`,
 `[eval.execution].limit`, prompts, prior-context settings, base model, and eval
@@ -170,7 +204,8 @@ after `prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use
 the matching prepared config, or create a separate prepared `round_id` for a
 different model or eval set.
 
-Batch eval runs write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`,
+Zero-context batch eval runs write `evals/LABEL/input.jsonl`,
+`evals/LABEL/output/`,
 `evals/LABEL/batch_job.meta.json`, and
 `evals/LABEL/batch_predictions.meta.json`. The job sidecar is written before
 polling so an interrupted invocation can resume the same Vertex job; it is not
@@ -179,14 +214,16 @@ only after it has been loaded and validated. Online endpoint eval runs write
 `evals/LABEL/online_predictions.jsonl` and
 `evals/LABEL/online_predictions.meta.json`. Successful online rows are reused
 on resume. Errored rows are preserved for diagnosis but retried on the next
-run.
+run. Rolling online eval additionally writes a transcript-free rolling index,
+a per-row history audit, and per-wave online artifacts, so reviewers can verify
+causal dependencies and omissions without exposing transcript content.
 
 Eval also writes normalized inference manifests under the shared
 `inference_manifests/` GCS tree and uploads `evals/wer_summary.json` and
 `evals/wer_summary.md` to the run prefix. Existing batch or online outputs are
 reused only when request-identity metadata matches the current target, prompts,
 eval manifest, audio order, prior-context settings, generation config, and
-safety settings.
+safety settings. Cached output is rejected when its request identity differs.
 
 ## 5. Read Reports
 

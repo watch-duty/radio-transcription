@@ -27,7 +27,6 @@ import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeedHistory } from '../../service/listFeedHistory';
-import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
   getNextContinuousSegment,
@@ -156,21 +155,7 @@ export function TranscriptView({
     [triggerSnackbar, isAudioPlaying, playbackIntent, togglePlay]
   );
 
-  const {
-    data: feedsData,
-    error: feedsError,
-    isFetching: feedsFetching,
-    isSuccess: isFeedsSuccess,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
-
-  const { data: activeFeedData } = useQuery({
+  const { data: activeFeedData, error: activeFeedError } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
     queryFn: () => getFeed(searchedFeedId, token!),
     enabled: !!token && !!searchedFeedId,
@@ -179,20 +164,12 @@ export function TranscriptView({
   });
 
   useEffect(() => {
-    if (feedsError) {
-      onError(feedsError, 'Loading Feeds');
+    if (activeFeedError) {
+      onError(activeFeedError, 'Loading Feed');
     }
-  }, [feedsError, onError]);
+  }, [activeFeedError, onError]);
 
-  // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
-  const feedIdToFeedMap = useMemo(() => {
-    if (!feeds) {
-      return new Map<string, NonNullable<typeof feeds>[number]>();
-    }
-    return new Map(feeds.map((f) => [f.id, f]));
-  }, [feeds]);
-
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
+  const searchedFeed = activeFeedData || null;
 
   useEffect(() => {
     if (!searchedFeed) return;
@@ -238,7 +215,6 @@ export function TranscriptView({
     searchedFeedId,
     searchedTimestamp,
     alertFilter,
-    isFeedsSuccess,
     pollingEnabled: isViewAtTopOfAudioSegments,
     onNewSegments: handleNewAudioSegments,
     searchQuery: searchQuery,
@@ -437,7 +413,7 @@ export function TranscriptView({
   } = useQuery({
     queryKey: ['listRules', token],
     queryFn: () => listRules(token ?? ''),
-    enabled: !!token && isFeedsSuccess,
+    enabled: !!token,
     refetchOnWindowFocus: false,
   });
 
@@ -786,7 +762,7 @@ export function TranscriptView({
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />
-        {audioSegments.length > 0 && isFeedsSuccess ? (
+        {audioSegments.length > 0 ? (
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
@@ -812,7 +788,7 @@ export function TranscriptView({
             onRowClick={handleRowClick}
             isNarrow={isNarrow}
           />
-        ) : feedsFetching || isAudioSegmentsInitialLoading ? (
+        ) : isAudioSegmentsInitialLoading ? (
           <Box
             sx={{
               display: 'flex',

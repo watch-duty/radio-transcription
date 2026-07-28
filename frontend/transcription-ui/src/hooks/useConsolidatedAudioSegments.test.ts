@@ -240,5 +240,108 @@ describe('useConsolidatedAudioSegments', () => {
       expect(result).toHaveLength(3);
       expect(result[1].isOutageBundle).toBe(true);
     });
+
+    it('does NOT inject outage bundle for non-continuous feeds (e.g. BCFY_CALLS) even if timestamp gap falls inside a feed offline window', () => {
+      const start1 = '2026-07-08T12:00:00.000Z';
+      const end1 = '2026-07-08T12:00:10.000Z';
+      const start2 = '2026-07-08T12:15:00.000Z';
+      const end2 = '2026-07-08T12:15:10.000Z';
+
+      const segments = [
+        createSegment('s1', start1, end1, AudioClassification.SPEECH),
+        createSegment('s2', start2, end2, AudioClassification.SPEECH),
+      ];
+
+      const historyEvents: FeedHistoryEvent[] = [
+        createHistoryEvent(
+          'e1',
+          new Date('2026-07-08T12:05:00.000Z').getTime(),
+          'failing',
+          'source_offline'
+        ),
+        createHistoryEvent(
+          'e2',
+          new Date('2026-07-08T12:06:00.000Z').getTime(),
+          'active'
+        ),
+      ];
+
+      const result = consolidateAudioSegments(
+        segments,
+        SourceType.BCFY_CALLS,
+        historyEvents
+      );
+
+      expect(result).toHaveLength(2); // s2 (top), s1 (bottom) — no outage bundle
+      expect(result[0].id).toBe('s2');
+      expect(result[1].id).toBe('s1');
+      expect(result.some((s) => s.isOutageBundle)).toBe(false);
+    });
+
+    it('handles undefined audioSource by defaulting to non-continuous feed behavior', () => {
+      const start1 = '2026-07-08T12:00:00.000Z';
+      const end1 = '2026-07-08T12:00:10.000Z';
+      const start2 = '2026-07-08T12:10:00.000Z';
+      const end2 = '2026-07-08T12:10:10.000Z';
+
+      const segments = [
+        createSegment('s1', start1, end1, AudioClassification.SPEECH),
+        createSegment('s2', start2, end2, AudioClassification.SPEECH),
+      ];
+
+      const historyEvents: FeedHistoryEvent[] = [
+        createHistoryEvent(
+          'e1',
+          new Date('2026-07-08T12:05:00.000Z').getTime(),
+          'failing',
+          'source_offline'
+        ),
+      ];
+
+      const result = consolidateAudioSegments(
+        segments,
+        undefined,
+        historyEvents
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result.some((s) => s.isOutageBundle)).toBe(false);
+    });
+
+    it('flushes silence bundle across time gaps for non-continuous feeds without creating outage bundles', () => {
+      const start1 = '2026-07-08T12:00:00.000Z';
+      const end1 = '2026-07-08T12:00:10.000Z';
+      const start2 = '2026-07-08T12:00:10.000Z';
+      const end2 = '2026-07-08T12:00:20.000Z';
+      const start3 = '2026-07-08T12:15:00.000Z';
+      const end3 = '2026-07-08T12:15:10.000Z';
+
+      const segments = [
+        createSegment('s1', start1, end1, AudioClassification.OTHER),
+        createSegment('s2', start2, end2, AudioClassification.OTHER),
+        createSegment('s3', start3, end3, AudioClassification.SPEECH),
+      ];
+
+      const historyEvents: FeedHistoryEvent[] = [
+        createHistoryEvent(
+          'e1',
+          new Date('2026-07-08T12:05:00.000Z').getTime(),
+          'failing',
+          'source_offline'
+        ),
+      ];
+
+      const result = consolidateAudioSegments(
+        segments,
+        SourceType.BCFY_CALLS,
+        historyEvents
+      );
+
+      expect(result).toHaveLength(2); // s3 (speech) and s1+s2 silence bundle
+      expect(result[0].id).toBe('s3');
+      expect(result[1].isSilenceBundle).toBe(true);
+      expect(result[1].bundledSegmentIds).toEqual(['s1', 's2']);
+      expect(result.some((s) => s.isOutageBundle)).toBe(false);
+    });
   });
 });
