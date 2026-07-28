@@ -1,3 +1,5 @@
+import * as express from 'express';
+
 import { AnnotationType } from '@transcription/common';
 import type {
   Annotation,
@@ -6,17 +8,21 @@ import type {
   RuleAnnotation,
 } from '@transcription/common';
 import {
+  Body,
   Controller,
   Extension,
   Get,
   Path,
+  Post,
   Queries,
+  Request,
   Response,
   Route,
   Security,
   Tags,
 } from 'tsoa';
 
+import { AuthenticatedRequest } from '../authentication.js';
 import { AUDIO_SEGMENTS_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
@@ -61,10 +67,18 @@ interface WaveformAnnotationBackend extends BaseAnnotationBackend {
   };
 }
 
+interface TranscriptFlagAnnotationBackend extends BaseAnnotationBackend {
+  type: AnnotationType.TRANSCRIPT_FLAG;
+  data: {
+    flagged_by_user_ids: string[];
+  };
+}
+
 type AnnotationBackend =
   | TranscriptAnnotationBackend
   | EvaluationAnnotationBackend
-  | WaveformAnnotationBackend;
+  | WaveformAnnotationBackend
+  | TranscriptFlagAnnotationBackend;
 
 interface AudioSegmentBackend {
   id: string;
@@ -125,6 +139,16 @@ function convertAnnotationBackend(response: AnnotationBackend): Annotation {
       data: {
         peaks: response.data.peaks,
         durationSeconds: response.data.duration_seconds,
+      },
+    };
+  }
+
+  if (response.type === AnnotationType.TRANSCRIPT_FLAG) {
+    return {
+      type: response.type,
+      createdAt: response.created_at,
+      data: {
+        flaggedByUserIds: response.data.flagged_by_user_ids,
       },
     };
   }
@@ -219,6 +243,40 @@ export class AudioController extends Controller {
       const { status, message } = handleBackendError(
         error,
         'fetching audio segments'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Post('{audioSegmentId}/flagTranscript')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async flagTranscript(
+    @Path() audioSegmentId: string,
+    @Body() body: { isFlagged: boolean },
+    @Request() request: express.Request
+  ): Promise<Annotation> {
+    try {
+      const email = (request as AuthenticatedRequest).user?.email;
+      if (!email) {
+        throw new HttpError(401, 'User email not found in token');
+      }
+
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+      const response = await client.request({
+        url: `${AUDIO_SEGMENTS_API_URL}/${audioSegmentId}/flag`,
+        method: 'POST',
+        data: {
+          user_id: email,
+          action: body.isFlagged ? 'flag' : 'unflag',
+        },
+      });
+
+      return convertAnnotationBackend(response.data as AnnotationBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'flagging transcript'
       );
       throw new HttpError(status, message);
     }

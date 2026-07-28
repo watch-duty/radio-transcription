@@ -90,6 +90,26 @@ new eval-only config with a new `round_id`, omit both `train_manifest_uri` and
 `validation_manifest_uri`, and set `[eval.model].model` to the endpoint or
 checkpoint resource. Run `prepare` again for that config before eval.
 
+### Build A Validation Manifest
+
+Vertex AI SFT requires the validation set to be smaller than 5000 rows.
+This team's convention is to build `validation.jsonl` as a sample of
+`eval.jsonl`, with every sampled row's `split` field relabeled to
+`"validation"` (eval and validation are intentionally the same
+underlying data, viewed through two different splits). Use:
+
+```bash
+uv run python model/scripts/sft/build_validation_manifest_from_eval.py \
+  --eval gs://BUCKET/path/manifests/canonical/eval.jsonl \
+  --out-validation-uri gs://BUCKET/path/manifests/canonical/validation.jsonl
+```
+
+Point `validation_manifest_uri` at the script's output. If you instead
+hand `prepare` a validation manifest whose rows still carry
+`split="eval"`, it fails with `split_mismatch` — that error's message
+names this script; it means the manifest was never relabeled after being
+copied from eval, not that the validator is wrong.
+
 ## 2. Build Gemini SFT Inputs
 
 `prepare` is the non-paid validation and input-build step:
@@ -99,12 +119,17 @@ gemini-sft prepare --config /path/to/run.toml
 ```
 
 For a training round, it copies canonical manifests into the run prefix,
-validates split overlap, derives Gemini JSONL for train and validation, writes
-preflight output, and stores resolved prompts in durable GCS `config.json`. For
-an eval-only round, it validates and publishes only `run_config.toml`,
-`config.json`, and the canonical eval manifest. Its durable config status is
-`eval_prepared`; it intentionally does not publish the training-only root
-`status.json`.
+validates exact-row and physical-recording split overlap, derives Gemini JSONL
+for train and validation, writes preflight output, and stores resolved prompts
+in durable GCS `config.json`. Every training-round row must provide explicit
+physical-source provenance through `original_audio_uri`,
+`source_audio.audio_filepath`, or both. When both are present, they are treated
+as aliases for the same recording. Physical identity also uses equal optional
+source SHA-256 values; it does not infer identity from filenames or model-ready
+clip paths. For an eval-only round, `prepare`
+validates and publishes only `run_config.toml`, `config.json`, and the canonical
+eval manifest. Its durable config status is `eval_prepared`; it intentionally
+does not publish the training-only root `status.json`.
 
 Every prepared round has these durable inspection points:
 

@@ -1,3 +1,5 @@
+import type { Request } from 'express';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudioController } from './audioController.js';
@@ -296,5 +298,100 @@ describe('listAudioSegments', () => {
     await expect(
       controller.listAudioSegments('test', { limit: 100, isAlert: false })
     ).rejects.toThrow(/Backend Connection Failed/);
+  });
+});
+
+describe('flagTranscript', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should forward flag request and convert snake_case response to camelCase', async () => {
+    const mockRequestObj = {
+      user: { email: 'test@example.com' },
+    } as unknown as Request;
+
+    const mockBackendResponse = {
+      audio_segment_id: 'segment-1',
+      type: 'TRANSCRIPT_FLAG',
+      created_at: '2026-01-01T10:03:00Z',
+      data: {
+        flagged_by_user_ids: ['test@example.com'],
+      },
+    };
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    const result = await controller.flagTranscript(
+      'segment-1',
+      { isFlagged: true },
+      mockRequestObj
+    );
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com/segment-1/flag',
+      method: 'POST',
+      data: {
+        user_id: 'test@example.com',
+        action: 'flag',
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'TRANSCRIPT_FLAG',
+      createdAt: '2026-01-01T10:03:00Z',
+      data: {
+        flaggedByUserIds: ['test@example.com'],
+      },
+    });
+  });
+
+  it('should send unflag action when isFlagged is false', async () => {
+    const mockRequestObj = {
+      user: { email: 'test@example.com' },
+    } as unknown as Request;
+
+    const mockBackendResponse = {
+      audio_segment_id: 'segment-1',
+      type: 'TRANSCRIPT_FLAG',
+      created_at: '2026-01-01T10:03:00Z',
+      data: {
+        flagged_by_user_ids: [],
+      },
+    };
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    await controller.flagTranscript(
+      'segment-1',
+      { isFlagged: false },
+      mockRequestObj
+    );
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com/segment-1/flag',
+      method: 'POST',
+      data: {
+        user_id: 'test@example.com',
+        action: 'unflag',
+      },
+    });
+  });
+
+  it('should throw error if user email is missing from token', async () => {
+    const mockRequestObj = {
+      user: {},
+    } as unknown as Request;
+
+    const controller = new AudioController();
+    await expect(
+      controller.flagTranscript(
+        'segment-1',
+        { isFlagged: true },
+        mockRequestObj
+      )
+    ).rejects.toThrow(/User email not found/);
   });
 });

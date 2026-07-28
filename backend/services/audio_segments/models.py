@@ -25,6 +25,14 @@ class AnnotationType(StrEnum):
     TRANSCRIPT = "TRANSCRIPT"
     EVALUATION = "EVALUATION"
     WAVEFORM = "WAVEFORM"
+    TRANSCRIPT_FLAG = "TRANSCRIPT_FLAG"
+
+
+class TranscriptFlagAction(StrEnum):
+    """Enum for transcript flag action."""
+
+    FLAG = "flag"
+    UNFLAG = "unflag"
 
 
 class TranscriptAnnotationData(BaseModel):
@@ -47,6 +55,12 @@ class WaveformAnnotationData(BaseModel):
 
     peaks: list[list[float]]
     duration_seconds: float = Field(gt=0)
+
+
+class TranscriptFlagAnnotationData(BaseModel):
+    """Data for transcript feedback (e.g. flagging)."""
+
+    flagged_by_user_ids: list[str] = Field(default_factory=list)
 
 
 class TranscriptAnnotation(BaseModel):
@@ -76,8 +90,24 @@ class WaveformAnnotation(BaseModel):
     created_at: datetime
 
 
+class TranscriptFlagAnnotation(BaseModel):
+    """Annotation for transcript feedback."""
+
+    audio_segment_id: str
+    type: Literal[AnnotationType.TRANSCRIPT_FLAG] = (
+        AnnotationType.TRANSCRIPT_FLAG
+    )
+    data: TranscriptFlagAnnotationData
+    created_at: datetime
+
+
 Annotation = Annotated[
-    Union[TranscriptAnnotation, EvaluationAnnotation, WaveformAnnotation],
+    Union[
+        TranscriptAnnotation,
+        EvaluationAnnotation,
+        WaveformAnnotation,
+        TranscriptFlagAnnotation,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -111,6 +141,13 @@ AnnotationCreate = Annotated[
     ],
     Field(discriminator="type"),
 ]
+
+
+class FlagTranscriptRequest(BaseModel):
+    """Model for flagging/unflagging a transcript."""
+
+    user_id: str
+    action: TranscriptFlagAction
 
 
 class AudioSegment(BaseModel):
