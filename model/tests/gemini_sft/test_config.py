@@ -794,6 +794,18 @@ user = ""
                 with self.assertRaisesRegex(ValueError, "user_prompt"):
                     config_module.require_config_str(config, "user_prompt")
 
+    def test_require_config_str_rejects_whitespace_with_or_without_opt_in(
+        self,
+    ) -> None:
+        for allow_empty in (False, True):
+            with self.subTest(allow_empty=allow_empty):
+                with self.assertRaisesRegex(ValueError, "user_prompt"):
+                    config_module.require_config_str(
+                        {"user_prompt": "   "},
+                        "user_prompt",
+                        allow_empty=allow_empty,
+                    )
+
     def test_context_prior_turn_count_is_recorded(self) -> None:
         body = self._valid_toml(
             context="""

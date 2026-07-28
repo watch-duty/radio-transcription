@@ -502,7 +502,11 @@ def require_config_str(
         ValueError: If ``key`` is absent, invalidly empty, or not a string.
     """
     value = config.get(key)
-    if not isinstance(value, str) or (not value and not allow_empty):
+    if (
+        not isinstance(value, str)
+        or (not value and not allow_empty)
+        or (value and not value.strip())
+    ):
         msg = f"config.json missing required string field: {key}"
         raise ValueError(msg)
     return value
