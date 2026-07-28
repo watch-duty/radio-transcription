@@ -37,6 +37,21 @@ one target recorded for the prepared round. See the runbook for command order,
 recovery behavior, GCS artifacts, report inspection, checkpoint endpoint evals,
 masked/unmasked evals, and artifact hygiene.
 
+Evaluation never uses reference transcripts as prior context. With nonzero
+`[context].prior_turn_count`, `eval` runs causally online and supplies only the
+same target model's finalized predictions for strictly earlier, non-overlapping
+clips from the same split and source. The current clip is the only audio input.
+References are joined back only after provider inference has finalized, for
+scoring. Batch evaluation is therefore limited to zero prior turns.
+
+## Standalone Scripts
+
+- [`build_validation_manifest_from_eval.py`](build_validation_manifest_from_eval.py) -
+  builds a canonical `validation.jsonl` by sampling `eval.jsonl` and
+  relabeling `split`. See the runbook's
+  [Build A Validation Manifest](docs/runbook.md#build-a-validation-manifest)
+  section for why this exists.
+
 ## Verification Boundary
 
 Unit tests mock GCS and Vertex boundaries. They must not submit paid Vertex
