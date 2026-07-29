@@ -30,7 +30,7 @@ All metrics below are evaluated under the official production configuration: **`
 | **`test_vad_deafening_dispatcher_ems.flac`** | **0.785** | `0.720` | `0.863` | Loud dispatcher followed by quiet EMS. High recall maintained via state continuity. |
 | **`test_vad_deafening_static_preamble.flac`** | **0.682** | `0.997` | `0.519` | Quiet speech preceded by 1.4s of static noise. |
 | **`test_cajon_pass_trailing.flac`** | **0.190** | `0.713` | `0.110` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
-| **`test_vad_inter_transmission_gap_speech.flac`** | **0.794** | `0.658` | `1.000` | Watch Duty live feed inter-transmission gap with short speech bursts (`c1416cf1`). |
+| **`bcfy_feed_or_hood_river_missed_speech.flac`** | **0.556** | `0.385` | `1.000` | Oregon Hood River feed segment (`c1416cf1`): Short dual speech bursts separated by a 1.08s pause; 100% recall with chunk padding. |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
 

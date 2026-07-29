@@ -420,18 +420,15 @@ class TestVadEngine(unittest.TestCase):
             baseline_f1=0.55,
         )
 
-    def test_integration_inter_transmission_gap_speech(self) -> None:
-        """Integration test to verify VAD performance on inter-transmission gap speech bursts (Watch Duty c1416cf1)."""
+    def test_integration_bcfy_feed_or_hood_river_missed_speech(self) -> None:
+        """Integration test to verify VAD performance on missed speech bursts (Watch Duty c1416cf1)."""
         self._run_integration_test(
-            "test_vad_inter_transmission_gap_speech.flac",
+            "bcfy_feed_or_hood_river_missed_speech.flac",
             [
-                (0.532, 5.872),
-                (6.672, 8.200),
-                (9.675, 10.433),
-                (11.268, 11.768),
-                (13.548, 15.020),
+                (0.807, 1.565),
+                (2.648, 2.900),
             ],
-            baseline_f1=0.793,
+            baseline_f1=0.550,
         )
 
     def test_integration_static_middlebury_file(self) -> None:
