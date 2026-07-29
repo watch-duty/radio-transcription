@@ -16,19 +16,21 @@ All metrics below are evaluated under the official production configuration: **`
 
 | Audio File | F1 | Precision | Recall | Description / Justification |
 | :--- | :---: | :---: | :---: | :--- |
-| **`test_stress.flac`** | **0.932** | `1.000` | `0.873` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
-| **`test_joined.flac`** | **0.912** | `0.861` | `0.968` | Multi-dispatch joined segments. |
-| **`test_bcfy.flac`** | **0.851** | `0.924` | `0.789` | Broadcastify dispatch containing whispers and dropouts. |
-| **`test_dispatch_amador.flac`** | **0.921** | `0.894` | `0.950` | Amador continuous dispatcher stream. |
-| **`test_dispatch_sku.flac`** | **0.892** | `0.821` | `0.976` | SKU dispatch with heavy background static interference. |
-| **`test_middlebury_quiet_segments.mp3`** | **0.889** | `0.982` | `0.812` | Quiet segments from Middlebury dataset. |
-| **`test_middlebury_quiet_spiky.mp3`** | **0.713** | `0.564` | `0.969` | Quiet EMS speech. Low precision due to conservative 3s chunk padding. |
-| **`test_quiet_speech_loud_transient.mp3`** | **0.751** | `0.607` | `0.983` | Quiet speech followed by a loud transient click. |
-| **`test_only_static_middlebury.mp3`** | **1.000** | `1.000` | `1.000` | Pure static noise (100% rejected, no false positives). |
+| **`test_stress.flac`** | **0.841** | `0.725` | `1.000` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
+| **`test_joined.flac`** | **0.777** | `0.636` | `1.000` | Multi-dispatch joined segments. |
+| **`test_bcfy.flac`** | **0.860** | `0.830` | `0.893` | Broadcastify dispatch containing whispers and dropouts. |
+| **`test_dispatch_amador.flac`** | **0.811** | `0.724` | `0.923` | Amador continuous dispatcher stream. |
+| **`test_dispatch_sku.flac`** | **0.858** | `0.751` | `1.000` | SKU dispatch with heavy background static interference. |
+| **`test_middlebury_quiet_segments.mp3`** | **0.824** | `0.705` | `0.990` | Quiet segments from Middlebury dataset. |
+| **`test_middlebury_quiet_spiky.mp3`** | **0.596** | `0.425` | `1.000` | Quiet EMS speech. Low precision due to conservative chunk padding. |
+| **`test_quiet_speech_loud_transient.mp3`** | **0.734** | `0.580` | `1.000` | Quiet speech followed by a loud transient click. |
+| **`test_muffled_mason_co_fire.flac`** | **0.507** | `0.341` | `0.987` | Quiet, muffled dispatch speech (Mason County Fire). |
+| **`test_only_static_middlebury.mp3`** | **1.000** | `1.000` | `1.000` | Pure static noise (100% rejected, zero false positives). |
 | **`test_subaudible_flickering.flac`** | **1.000** | `1.000` | `1.000` | 72Hz electrical flickering interference (100% rejected). |
-| **`test_vad_deafening_dispatcher_ems.flac`** | **0.590** | `1.000` | `0.419` | Loud dispatcher followed by quiet EMS (3s real noise warmup). Captures dispatcher and parts of both EMS segments. |
-| **`test_vad_deafening_static_preamble.flac`** | **0.703** | `0.997` | `0.543` | Quiet speech preceded by 1.4s of static (3s real noise warmup). Captures the majority of the speech. |
-| **`test_cajon_pass_trailing.flac`** | **0.047** | `0.843` | `0.024` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
+| **`test_vad_deafening_dispatcher_ems.flac`** | **0.785** | `0.720` | `0.863` | Loud dispatcher followed by quiet EMS. High recall maintained via state continuity. |
+| **`test_vad_deafening_static_preamble.flac`** | **0.682** | `0.997` | `0.519` | Quiet speech preceded by 1.4s of static noise. |
+| **`test_cajon_pass_trailing.flac`** | **0.190** | `0.713` | `0.110` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
+| **`test_vad_inter_transmission_gap_speech.flac`** | **0.794** | `0.658` | `1.000` | Watch Duty live feed inter-transmission gap with short speech bursts (`c1416cf1`). |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
 

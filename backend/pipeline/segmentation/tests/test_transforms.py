@@ -35,6 +35,7 @@ from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
+    VAD_DEFAULT_PRIMING_SEC,
 )
 from backend.pipeline.segmentation.datatypes import (
     ActiveStitchingState,
@@ -2907,11 +2908,11 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
-    def test_prior_audio_tail_not_cached_if_chunk_ends_in_silence(
+    def test_prior_audio_tail_cached_even_if_chunk_ends_in_silence(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that under the Conditional State Continuity logic, the prior_audio_tail
-        is NOT cached if the chunk ends in silence, preventing noise propagation.
+        """Verifies that under the Lookback Priming Cache logic, the prior_audio_tail
+        is cached even if the chunk ends in silence, preserving VAD lookback warmup.
         """
         mock_processor_inst = mock_audio_processor.return_value
         # Chunk has speech from 1.0s to 4.0s, but ends in silence (duration is 5.0s)
@@ -2976,10 +2977,157 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # State context must be ActiveStitchingState, but prior_audio_tail must be None!
+        # State context must be ActiveStitchingState, and prior_audio_tail must be cached!
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
-        self.assertIsNone(saved_context.prior_audio_tail)
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_prior_audio_tail_caching_denoised_int16_with_clipping(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies denoised tail conversion clips float32 overshoots to int16 range without overflow."""
+        mock_processor_inst = mock_audio_processor.return_value
+        # Create denoised float32 array with overshoots (> 1.0 and < -1.0)
+        denoised = np.array([0.5, 1.5, -2.0, 0.9], dtype=np.float32)
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+            denoised_audio=denoised,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn = OrderedStitchAudioFn(
+            order_config=OrderRestorerConfig(out_of_order_timeout_ms=1000),
+            stitch_config=get_test_stitch_config(significant_gap_ms=800),
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context = mock_state_context.read()
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+        tail_pcm = np.frombuffer(saved_context.prior_audio_tail, dtype=np.int16)
+        # Verify 1.5 clipped to 32767 and -2.0 clipped to -32768
+        self.assertEqual(tail_pcm[1], 32767)
+        self.assertEqual(tail_pcm[2], -32768)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_prior_audio_tail_caching_native_sample_rate_fallback(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies native sample rate (e.g. 8kHz) is used when falling back to raw audio tail."""
+        mock_processor_inst = mock_audio_processor.return_value
+        # 8kHz audio chunk (5 seconds = 40,000 samples)
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.ones(8000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=8000,
+            denoised_audio=None,  # Fallback to raw audio
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn = OrderedStitchAudioFn(
+            order_config=OrderRestorerConfig(out_of_order_timeout_ms=1000),
+            stitch_config=get_test_stitch_config(significant_gap_ms=800),
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context = mock_state_context.read()
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+        tail_samples = len(saved_context.prior_audio_tail) // 2
+        # Expected samples: 3.5s * 8000 = 28,000 samples
+        expected_samples = int(VAD_DEFAULT_PRIMING_SEC * 8000)
+        self.assertEqual(tail_samples, expected_samples)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
