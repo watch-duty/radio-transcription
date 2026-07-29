@@ -80,7 +80,14 @@ class RulesStore:
     async def list_rules(self, rule_ids: list[str] | None = None) -> list[Rule]:
         """List all transcription rules, optionally filtered by rule IDs."""
         if rule_ids:
-            uids = [uuid.UUID(rid) for rid in rule_ids]
+            uids = []
+            for rid in rule_ids:
+                try:
+                    uids.append(uuid.UUID(rid))
+                except ValueError:
+                    pass
+            if not uids:
+                return []
             rows = await self._pool.fetch(
                 rules_queries.GET_RULES_BY_IDS_SQL, uids
             )
