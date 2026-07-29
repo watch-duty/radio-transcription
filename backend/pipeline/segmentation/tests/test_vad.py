@@ -526,16 +526,20 @@ class TestVadEngine(unittest.TestCase):
         around each burst is a far larger share of the file than on a 15s chunk
         (precision 0.571 here versus 0.687 on the chunk, same audio).
 
-        Ground truth is the stream-chunk annotation shifted by -8.868s, so both
-        fixtures label the same audio identically.
+        These two ranges are the hand-supplied annotation for this segment. In
+        stream-chunk coordinates (+8.868s) they are `9.675-10.433` and
+        `11.516-11.768`. The second onset sits 248ms later than the chunk
+        annotation's `11.268`; both are hand-supplied, and the 11.268-11.516
+        lead-in is the quietest stretch either labels (p90 -33.9 dB), so the two
+        readings of where that burst starts are not reconciled here.
         """
         self._run_integration_test(
             "test_vad_hood_river_segment_payload.flac",
             [
                 (0.807, 1.565),
-                (2.400, 2.900),
+                (2.648, 2.900),
             ],
-            baseline_f1=0.707,
+            baseline_f1=0.606,
             min_recall=0.90,
         )
 
