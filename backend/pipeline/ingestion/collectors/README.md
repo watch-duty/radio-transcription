@@ -7,11 +7,12 @@ policy. The code is still the source of truth:
   `SourceObservation`, `CaptureResources`, `CollectorFn`, and `FeedFailure`.
 - `backend/pipeline/storage/feed_store.py` defines `SourceType` and
   `FeedStatusReason`.
-- `backend/pipeline/ingestion/router.py` defines the VM collector registry.
+- `backend/pipeline/ingestion/router.py` defines the Feed collector registry,
+  including the retained legacy Calls route.
 - `backend/pipeline/ingestion/settings.py` defines which source types the VM
-  fleet claims through `_DEFAULT_CAPS`.
-- `backend/pipeline/ingestion/main.py` enforces the registry/caps invariant at
-  startup.
+  fleet claims through `_DEFAULT_FEED_CLAIM_CAPS`.
+- `backend/pipeline/ingestion/main.py` enforces the Feed-cap and collector
+  authority invariants at startup.
 
 If this document disagrees with those files or their tests, the code and tests
 win. Update this guide when a behavior change would make the guidance
@@ -21,18 +22,23 @@ misleading.
 
 > [!IMPORTANT]
 > **Common Architecture Misconceptions**:
-> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](./icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is a separate REST-based polling collector [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py) capturing discrete pre-segmented calls that do **NOT** pass through Dataflow segmentation.
+> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](./icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is polled as discrete pre-segmented calls through durable parent SID leases and does **NOT** pass through Dataflow segmentation.
 > 2. **Icecast Collector Scope**: `bcfy_feeds` is currently the primary continuous audio source captured via `icecast_collector.py`. Future/additional Icecast-protocol streams (`icecast`) use this same collector. Continuous streams (`bcfy_feeds` and `icecast`) are the **only** sources processed by the downstream Dataflow continuous audio segmentation pipeline.
 
-### Ingestion Collector Module Mapping
+### Ingestion Source Module Mapping
 
-| Collector Module | Handled `source_type` Values | Stream Architecture | Processed by Dataflow Segmentation? |
+| Runtime Module | Handled `source_type` Values | Stream Architecture | Processed by Dataflow Segmentation? |
 | :--- | :--- | :--- | :--- |
 | [`icecast_collector.py`](./icecast/icecast_collector.py) | `bcfy_feeds` *(primary)*, `icecast` *(future)* | Continuous Icecast-protocol streams | **YES** |
-| [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py) | `bcfy_calls` | Discrete call REST polling API | **NO** |
+| [`sid_runner.py`](./bcfy_calls/sid_runner.py) and [`pipeline.py`](./bcfy_calls/pipeline.py) | `bcfy_calls` | Discrete call REST polling under parent SID leases | **NO** |
 | [`openmhz/collector.py`](./openmhz/collector.py) | `openmhz` | Discrete call polling API | **NO** |
 | [`fire_notifications/collector.py`](./fire_notifications/collector.py) | `fire_notifications` | Event notification stream | **NO** |
 | [`echo/main.py`](./echo/main.py) | `echo` | Archival push (Cloud Function) | **NO** |
+
+The legacy [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py)
+Feed route remains registered pending separate code removal, but Calls is not a
+Feed-claimable source. Production workers therefore reach Calls only through
+the SID runner.
 
 
 ## Feed Failure Runtime Boundary
@@ -76,6 +82,11 @@ Collector code should assume it receives an already leased feed and should
 preserve the runtime's ownership of lease acquisition, fencing, heartbeat, and
 shutdown behavior.
 
+Broadcastify Calls uses the same runtime control plane with a different durable
+authority boundary: the supervisor claims parent SID leases, and
+`BcfyCallsSidRunner` dispatches child Feed batches through the bounded Calls
+work pool. It does not acquire Calls rows through `FeedStore`.
+
 Collector startup work must avoid creating synchronous herds against shared
 external systems. If many feed tasks share a blocking dependency such as a
 credential lookup, token refresh, or source-control call, coordinate that work
@@ -101,12 +112,13 @@ not as something an individual collector should work around locally.
 
 ## Worker Cap Calibration
 
-`SourceRuntimeSpec.default_cap` is a per-source, per-worker lease limit. It is
-not a fleet-size target. `CollectorSettings.max_feeds_per_worker` is the final
-worker-wide limit and defaults to 800, while `CAP_<SOURCE_TYPE>` can override an
-individual source cap. Feed inventory and VM count determine how many workers
-are needed after a safe per-worker cap is established; they must not be used to
-derive the cap itself.
+`SourceRuntimeSpec.default_feed_cap` is a per-source, per-worker Feed lease
+limit. It is not a fleet-size target.
+`CollectorSettings.max_feeds_per_worker` is the final worker-wide limit and
+defaults to 800, while `CAP_<SOURCE_TYPE>` can override an individual
+Feed-authority source cap. Feed inventory and VM count determine how many
+workers are needed after a safe per-worker cap is established; they must not be
+used to derive the cap itself.
 
 ### Why Fire Notifications Defaults to 600
 
@@ -120,8 +132,8 @@ Fire polls every 30-35 seconds versus every 10 seconds for `bcfy_calls`.
 Fire does add burst work that the proxy does not cover: it downloads every new
 MP3 and runs `ffprobe` in the shared thread pool. Its upstream API and download
 rate limits have not been load-tested either. For that reason, the default
-copies the existing comparator's configured cap instead of extrapolating to the
-800-task worker ceiling or the 900 configured `openmhz` cap.
+copies the historical comparator's former Feed cap instead of extrapolating to
+the 800-task worker ceiling or the 900 configured `openmhz` cap.
 
 The runtime currently limits same-host HTTP concurrency to 64 and admits 20
 new feed tasks per lease cycle, but those are queueing controls rather than
@@ -134,7 +146,7 @@ before steady polling CPU becomes a problem.
 The provisional choice is:
 
 ```text
-fire cap = existing configured bcfy_calls cap = 600
+fire cap = former legacy bcfy_calls Feed cap = 600
 worker slots Fire cannot consume = 800 - 600 = 200
 ```
 
@@ -148,10 +160,10 @@ points as one vCPU, so `vCPU/feed = CPU percentage points/feed / 100`.
 The ramp measured resource slopes at 200, 500, and 1,000 `bcfy_calls` feeds; it
 did not derive or validate 600 as that collector's saturation cap.
 
-| Source | Default cap | Historical CPU percentage points/feed | Historical vCPU/feed | Historical RSS/feed |
+| Source | Reference count/cap | Historical CPU percentage points/feed | Historical vCPU/feed | Historical RSS/feed |
 |--------|------------:|--------------------------------------:|---------------------:|--------------------:|
 | `bcfy_feeds` | 240 | 0.156 | 0.00156 | about 16.9 MiB |
-| `bcfy_calls` | 600 | 0.009 | 0.00009 | 0.40 MiB |
+| `bcfy_calls` | 600 former Feed cap; now SID-owned | 0.009 | 0.00009 | 0.40 MiB |
 | `openmhz` | 900 configured; 800 worker-effective | 0.100 | 0.00100 | 2.805 MiB |
 | `fire_notifications` | 600 | not measured | not measured | not measured |
 
@@ -226,9 +238,9 @@ Replace the proxy with a measured limit before raising Fire above 600:
    ```
 
 6. Canary `N_final` with `CAP_FIRE_NOTIFICATIONS`, including a simultaneous
-   restart test. Promote it to `default_cap` only after CPU, RSS, event-loop,
-   error-rate, and upstream-limit guardrails remain healthy, then update this
-   section and the cap tests with the new evidence.
+   restart test. Promote it to `default_feed_cap` only after CPU, RSS,
+   event-loop, error-rate, and upstream-limit guardrails remain healthy, then
+   update this section and the cap tests with the new evidence.
 
 ## Status Reason Policy
 
@@ -437,8 +449,9 @@ same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
 1. Add the source type if it is new:
    - add a `SourceType` enum member;
    - add seed data in `terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql`;
-   - add a `_DEFAULT_CAPS` entry if VM workers should claim it;
-   - add a `_COLLECTORS` entry in `router.py`;
+   - add a `SourceRuntimeSpec` entry and set `feed_claimable=True` plus
+     `default_feed_cap` if Feed grants should own it;
+   - add a `_COLLECTORS` entry in `router.py` for a Feed collector route;
    - update topic routing if the source is continuous instead of segmented.
 2. Implement the `CollectorFn` signature from `models.py`.
 3. Use `CaptureResources.http_session` for ordinary async HTTP. A

@@ -259,6 +259,28 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
+    def test_eval_validation_split_mismatch_hints_at_build_script(
+        self,
+    ) -> None:
+        issues = manifest_lib.validate_canonical_manifest(
+            [_canonical_row(split="eval")],
+            expected_split="validation",
+        )
+
+        (issue,) = [i for i in issues if i.code == "split_mismatch"]
+        self.assertIn("build_validation_manifest_from_eval.py", issue.message)
+
+    def test_unrelated_split_mismatch_has_no_hint(self) -> None:
+        issues = manifest_lib.validate_canonical_manifest(
+            [_canonical_row(split="eval")],
+            expected_split="train",
+        )
+
+        (issue,) = [i for i in issues if i.code == "split_mismatch"]
+        self.assertNotIn(
+            "build_validation_manifest_from_eval.py", issue.message
+        )
+
     def test_explicit_null_optional_metadata_is_absent(self) -> None:
         issues = manifest_lib.validate_canonical_manifest(
             [

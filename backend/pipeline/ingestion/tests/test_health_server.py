@@ -44,7 +44,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
             active_feed_count=lambda: 0,
             active_sid_count=lambda: 0,
             integrity_failed=lambda: False,
-            bcfy_calls_authority_mode="legacy_feed",
         )
         return build_app(self.settings, self.state)
 
@@ -80,7 +79,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         self.assertEqual(body["status"], "healthy")
         self.assertEqual(body["active_feeds"], 0)
         self.assertEqual(body["active_sids"], 0)
-        self.assertEqual(body["bcfy_calls_authority_mode"], "legacy_feed")
+        self.assertEqual(body["bcfy_calls_authority_mode"], "sid_lease")
         self.assertIsNone(body["last_heartbeat_age_sec"])
 
     async def test_startup_grace_returns_healthy_even_with_stale_heartbeat(
@@ -130,7 +129,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
                 "reason": "no_heartbeat",
                 "active_feeds": 0,
                 "active_sids": 0,
-                "bcfy_calls_authority_mode": "legacy_feed",
+                "bcfy_calls_authority_mode": "sid_lease",
                 "last_heartbeat_age_sec": None,
             },
         )
@@ -149,7 +148,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         self.assertEqual(body["reason"], "heartbeat_stale")
         self.assertEqual(body["active_feeds"], 0)
         self.assertEqual(body["active_sids"], 0)
-        self.assertEqual(body["bcfy_calls_authority_mode"], "legacy_feed")
+        self.assertEqual(body["bcfy_calls_authority_mode"], "sid_lease")
         self.assertIsInstance(body["last_heartbeat_age_sec"], (int, float))
 
     async def test_post_grace_zero_feeds_is_still_healthy(self) -> None:
@@ -180,8 +179,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
         active_sid_count = mock.Mock(return_value=2)
         self.state.active_feed_count = active_feed_count
         self.state.active_sid_count = active_sid_count
-        self.state.bcfy_calls_authority_mode = "sid_lease"
-
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 200)

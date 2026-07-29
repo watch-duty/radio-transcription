@@ -107,11 +107,21 @@ class TestDriftGuard(unittest.TestCase):
         companion guard lives in the transcription package tests because CI
         path-filters the lanes: a backend-only edit skips this model lane.
         """
-        backend_prompt = _module_constant(_BACKEND_PROMPT, "GEMINI_PROMPT")
+        backend_prompt = _module_constant(
+            _BACKEND_PROMPT, "GEMINI_SYSTEM_PROMPT"
+        )
         self.assertIsNotNone(backend_prompt)
         self.assertEqual(
             backend_prompt, prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT
         )
+
+    def test_backend_transcriber_user_prompt_matches_canonical_user_prompt(
+        self,
+    ) -> None:
+        """Backend GEMINI_USER_PROMPT must match canonical SFT user prompt."""
+        backend_prompt = _module_constant(_BACKEND_PROMPT, "GEMINI_USER_PROMPT")
+        self.assertIsNotNone(backend_prompt)
+        self.assertEqual(backend_prompt, prompts.GEMINI_TRANSCRIBE_USER_PROMPT)
 
     def test_gemini_sft_config_defaults_to_runtime_common_prompts(self) -> None:
         """SFT config defaults must source prompts from common.gemini.prompts."""

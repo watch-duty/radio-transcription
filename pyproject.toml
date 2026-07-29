@@ -177,6 +177,7 @@ known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
 "model/**/*.py" = ["E501"]
+"model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
   "ALL",   # Ignore all linting rules for notebooks
 ]

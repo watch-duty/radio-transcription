@@ -44,6 +44,14 @@ clips from the same split and source. The current clip is the only audio input.
 References are joined back only after provider inference has finalized, for
 scoring. Batch evaluation is therefore limited to zero prior turns.
 
+## Standalone Scripts
+
+- [`build_validation_manifest_from_eval.py`](build_validation_manifest_from_eval.py) -
+  builds a canonical `validation.jsonl` by sampling `eval.jsonl` and
+  relabeling `split`. See the runbook's
+  [Build A Validation Manifest](docs/runbook.md#build-a-validation-manifest)
+  section for why this exists.
+
 ## Verification Boundary
 
 Unit tests mock GCS and Vertex boundaries. They must not submit paid Vertex
