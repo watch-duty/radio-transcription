@@ -66,6 +66,7 @@ class AudioChunkData:
     gcs_uri: str
     duration_ms: int
     sample_rate: int
+    denoised_audio: np.ndarray | None = None
 
 
 FeedMetadata = bp_state.FeedMetadataProto

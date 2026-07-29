@@ -168,7 +168,11 @@ class SegmentationAudioProcessor:
                 mono_samples,
                 sample_rate=sr,
                 prior_audio=prior_samples,
+                prior_is_preprocessed=True,
             )
+            denoised_arr = getattr(self.vad, "last_preprocessed_audio", None)
+        else:
+            denoised_arr = None
 
         speech_segments_proto = [
             bp_state.TimeRangeProto(
@@ -187,6 +191,7 @@ class SegmentationAudioProcessor:
             speech_segments=speech_segments_proto,
             gcs_uri=gcs_path,
             duration_ms=duration_ms,
+            denoised_audio=denoised_arr,
         )
 
     def _open_container(
