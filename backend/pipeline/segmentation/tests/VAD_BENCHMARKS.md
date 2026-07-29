@@ -14,6 +14,10 @@ In radio transcription, **we prioritize Recall (capturing all speech) over Preci
 
 All metrics below are evaluated under the official production configuration: **`pad_sec = 0.0`** (for pure accuracy tracking) and **`priming_sec = 6.0`** (matching the default 6.0s lookback priming in streaming mode).
 
+Numbers come from the `BENCHMARK:` lines that `_run_integration_test` writes to stdout, so CI output is the source of truth for this table. Rows predating that line were recorded by hand and are not all trustworthy — the `c1416cf1` row was in fact measured at `pad_sec = 0.3`, not the `0.0` this section claims, which made its Recall read `1.000` when the `0.0` figure is `0.932`. Re-measure a row before relying on it.
+
+**`pad_sec = 0.0` is not the shipped configuration.** It is the right default for this table, because it measures intrinsic boundary accuracy and keeps pad tuning from moving every row at once. But production runs `VAD_DEFAULT_PAD_SEC = 0.3`, and padding routinely absorbs intrinsic edge clipping — on `c1416cf1` it lifts Recall from `0.932` to `1.000`. So a Recall number in this table is a statement about the detector, **not** about whether we clip dispatches in production. When a fixture exists to answer the latter, assert it at production padding as well; `test_integration_hood_river_stream_chunk_production_padding` is the worked example.
+
 | Audio File | F1 | Precision | Recall | Description / Justification |
 | :--- | :---: | :---: | :---: | :--- |
 | **`test_stress.flac`** | **0.841** | `0.725` | `1.000` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
@@ -30,7 +34,8 @@ All metrics below are evaluated under the official production configuration: **`
 | **`test_vad_deafening_dispatcher_ems.flac`** | **0.785** | `0.720` | `0.863` | Loud dispatcher followed by quiet EMS. High recall maintained via state continuity. |
 | **`test_vad_deafening_static_preamble.flac`** | **0.682** | `0.997` | `0.519` | Quiet speech preceded by 1.4s of static noise. |
 | **`test_cajon_pass_trailing.flac`** | **0.190** | `0.713` | `0.110` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
-| **`bcfy_feed_or_hood_river_missed_speech.flac`** | **0.556** | `0.385` | `1.000` | Oregon Hood River feed segment (`c1416cf1`): Short dual speech bursts separated by a 1.08s pause; 100% recall with chunk padding. |
+| **`test_vad_inter_transmission_gap_speech.flac`** | **0.791** | `0.687` | `0.932` | Oregon Hood River (`bcfy_feeds`) 15s stream chunk (`c1416cf1`): inter-transmission gap with short quiet bursts. Production-shaped VAD input. The 0.068 recall gap is edge clipping, not a dropped burst: `0.532-0.832`, `5.696-5.872`, `6.672-6.848`. At production `pad_sec = 0.3` this file scores `0.794` / `0.659` / `1.000`. |
+| **`test_vad_hood_river_segment_payload.flac`** | **0.707** | `0.571` | `0.929` | The `[8.868s, 13.548s]` stitched payload cut from the chunk above. Same audio as the row above, scored on the short payload: over-trigger around each burst costs proportionally more precision (`0.571` vs `0.687`). Its boundaries come from a prior detector run, so it is not an independent sensitivity guard. |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
 
