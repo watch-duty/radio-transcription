@@ -3,18 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
-import types
-import typing
 
 from backend.pipeline.ingestion import grant_control
-
-
-class BcfyCallsAuthorityMode(enum.StrEnum):
-    """Startup-only authority selection for Broadcastify Calls."""
-
-    LEGACY_FEED = "legacy_feed"
-    SID_LEASE = "sid_lease"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -59,32 +49,17 @@ LEGACY_PROFILE = WorkerProfile(
     ),
 )
 
-MIXED_DORMANT_PROFILE = WorkerProfile(
-    name="mixed-dormant",
+MIXED_PROFILE = WorkerProfile(
+    name="mixed",
     allocations=(
         LEGACY_PROFILE.allocations[0],
         DomainAllocation(
             domain_id=grant_control.DomainId.SID,
             owned_cap=32,
             claims_per_cycle=2,
-            claims_enabled=False,
+            claims_enabled=True,
         ),
     ),
-)
-
-SID_DORMANT_PROFILE = WorkerProfile(
-    name="sid-dormant",
-    allocations=(MIXED_DORMANT_PROFILE.allocations[1],),
-)
-
-WORKER_PROFILE_PRESETS: typing.Mapping[str, WorkerProfile] = (
-    types.MappingProxyType(
-        {
-            LEGACY_PROFILE.name: LEGACY_PROFILE,
-            MIXED_DORMANT_PROFILE.name: MIXED_DORMANT_PROFILE,
-            SID_DORMANT_PROFILE.name: SID_DORMANT_PROFILE,
-        }
-    )
 )
 
 
@@ -150,144 +125,46 @@ def validate_worker_profile(profile: WorkerProfile) -> WorkerProfile:
     return profile
 
 
-def allocation_for_domain(
-    profile: WorkerProfile,
-    domain_id: grant_control.DomainId,
-) -> DomainAllocation | None:
-    """Return the selected allocation for ``domain_id``, if any.
-
-    Args:
-        profile: Worker topology to inspect.
-        domain_id: Durable-authority domain to locate.
-
-    Returns:
-        The matching immutable allocation, or ``None`` when absent.
-    """
-    for allocation in profile.allocations:
-        if allocation.domain_id is domain_id:
-            return allocation
-    return None
-
-
-def derive_bcfy_calls_authority(
-    profile: WorkerProfile,
-    mode: BcfyCallsAuthorityMode,
-) -> WorkerProfile:
-    """Derive both Calls claim authorities from one closed startup mode.
-
-    ``DomainAllocation.claims_enabled`` is an effective runtime output. The
-    input profile contributes only selected topology and admission capacity;
-    its claim flags cannot independently select Broadcastify Calls ownership.
-
-    Args:
-        profile: Immutable topology and capacity description.
-        mode: Sole process-wide Broadcastify Calls authority selection.
-
-    Returns:
-        A validated frozen profile with both claim authorities derived.
-
-    Raises:
-        ValueError: If the topology cannot host the selected authority.
-    """
-    validated = validate_worker_profile(profile)
-
-    feed_allocation = allocation_for_domain(
-        validated,
-        grant_control.DomainId.FEED,
-    )
-    sid_allocation = allocation_for_domain(
-        validated,
-        grant_control.DomainId.SID,
-    )
-    if mode is BcfyCallsAuthorityMode.LEGACY_FEED and feed_allocation is None:
-        msg = "legacy_feed authority requires a selected Feed domain"
-        raise ValueError(msg)
-    if mode is BcfyCallsAuthorityMode.SID_LEASE and sid_allocation is None:
-        msg = "sid_lease authority requires a selected SID domain"
-        raise ValueError(msg)
-
-    allocations: list[DomainAllocation] = []
-    for allocation in validated.allocations:
-        if allocation.domain_id is grant_control.DomainId.FEED:
-            claims_enabled = True
-        elif allocation.domain_id is grant_control.DomainId.SID:
-            claims_enabled = mode is BcfyCallsAuthorityMode.SID_LEASE
-        else:
-            claims_enabled = allocation.claims_enabled
-        allocations.append(
-            dataclasses.replace(
-                allocation,
-                claims_enabled=claims_enabled,
-            )
-        )
-    return validate_worker_profile(
-        dataclasses.replace(validated, allocations=tuple(allocations))
-    )
-
-
-def resolve_worker_profile(
-    selector: str | None,
+def build_mixed_worker_profile(
     *,
     feed_owned_cap: int = 800,
     feed_claims_per_cycle: int = 20,
     sid_owned_cap: int = 32,
     sid_claims_per_cycle: int = 2,
 ) -> WorkerProfile:
-    """Resolve a closed preset with explicit immutable domain capacities.
+    """Build the fixed Feed-and-SID profile with explicit capacities.
 
     Args:
-        selector: Exact preset name, or ``None`` for the legacy profile.
         feed_owned_cap: Feed-domain ownership ceiling.
         feed_claims_per_cycle: Feed-domain admission-cycle budget.
         sid_owned_cap: SID-domain ownership ceiling.
         sid_claims_per_cycle: SID-domain admission-cycle budget.
 
     Returns:
-        A validated immutable profile containing the selected domains only.
+        A validated immutable mixed-domain profile.
 
     Raises:
-        ValueError: ``selector`` is blank or unknown, or a selected capacity
-            is invalid.
-        TypeError: A selected profile value has an invalid type.
+        ValueError: A selected capacity is invalid.
     """
-    if selector is None:
-        preset = LEGACY_PROFILE
-    elif not selector.strip():
-        msg = "WORKER_PROFILE must not be blank"
-        raise ValueError(msg)
-    else:
-        preset = WORKER_PROFILE_PRESETS.get(selector)
-        if preset is None:
-            msg = f"Unknown WORKER_PROFILE: {selector}"
-            raise ValueError(msg)
-
-    allocations: list[DomainAllocation] = []
-    for allocation in preset.allocations:
-        if allocation.domain_id is grant_control.DomainId.FEED:
-            allocations.append(
+    feed, sid = MIXED_PROFILE.allocations
+    return validate_worker_profile(
+        dataclasses.replace(
+            MIXED_PROFILE,
+            allocations=(
                 dataclasses.replace(
-                    allocation,
+                    feed,
                     owned_cap=feed_owned_cap,
                     claims_per_cycle=feed_claims_per_cycle,
-                )
-            )
-        elif allocation.domain_id is grant_control.DomainId.SID:
-            allocations.append(
+                ),
                 dataclasses.replace(
-                    allocation,
+                    sid,
                     owned_cap=sid_owned_cap,
                     claims_per_cycle=sid_claims_per_cycle,
-                )
-            )
-        else:
-            allocations.append(allocation)
-
-    profile = dataclasses.replace(
-        preset,
-        allocations=tuple(allocations),
+                ),
+            ),
+        )
     )
-    return validate_worker_profile(profile)
 
 
-for _profile in WORKER_PROFILE_PRESETS.values():
+for _profile in (LEGACY_PROFILE, MIXED_PROFILE):
     validate_worker_profile(_profile)

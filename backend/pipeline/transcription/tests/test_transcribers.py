@@ -653,6 +653,73 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(categories, expected_categories)
 
+    async def test_gemini_transcriber_user_prompt(self) -> None:
+        """Verifies that Gemini transcriber includes default or configured user prompt."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="Hello")]
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            # Test default user prompt
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            await transcriber.transcribe(
+                audio_data=b"\x00" * 10,
+                duration_ms=1000,
+            )
+
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            contents = kwargs["contents"]
+            self.assertEqual(len(contents.parts), 2)
+            self.assertEqual(
+                contents.parts[0].text,
+                "Transcribe this emergency radio communication segment verbatim per the rules above.",
+            )
+
+            # Test configured custom user prompt
+            custom_transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1", "user_prompt": "Custom prompt"}',
+            )
+            custom_transcriber.setup()
+
+            await custom_transcriber.transcribe(
+                audio_data=b"\x00" * 10,
+                duration_ms=1000,
+            )
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            contents = kwargs["contents"]
+            self.assertEqual(contents.parts[0].text, "Custom prompt")
+
+            # Test empty user prompt fails at config load with ValueError
+            with self.assertRaises(ValueError):
+                get_transcriber(
+                    TranscriberType.GEMINI,
+                    "test-project",
+                    '{"location": "us-central1", "user_prompt": ""}',
+                )
+
     async def test_gemini_transcriber_unintelligible(self) -> None:
         """Verifies that [UNINTELLIGIBLE] response maps to "[UNINTELLIGIBLE]"."""
         with patch(
@@ -1079,6 +1146,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.transcription.transcribers.gemini.asyncio.sleep"
             ) as mock_sleep,
             patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.debug"
+            ) as mock_debug,
+            patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
             ) as mock_info,
             patch(
@@ -1179,11 +1249,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 [DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL],
             )
 
-            warning_events = _gemini_attempt_events(mock_warning)
-            info_events = _gemini_attempt_events(mock_info)
-            self.assertEqual(len(warning_events), 3)
-            self.assertEqual(len(info_events), 2)
-            events = warning_events + info_events
+            debug_events = _gemini_attempt_events(mock_debug)
+            self.assertEqual(len(debug_events), 5)
+            self.assertEqual(_gemini_attempt_events(mock_warning), [])
+            self.assertEqual(_gemini_attempt_events(mock_info), [])
+            events = debug_events
             self.assertEqual(
                 [
                     (
@@ -1253,6 +1323,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
             ) as mock_client_cls,
             patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.debug"
+            ) as mock_debug,
+            patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
             ) as mock_info,
             patch(
@@ -1289,9 +1362,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "")
-            events = _gemini_attempt_events(mock_warning)
+            events = _gemini_attempt_events(mock_debug)
             self.assertEqual(len(events), 1)
             self.assertEqual(_gemini_attempt_events(mock_info), [])
+            self.assertEqual(_gemini_attempt_events(mock_warning), [])
             self.assertEqual(events[0]["finish_reason"], "STOP")
             self.assertEqual(events[0]["response_text_length"], 0)
             self.assertNotIn("response_text", events[0])
@@ -1313,6 +1387,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
             ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.debug"
+            ) as mock_debug,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
             ) as mock_info,
@@ -1343,9 +1420,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     context=base.TranscriptionContext(segment_id="segment-1"),
                 )
 
-            events = _gemini_attempt_events(mock_warning)
+            events = _gemini_attempt_events(mock_debug)
             self.assertEqual(len(events), 1)
             self.assertEqual(_gemini_attempt_events(mock_info), [])
+            self.assertEqual(_gemini_attempt_events(mock_warning), [])
             self.assertIsNone(events[0]["response_id"])
             self.assertIsNone(events[0]["response_text_length"])
             self.assertEqual(
@@ -1364,6 +1442,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
             ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.logger.debug"
+            ) as mock_debug,
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.logger.info"
             ) as mock_info,
@@ -1403,6 +1484,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "Tuned model succeeded")
+            self.assertEqual(_gemini_attempt_events(mock_debug), [])
             self.assertEqual(_gemini_attempt_events(mock_info), [])
             self.assertEqual(_gemini_attempt_events(mock_warning), [])
 

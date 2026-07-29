@@ -6,7 +6,7 @@ import json
 import logging
 import typing
 
-from common import gcs_utils
+from common import gcs_utils, recording_groups
 from common.gemini import context, tuning_data
 from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
@@ -105,6 +105,7 @@ def prepare_run(
     Raises:
         google_exceptions.GoogleAPIError: If a GCS operation fails.
         OSError: If local or GCS artifacts cannot be read or written.
+        TypeError: If training source-lineage metadata has the wrong type.
         ValueError: If strict parsing, canonical validation, or preparation
             invariants fail.
     """
@@ -358,6 +359,7 @@ def prepare_artifacts(
     Raises:
         google_exceptions.GoogleAPIError: If a source download fails.
         OSError: If a local artifact cannot be read or written.
+        TypeError: If training source-lineage metadata has the wrong type.
         ValueError: If strict parsing, training manifests, or generated
             examples are invalid.
     """
@@ -411,6 +413,13 @@ def prepare_artifacts(
         validation_rows,
     )
     artifacts_lib.reject_split_overlap("train", train_rows, "eval", eval_rows)
+    recording_groups.reject_split_leakage(
+        {
+            "train": train_entries,
+            "validation": validation_entries,
+            "eval": eval_entries,
+        }
+    )
 
     train_histories = _training_reference_histories(
         train_entries,
