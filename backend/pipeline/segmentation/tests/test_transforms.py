@@ -4583,3 +4583,89 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)
+
+    def test_dlq_fallback_preserves_zero_previous_expected(self) -> None:
+        """Verifies that DLQ fallback preserves previous_expected_ts=0 and does not fall back to ts+1000."""
+        config = get_test_stitch_config()
+        order_config = OrderRestorerConfig()
+        engine = stitcher_engine.StitcherEngine(
+            order_config=order_config, stitch_config=config
+        )
+        engine.processor = MagicMock()
+        engine.processor.download_audio_and_detect.side_effect = RuntimeError(
+            "Failed download"
+        )
+
+        chunk = BufferedChunk(timestamp_ms=0, gcs_uri="gs://bucket/bad.flac")
+        curr_ctx = ActiveStitchingState(
+            session_id="sess1",
+        )
+
+        result = engine._process_single_stitch_chunk(
+            chunk,
+            "feed1",
+            curr_ctx,
+            None,
+            MagicMock(),
+            MagicMock(),
+            0,
+            MagicMock(),
+            is_backfill=False,
+        )
+
+        self.assertEqual(result.next_expected_ts, 0)
+
+    def test_prior_audio_tail_retained_within_tolerance_cleared_beyond(
+        self,
+    ) -> None:
+        """Verifies prior_audio_tail is retained when a chunk arrives within
+        DEFAULT_FLOAT_TOLERANCE_MS of previous_expected_ts, and cleared once
+        the gap exceeds that tolerance.
+        """
+        config = get_test_stitch_config()
+        order_config = OrderRestorerConfig()
+        chunk_data = AudioChunkData(
+            start_ms=0,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://bucket/chunk.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        previous_expected_ts = 10000
+        prior_tail = b"prior-tail-bytes"
+
+        state_machine = MagicMock()
+        state_machine.process_chunk.return_value = []
+
+        for offset, expected_prior_audio in ((100, prior_tail), (600, None)):
+            engine = stitcher_engine.StitcherEngine(
+                order_config=order_config, stitch_config=config
+            )
+            engine.processor = MagicMock()
+            engine.processor.download_audio_and_detect.return_value = chunk_data
+
+            curr_ctx = ActiveStitchingState(
+                session_id="sess1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                prior_audio_tail=prior_tail,
+            )
+            chunk = BufferedChunk(
+                timestamp_ms=previous_expected_ts + offset,
+                gcs_uri="gs://bucket/chunk.flac",
+            )
+
+            engine._process_single_stitch_chunk(
+                chunk,
+                "feed1",
+                curr_ctx,
+                None,
+                MagicMock(),
+                state_machine,
+                previous_expected_ts,
+                MagicMock(),
+                is_backfill=False,
+            )
+
+            _, kwargs = engine.processor.download_audio_and_detect.call_args
+            self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
