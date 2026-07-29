@@ -78,7 +78,8 @@ _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
 AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
-    30.0  # Threshold (in seconds) for logging anomalous audio timestamp lag
+    120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins);
+    # filters out baseline ~30-90s Icecast stream buffer delay
 )
 
 
