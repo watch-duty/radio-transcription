@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import concurrent.futures
 
+import numpy as np
 from apache_beam.metrics import Metrics
 from google.cloud import storage
 from opentelemetry import context as otel_context
@@ -728,40 +729,43 @@ class StitcherEngine:
                         )
 
                     if isinstance(new_context, datatypes.ActiveStitchingState):
-                        # Priming Strategy: cache tail of contiguous samples
-                        priming_samples = int(
+                        # Lookback Priming Cache:
+                        # We cache the post-denoiser preprocessed audio tail (converted to int16 PCM)
+                        # to prime the VAD LSTM lookback buffer in the next chunk.
+                        # Because this tail is already denoised, it bypasses the UL-UNAS denoiser
+                        # input in the next chunk, permanently eliminating the risk of denoiser
+                        # deafening on prior channel static. As a result, we no longer need the
+                        # legacy `ended_in_speech` discard rule, guaranteeing continuous lookback
+                        # warmup for every chunk without cold-start onset clipping.
+                        priming_samples_16k = int(
+                            trans_constants.VAD_DEFAULT_PRIMING_SEC * 16000
+                        )
+                        priming_samples_native = int(
                             trans_constants.VAD_DEFAULT_PRIMING_SEC
                             * chunk_data.sample_rate
                         )
-                        # Conditional state propagation:
-                        # To prevent the VAD's internal denoiser (UL-UNAS) from adapting to loud static
-                        # or dispatch noise and "deafening" the VAD to subsequent quiet speech in the next
-                        # chunk, we only propagate the trailing audio tail (state) if the current chunk
-                        # ended in active speech (within a 50ms tolerance).
-                        #
-                        # If the chunk ended in silence or static, we discard the state (prior_tail = None).
-                        # This forces the next chunk to perform a clean cold-start, resetting the denoiser
-                        # noise floor. While a cold-start can cause minor onset clipping (100-300ms) if the
-                        # next speech starts immediately after the boundary, this is a much safer trade-off
-                        # than risking a complete deafening of a long, quiet transmission.
-                        chunk_dur_ms = (
-                            len(chunk_data.audio)
-                            * 1000
-                            // chunk_data.sample_rate
-                        )
-                        ended_in_speech = False
-                        if chunk_data.speech_segments:
-                            last_seg = chunk_data.speech_segments[-1]
-                            if (
-                                last_seg.end_ms >= chunk_dur_ms - 50
-                            ):  # 50ms tolerance
-                                ended_in_speech = True
-
-                        prior_tail = (
-                            chunk_data.audio[-priming_samples:].tobytes()
-                            if (len(chunk_data.audio) > 0 and ended_in_speech)
-                            else None
-                        )
+                        if (
+                            chunk_data.denoised_audio is not None
+                            and len(chunk_data.denoised_audio) > 0
+                        ):
+                            denoised_tail = chunk_data.denoised_audio[
+                                -priming_samples_16k:
+                            ]
+                            prior_tail = (
+                                np.clip(
+                                    denoised_tail * 32767.0,
+                                    -32768.0,
+                                    32767.0,
+                                )
+                                .astype(np.int16)
+                                .tobytes()
+                            )
+                        elif len(chunk_data.audio) > 0:
+                            prior_tail = chunk_data.audio[
+                                -priming_samples_native:
+                            ].tobytes()
+                        else:
+                            prior_tail = None
                         new_context = replace(
                             new_context,
                             contributing_audio_uris=ctx.contributing_audio_uris,

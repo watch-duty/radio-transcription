@@ -35,6 +35,7 @@ from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
+    VAD_DEFAULT_PRIMING_SEC,
 )
 from backend.pipeline.segmentation.datatypes import (
     ActiveStitchingState,
@@ -1218,6 +1219,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # Reset bundle counter
             fn.processed_in_bundle = 0
 
+            fn.bundle_clamped_item_limit = MagicMock()
+
             for i, chunk in enumerate(chunks):
                 # Call process directly
                 outputs = list(
@@ -1241,8 +1244,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
             self.assertEqual(fn.processed_in_bundle, 2)
             self.assertIsNotNone(deferred_drain_timer.deadline)
 
-            # The oldest deferred element in the buffer is chunk 2 (timestamp 102), so the timer is set to 102.0
-            self.assertEqual(deferred_drain_timer.deadline, Timestamp(102.0))
+            # The last element passed to process in the bundle was chunk 5 (timestamp 104), so the timer is set to max(104 + 0.001, 102) = 104.001
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(104.001))
 
             # 2. Simulate the timer firing to drain the backlog.
             # We run a loop to fire the timer recursively as long as it gets rescheduled.
@@ -1297,14 +1300,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # - Fire 2 (at 104.002): drains chunk 5, buffer is now empty, timer is cleared (deadline is None)
             self.assertEqual(iterations, 2)
 
-            # Extract all processed GCS URIs
-            processed_uris = set()
-            for res in results:
-                if isinstance(res, tuple) and isinstance(res[1], FlushRequest):
-                    for chunk in res[1].contributing_chunks:
-                        processed_uris.add(chunk.gcs_uri)
-
-            # Verify that ALL 5 chunks were fully processed and emitted without any data loss!
+            processed_uris = {
+                chunk.gcs_uri
+                for res in results
+                if isinstance(res, tuple) and isinstance(res[1], FlushRequest)
+                for chunk in res[1].contributing_chunks
+            }
             self.assertEqual(len(processed_uris), 5)
             self.assertEqual(
                 processed_uris,
@@ -1313,6 +1314,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     for i in range(1, 6)
                 },
             )
+
+            # Verify Beam metric counter for bundle clamping was incremented
+            fn.bundle_clamped_item_limit.inc.assert_called()
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
@@ -1434,8 +1438,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     )
                 )
 
-            # Assert that the entry clamp sets the deadline to the oldest unprocessed element (Chunk 2, ts 102.0)
-            self.assertEqual(deferred_drain_timer.deadline, Timestamp(102.0))
+            # Assert that the entry clamp sets the deadline to max(104 + 0.001, 102.0) = 104.001
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(104.001))
 
             # 2. Simulate handle_deferred_drain firing with a low trigger timestamp (100.0)
             # Inside the loop, it processes Chunks 2 & 3, and clamps at Chunk 4 (timestamp 104).
@@ -1604,9 +1608,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # Enforce that Chunk 1 and 2 were processed, Chunk 3 was deferred.
             self.assertEqual(fn.processed_in_bundle, 2)
             self.assertIsNotNone(deferred_drain_timer.deadline)
-            # The clamp happened during Chunk 3 (timestamp 110), so the timer was set to 110.0
-            # proving that the timer has already leaped over the 9-second gap to 110!
-            self.assertEqual(deferred_drain_timer.deadline, Timestamp(110.0))
+            # The clamp happened during Chunk 3 (timestamp 110), so the timer was set to 110.001
+            # proving that the timer has already leaped over the 9-second gap to 110.001!
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(110.001))
 
             # 2. Now simulate the gap timeout flushing by resetting the expected next timestamp
             # to 110,000 in the state context, so that when the timer fires, the sequence buffer
@@ -2243,6 +2247,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             mock_mono.side_effect = [
                 101.0,  # inside _is_bundle_budget_exhausted for i=1
                 200.0,  # inside _is_bundle_budget_exhausted for i=2
+                200.0,  # inside _record_clamping_diagnostics
             ]
 
             fn._execute_bundle_chunks(
@@ -2903,11 +2908,11 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
-    def test_prior_audio_tail_not_cached_if_chunk_ends_in_silence(
+    def test_prior_audio_tail_cached_even_if_chunk_ends_in_silence(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that under the Conditional State Continuity logic, the prior_audio_tail
-        is NOT cached if the chunk ends in silence, preventing noise propagation.
+        """Verifies that under the Lookback Priming Cache logic, the prior_audio_tail
+        is cached even if the chunk ends in silence, preserving VAD lookback warmup.
         """
         mock_processor_inst = mock_audio_processor.return_value
         # Chunk has speech from 1.0s to 4.0s, but ends in silence (duration is 5.0s)
@@ -2972,10 +2977,157 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # State context must be ActiveStitchingState, but prior_audio_tail must be None!
+        # State context must be ActiveStitchingState, and prior_audio_tail must be cached!
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
-        self.assertIsNone(saved_context.prior_audio_tail)
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_prior_audio_tail_caching_denoised_int16_with_clipping(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies denoised tail conversion clips float32 overshoots to int16 range without overflow."""
+        mock_processor_inst = mock_audio_processor.return_value
+        # Create denoised float32 array with overshoots (> 1.0 and < -1.0)
+        denoised = np.array([0.5, 1.5, -2.0, 0.9], dtype=np.float32)
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+            denoised_audio=denoised,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn = OrderedStitchAudioFn(
+            order_config=OrderRestorerConfig(out_of_order_timeout_ms=1000),
+            stitch_config=get_test_stitch_config(significant_gap_ms=800),
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context = mock_state_context.read()
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+        tail_pcm = np.frombuffer(saved_context.prior_audio_tail, dtype=np.int16)
+        # Verify 1.5 clipped to 32767 and -2.0 clipped to -32768
+        self.assertEqual(tail_pcm[1], 32767)
+        self.assertEqual(tail_pcm[2], -32768)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_prior_audio_tail_caching_native_sample_rate_fallback(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies native sample rate (e.g. 8kHz) is used when falling back to raw audio tail."""
+        mock_processor_inst = mock_audio_processor.return_value
+        # 8kHz audio chunk (5 seconds = 40,000 samples)
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.ones(8000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=8000,
+            denoised_audio=None,  # Fallback to raw audio
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn = OrderedStitchAudioFn(
+            order_config=OrderRestorerConfig(out_of_order_timeout_ms=1000),
+            stitch_config=get_test_stitch_config(significant_gap_ms=800),
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context = mock_state_context.read()
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+        tail_samples = len(saved_context.prior_audio_tail) // 2
+        # Expected samples: 3.5s * 8000 = 28,000 samples
+        expected_samples = int(VAD_DEFAULT_PRIMING_SEC * 8000)
+        self.assertEqual(tail_samples, expected_samples)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
