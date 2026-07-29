@@ -116,7 +116,7 @@ from backend.pipeline.common.log_helper import get_logger, get_task_logger
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes, log_helper
-from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.audio.processor import get_vad_engine
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     SHARED_DOWNLOAD_POOL_SIZE,
@@ -128,6 +128,7 @@ from backend.pipeline.segmentation.storage import (
 )
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
+SHARED_VAD_HANDLE = Shared()
 SHARED_RESOURCE_HANDLE = Shared()
 
 # WARNING: Do NOT remove or bypass setup_logging().
@@ -685,15 +686,15 @@ class OrderedStitchAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         tracing_utils.setup_tracing(service_name="segmentation-pipeline")
-        # Acquire process-level singletons natively via Beam's Shared handle
-        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
-            tag="vad",
+        # Acquire process-level singletons natively via dedicated Beam Shared handles
+        vad_config = self.stitch_config.vad_config
+        shared_vad = SHARED_VAD_HANDLE.acquire(
+            lambda: get_vad_engine(vad_config),
+            tag=f"vad_{vad_config or 'default'}",
         )
 
         shared_gcs = acquire_shared_gcs_client(
             project_id=self.stitch_config.project_id,
-            shared_handle=SHARED_RESOURCE_HANDLE,
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs

@@ -4,6 +4,7 @@ Exercises the model loaders, preprocess filters, and validates accuracy metrics
 against actual ground-truth voice activity segments from the Colab.
 """
 
+import concurrent.futures
 import unittest
 from pathlib import Path
 from typing import Final
@@ -653,3 +654,19 @@ class TestVadEngine(unittest.TestCase):
         self.assertAlmostEqual(padded[1][1], 4.324)  # 4.024 + 0.3
         # Difference between padded segments is 2.912 - 2.112 = 0.8s (800ms)
         self.assertAlmostEqual(padded[1][0] - padded[0][1], 0.8)
+
+    def test_vad_preprocess_thread_safety(self) -> None:
+        """Verifies that calling preprocess concurrently from multiple threads does not cause Pedalboard filter race conditions."""
+        rng = np.random.default_rng(seed=42)
+        audio_chunk = rng.uniform(-0.1, 0.1, 16000).astype(np.float32)
+
+        def _worker() -> np.ndarray:
+            return self.vad.preprocess(audio_chunk)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(_worker) for _ in range(16)]
+            results = [f.result() for f in futures]
+
+        self.assertEqual(len(results), 16)
+        for res in results:
+            self.assertEqual(res.shape, audio_chunk.shape)

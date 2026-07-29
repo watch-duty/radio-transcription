@@ -5,6 +5,7 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -171,6 +172,7 @@ class VoiceActivityDetector:
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
         self._warmup_numba()
+        self._dsp_lock = threading.Lock()
         self._initialize_dsp_filters()
 
     def _warmup_numba(self) -> None:
@@ -254,7 +256,8 @@ class VoiceActivityDetector:
 
     def preprocess(self, audio_array: np.ndarray) -> np.ndarray:
         """Applies the VAD bandpass, denoiser, and eq presence boost pipeline."""
-        bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
+        with self._dsp_lock:
+            bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
         ulunas_denoised = self.denoise(bp_audio)
 
         mixed_audio = (
@@ -262,7 +265,8 @@ class VoiceActivityDetector:
             + np.float32(self.blend_ratio) * ulunas_denoised
         )
 
-        return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
+        with self._dsp_lock:
+            return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
 
     def _trim_and_shift_segments(
         self,
