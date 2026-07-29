@@ -318,3 +318,29 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(to_emit[1].gcs_uri, "gs://chunk4")
         self.assertEqual(len(new_buffer), 1)
         self.assertEqual(new_buffer[0].gcs_uri, "gs://chunk6")
+
+    def test_sequence_buffer_deduplicates_redelivered_future_chunks(
+        self,
+    ) -> None:
+        """Verifies that duplicate redelivery of a future chunk does not cause duplicate entries in the buffer."""
+        buffer_elements: list[BufferedChunk] = []
+
+        # Process future chunk (timestamp 10000ms when expecting 0ms)
+        _, buffer_elements, _, _, was_buffered1 = self.buffer.process_chunk(
+            current_ts_ms=10000,
+            gcs_uri="gs://future.flac",
+            expected_next_ts=0,
+            buffer_elements=buffer_elements,
+        )
+        self.assertTrue(was_buffered1)
+        self.assertEqual(len(buffer_elements), 1)
+
+        # Process exact same chunk again (PubSub redelivery)
+        _, buffer_elements, _, _, was_buffered2 = self.buffer.process_chunk(
+            current_ts_ms=10000,
+            gcs_uri="gs://future.flac",
+            expected_next_ts=0,
+            buffer_elements=buffer_elements,
+        )
+        self.assertTrue(was_buffered2)
+        self.assertEqual(len(buffer_elements), 1)

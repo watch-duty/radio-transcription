@@ -116,17 +116,19 @@ class SequenceBuffer:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
             was_buffered = True
-            heap: list[ComparableChunk] = [
-                ComparableChunk(c) for c in buffer_elements
-            ]
-            heapq.heapify(heap)
-            heapq.heappush(
-                heap,
-                ComparableChunk(
-                    BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
-                ),
+            new_chunk = BufferedChunk(
+                current_ts_ms, gcs_uri, traceparent, baggage
             )
-            buffer_elements[:] = [item.chunk for item in heap]
+            if not any(
+                c.gcs_uri == gcs_uri and c.timestamp_ms == current_ts_ms
+                for c in buffer_elements
+            ):
+                heap: list[ComparableChunk] = [
+                    ComparableChunk(c) for c in buffer_elements
+                ]
+                heapq.heapify(heap)
+                heapq.heappush(heap, ComparableChunk(new_chunk))
+                buffer_elements[:] = [item.chunk for item in heap]
 
         return (
             expected_next_ts,

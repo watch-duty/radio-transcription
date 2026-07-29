@@ -481,14 +481,19 @@ def process_ordering(  # noqa: PLR0912, PLR0915
     else:
         # FUTURE PATH
         was_buffered = True
-        out_of_order_buffer_state.add(
-            datatypes.BufferedChunk(
-                timestamp_ms=current_ts_ms,
-                gcs_uri=metadata.gcs_uri,
-                traceparent=metadata.traceparent,
-                baggage=metadata.baggage,
-            )
+        future_chunk = datatypes.BufferedChunk(
+            timestamp_ms=current_ts_ms,
+            gcs_uri=metadata.gcs_uri,
+            traceparent=metadata.traceparent,
+            baggage=metadata.baggage,
         )
+        existing_buffer = list(out_of_order_buffer_state.read())
+        if not any(
+            c.gcs_uri == future_chunk.gcs_uri
+            and c.timestamp_ms == future_chunk.timestamp_ms
+            for c in existing_buffer
+        ):
+            out_of_order_buffer_state.add(future_chunk)
         has_buffer_elements = True
         clamped = False
 
@@ -786,7 +791,13 @@ class OrderedStitchAudioFn(beam.DoFn):
             traceparent=metadata.traceparent,
             baggage=metadata.baggage,
         )
-        out_of_order_buffer_state.add(new_chunk)
+        existing_buffer_chunks = list(out_of_order_buffer_state.read())
+        if not any(
+            c.gcs_uri == new_chunk.gcs_uri
+            and c.timestamp_ms == new_chunk.timestamp_ms
+            for c in existing_buffer_chunks
+        ):
+            out_of_order_buffer_state.add(new_chunk)
         if not curr_context.order_timer_active:
             curr_context = replace(curr_context, order_timer_active=True)
             state_changed = True
@@ -1041,7 +1052,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             timer_type="processing",
         )
 
-    def _execute_bundle_chunks(
+    def _execute_bundle_chunks(  # noqa: PLR0912
         self,
         elements_to_emit: list[datatypes.BufferedChunk],
         feed_id: str,
@@ -1098,8 +1109,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         original_expected_ts = previous_expected_ts
         for i, chunk in enumerate(elements_to_emit):
             if i > 0 and self._is_bundle_budget_exhausted():
+                existing_buffer_chunks = list(out_of_order_buffer_state.read())
                 for remaining_chunk in elements_to_emit[i:]:
-                    out_of_order_buffer_state.add(remaining_chunk)
+                    if not any(
+                        c.gcs_uri == remaining_chunk.gcs_uri
+                        and c.timestamp_ms == remaining_chunk.timestamp_ms
+                        for c in existing_buffer_chunks
+                    ):
+                        out_of_order_buffer_state.add(remaining_chunk)
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
                 if deferred_drain_timer is not None and timestamp is not None:
