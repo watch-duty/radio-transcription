@@ -4431,3 +4431,23 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)
+
+    def test_parse_and_key_fn_null_attributes_dlq(self) -> None:
+        """Verifies that ParseAndKeyFn gracefully routes invalid payloads with attributes=None to DLQ."""
+        fn = ParseAndKeyFn()
+        fn.setup()
+
+        # Mock PubsubMessage with attributes = None and invalid data payload
+        mock_msg = MagicMock()
+        mock_msg.data = b"invalid json payload"
+        mock_msg.attributes = None
+
+        outputs = list(fn.process(mock_msg))
+        self.assertEqual(len(outputs), 1)
+
+        dlq_output = outputs[0]
+        self.assertIsInstance(dlq_output, beam.pvalue.TaggedOutput)
+        assert isinstance(dlq_output, beam.pvalue.TaggedOutput)
+        self.assertEqual(dlq_output.tag, DEAD_LETTER_QUEUE_TAG)
+        self.assertIn("error", dlq_output.value)
+        self.assertEqual(dlq_output.value["attributes"], {})

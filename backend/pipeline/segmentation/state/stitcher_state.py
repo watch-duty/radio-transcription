@@ -27,6 +27,16 @@ from backend.pipeline.segmentation.datatypes import (
 logger = logging.getLogger(__name__)
 
 
+def ms_to_samples(ms: int, sample_rate: int) -> int:
+    """Converts duration in milliseconds to exact sample count."""
+    return (ms * sample_rate) // 1000
+
+
+def samples_to_ms(samples: int, sample_rate: int) -> int:
+    """Converts sample count to duration in milliseconds."""
+    return (samples * 1000) // sample_rate
+
+
 class AudioStitchingStateMachine:
     """A framework-agnostic state machine responsible for the core logic of stitching audio chunks together."""
 
@@ -317,8 +327,8 @@ class AudioStitchingStateMachine:
     ) -> list[StateMachineAction]:
         """Handles VAD silence events, updating trailing statistics without extending speech logic."""
         file_start_ms = chunk_data.start_ms
-        chunk_duration = len(chunk_data.audio) // (
-            chunk_data.sample_rate // 1000
+        chunk_duration = samples_to_ms(
+            len(chunk_data.audio), chunk_data.sample_rate
         )
 
         is_speech_active = (
@@ -369,12 +379,14 @@ class AudioStitchingStateMachine:
             target_post_roll_end = (
                 ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             ) - file_start_ms
-            append_end = min(chunk_duration, target_post_roll_end)
+            append_end = min(chunk_duration, max(0, target_post_roll_end))
             if append_end > 0:
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
-                            0 : append_end * (chunk_data.sample_rate // 1000)
+                            0 : ms_to_samples(
+                                append_end, chunk_data.sample_rate
+                            )
                         ]
                     )
                 )
@@ -393,8 +405,8 @@ class AudioStitchingStateMachine:
             self._reset_transmission_context(ctx)
 
             # Start a new NON_SPEECH transmission for the remainder of the chunk
-            remaining_samples = len(chunk_data.audio) - (
-                append_end * (chunk_data.sample_rate // 1000)
+            remaining_samples = len(chunk_data.audio) - ms_to_samples(
+                append_end, chunk_data.sample_rate
             )
             if remaining_samples > 0:
                 ctx.transmission_start_time_ms = file_start_ms + append_end
@@ -404,12 +416,12 @@ class AudioStitchingStateMachine:
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
-                            append_end * (chunk_data.sample_rate // 1000) :
+                            ms_to_samples(append_end, chunk_data.sample_rate) :
                         ]
                     )
                 )
-                ctx.buffer_duration_ms = remaining_samples // (
-                    chunk_data.sample_rate // 1000
+                ctx.buffer_duration_ms = samples_to_ms(
+                    remaining_samples, chunk_data.sample_rate
                 )
 
             actions.append(UpdateStateAction())
@@ -430,7 +442,9 @@ class AudioStitchingStateMachine:
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
-                            0 : append_end * (chunk_data.sample_rate // 1000)
+                            0 : ms_to_samples(
+                                append_end, chunk_data.sample_rate
+                            )
                         ]
                     )
                 )
@@ -540,9 +554,11 @@ class AudioStitchingStateMachine:
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
-                            active_file_cursor_ms
-                            * (chunk_data.sample_rate // 1000) : append_end
-                            * (chunk_data.sample_rate // 1000)
+                            ms_to_samples(
+                                active_file_cursor_ms, chunk_data.sample_rate
+                            ) : ms_to_samples(
+                                append_end, chunk_data.sample_rate
+                            )
                         ]
                     )
                 )
@@ -640,8 +656,9 @@ class AudioStitchingStateMachine:
 
         silence_duration_ms = speech_start_rel_ms - silence_start_rel_ms
         silence_samples = chunk_data.audio[
-            silence_start_rel_ms * samples_per_ms : speech_start_rel_ms
-            * samples_per_ms
+            ms_to_samples(
+                silence_start_rel_ms, chunk_data.sample_rate
+            ) : ms_to_samples(speech_start_rel_ms, chunk_data.sample_rate)
         ]
 
         # If we had an active SPEECH transmission, flush it first
@@ -735,7 +752,9 @@ class AudioStitchingStateMachine:
             ctx.buffer_start_time_ms = file_start_ms + max(0, global_start_ms)
 
         speech_samples = chunk_data.audio[
-            global_start_ms * samples_per_ms : global_end_ms * samples_per_ms
+            ms_to_samples(
+                global_start_ms, chunk_data.sample_rate
+            ) : ms_to_samples(global_end_ms, chunk_data.sample_rate)
         ]
         if len(speech_samples) > 0:
             actions.append(AppendBufferAction(audio_buffer=speech_samples))
@@ -762,8 +781,9 @@ class AudioStitchingStateMachine:
         actions: list[StateMachineAction] = []
         silence_duration_ms = chunk_data.duration_ms - current_file_cursor_ms
         silence_samples = chunk_data.audio[
-            current_file_cursor_ms * samples_per_ms : chunk_data.duration_ms
-            * samples_per_ms
+            ms_to_samples(
+                current_file_cursor_ms, chunk_data.sample_rate
+            ) : ms_to_samples(chunk_data.duration_ms, chunk_data.sample_rate)
         ]
 
         # If we had an active SPEECH transmission, flush it first
