@@ -138,7 +138,9 @@ class TestVadEngine(unittest.TestCase):
         """Verifies that pure digital silence returns no speech segments."""
         # 1 second of digital silence at 16kHz
         silence = np.zeros(16000, dtype=np.float32)
-        segments = self.vad.detect_speech_segments(silence, sample_rate=16000)
+        segments, _ = self.vad.detect_speech_segments(
+            silence, sample_rate=16000
+        )
         self.assertEqual(segments, [])
 
     def test_integer_inputs_converted(self) -> None:
@@ -148,7 +150,7 @@ class TestVadEngine(unittest.TestCase):
         prior_int16 = np.zeros(16000, dtype=np.int16)
 
         # This should execute successfully and return empty segments because it's pure silence
-        segments = self.vad.detect_speech_segments(
+        segments, _ = self.vad.detect_speech_segments(
             silence_int16, sample_rate=16000, prior_audio=prior_int16
         )
         self.assertEqual(segments, [])
@@ -183,7 +185,7 @@ class TestVadEngine(unittest.TestCase):
         """Verifies that synthetic tone (constant sine wave) is rejected by the neural VAD."""
         t = np.linspace(0, 1.0, 16000, endpoint=False)
         tone = np.sin(2 * np.pi * 1000 * t).astype(np.float32) * 0.5
-        segments = self.vad.detect_speech_segments(tone, sample_rate=16000)
+        segments, _ = self.vad.detect_speech_segments(tone, sample_rate=16000)
         self.assertEqual(segments, [])
 
     def test_is_speech_segment_spiky_voice_retained(self) -> None:
@@ -250,7 +252,7 @@ class TestVadEngine(unittest.TestCase):
 
         for i in range(0, len(audio_data), chunk_samples):
             chunk = audio_data[i : i + chunk_samples]
-            raw_chunk_segments = detector.detect_speech_segments(
+            raw_chunk_segments, _ = detector.detect_speech_segments(
                 chunk, sample_rate=sample_rate, prior_audio=prior_audio_tail
             )
 
@@ -566,7 +568,7 @@ class TestVadEngine(unittest.TestCase):
 
         for i in range(0, len(audio_data), chunk_samples):
             chunk = audio_data[i : i + chunk_samples]
-            raw_chunk_segments = self.vad.detect_speech_segments(
+            raw_chunk_segments, _ = self.vad.detect_speech_segments(
                 chunk, sample_rate=sample_rate, prior_audio=prior_audio_tail
             )
             chunk_offset_sec = i / float(sample_rate)
@@ -595,13 +597,13 @@ class TestVadEngine(unittest.TestCase):
         chunk2 = speech_signal[500 * SAMPLES_PER_MS :]
 
         # Run chunk2 directly without priming
-        segments_no_prime = self.vad.detect_speech_segments(
+        segments_no_prime, _ = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS
         )
         self.assertIsNotNone(segments_no_prime)
 
         # Run chunk2 primed with the tail of chunk1
-        segments_primed = self.vad.detect_speech_segments(
+        segments_primed, _ = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS, prior_audio=chunk1
         )
 
@@ -630,7 +632,7 @@ class TestVadEngine(unittest.TestCase):
         chunk2 = np.zeros(3000 * SAMPLES_PER_MS, dtype=np.float32)
 
         # 3. Run VAD on Chunk 2 primed with Chunk 1's tail
-        detected_segments = self.vad.detect_speech_segments(
+        detected_segments, _ = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS, prior_audio=chunk1
         )
 
@@ -657,7 +659,7 @@ class TestVadEngine(unittest.TestCase):
 
         paging_signal = np.concatenate([tone1, tone2])
         self.assertTrue(self.vad._is_tone_segment(paging_signal))
-        segments = self.vad.detect_speech_segments(
+        segments, _ = self.vad.detect_speech_segments(
             paging_signal, sample_rate=16000
         )
         self.assertEqual(segments, [])
@@ -670,7 +672,9 @@ class TestVadEngine(unittest.TestCase):
             + np.sin(2 * np.pi * TONE_EAS_FREQ2_HZ * t)
         ).astype(np.float32) * 0.25
         self.assertTrue(self.vad._is_tone_segment(eas_tone))
-        segments = self.vad.detect_speech_segments(eas_tone, sample_rate=16000)
+        segments, _ = self.vad.detect_speech_segments(
+            eas_tone, sample_rate=16000
+        )
         self.assertEqual(segments, [])
 
     def test_is_speech_segment_reject_subaudible_flickering(self) -> None:
@@ -692,7 +696,7 @@ class TestVadEngine(unittest.TestCase):
         self.assertFalse(
             self.vad._is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
         )
-        segments = self.vad.detect_speech_segments(
+        segments, _ = self.vad.detect_speech_segments(
             flickering_signal, sample_rate=16000
         )
         self.assertEqual(segments, [])
@@ -707,7 +711,7 @@ class TestVadEngine(unittest.TestCase):
             / "test_subaudible_flickering.flac"
         )
         samples, sr = load_audio(flickering_path)
-        segments = self.vad.detect_speech_segments(samples, sample_rate=sr)
+        segments, _ = self.vad.detect_speech_segments(samples, sample_rate=sr)
         self.assertEqual(segments, [])
 
     def test_pad_and_merge_segments_midpoint_clamping(self) -> None:
@@ -794,21 +798,82 @@ class TestVadEngine(unittest.TestCase):
             self.assertEqual(res.shape, audio_chunk.shape)
 
     def test_last_preprocessed_audio_cleared_on_skip(self) -> None:
-        """Verifies that last_preprocessed_audio is reset to None on empty or skipped VAD calls."""
+        """Verifies that the returned preprocessed audio is None on empty or skipped VAD calls."""
         detector = vad.VoiceActivityDetector()
         detector.setup()
 
-        # Set stale value on instance
-        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
-
         # Call with empty array
-        detector.detect_speech_segments(np.array([], dtype=np.float32))
-        self.assertIsNone(detector.last_preprocessed_audio)
-
-        # Set stale value again
-        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+        _, denoised = detector.detect_speech_segments(
+            np.array([], dtype=np.float32)
+        )
+        self.assertIsNone(denoised)
 
         # Call with silent audio that triggers skip
         silent_audio = np.zeros(16000, dtype=np.float32)
-        detector.detect_speech_segments(silent_audio)
-        self.assertIsNone(detector.last_preprocessed_audio)
+        _, denoised = detector.detect_speech_segments(silent_audio)
+        self.assertIsNone(denoised)
+
+    def test_concurrent_detect_speech_segments_preprocessed_audio_attribution(
+        self,
+    ) -> None:
+        """Verifies concurrent detect_speech_segments calls on a single shared
+        VoiceActivityDetector never cross-attribute preprocessed audio between
+        threads processing different input signals.
+
+        This is a regression test for a race condition where the preprocessed
+        audio of the current chunk was cached on shared instance state
+        (`last_preprocessed_audio`) rather than returned directly: concurrent
+        calls on distinct threads could overwrite each other's cached tail
+        before it was read back by its own caller.
+        """
+        detector = vad.VoiceActivityDetector(
+            models_dir=self.models_dir, pad_sec=0.0
+        )
+        detector.setup()
+
+        sample_rate = 16000
+        t = np.linspace(0, 1.0, sample_rate, endpoint=False)
+        signal_low = (np.sin(2 * np.pi * 440 * t) * 0.3).astype(np.float32)
+        signal_high = (np.sin(2 * np.pi * 2000 * t) * 0.3).astype(np.float32)
+
+        # Single-threaded reference: the preprocessed audio each signal must
+        # produce, computed serially before any concurrency is introduced.
+        _, expected_low = detector.detect_speech_segments(
+            signal_low, sample_rate=sample_rate
+        )
+        _, expected_high = detector.detect_speech_segments(
+            signal_high, sample_rate=sample_rate
+        )
+        assert expected_low is not None
+        assert expected_high is not None
+        self.assertFalse(np.allclose(expected_low, expected_high))
+
+        num_workers = 8
+        iterations_per_worker = 16
+
+        def _worker(worker_id: int) -> None:
+            for i in range(iterations_per_worker):
+                if (worker_id + i) % 2 == 0:
+                    signal, expected = signal_low, expected_low
+                else:
+                    signal, expected = signal_high, expected_high
+
+                _, actual = detector.detect_speech_segments(
+                    signal, sample_rate=sample_rate
+                )
+                assert actual is not None
+                self.assertTrue(
+                    np.allclose(actual, expected),
+                    "Preprocessed audio was cross-attributed to a "
+                    "different thread's input signal.",
+                )
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=num_workers
+        ) as executor:
+            futures = [
+                executor.submit(_worker, worker_id)
+                for worker_id in range(num_workers)
+            ]
+            for future in futures:
+                future.result()

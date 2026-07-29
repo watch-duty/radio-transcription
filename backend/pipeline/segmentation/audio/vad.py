@@ -137,7 +137,6 @@ class VoiceActivityDetector:
         self.spikiness_ratio_threshold = spikiness_ratio_threshold
         self.min_rms_threshold = min_rms_threshold
         self.dither_rms = dither_rms
-        self.last_preprocessed_audio: np.ndarray | None = None
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stft_sequence.onnx"
@@ -736,17 +735,19 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray | None = None,
         *,
         prior_is_preprocessed: bool = False,
-    ) -> list[tuple[float, float]]:
-        """Analyzes normalized float32 audio array, returning speech segments as (start, end)."""
-        self.last_preprocessed_audio = None
+    ) -> tuple[list[tuple[float, float]], np.ndarray | None]:
+        """Analyzes normalized float32 audio array, returning speech segments as (start, end)
+        alongside the preprocessed audio of the current chunk only (excluding any prior-tail/
+        priming preamble), or None if VAD was skipped or the input was empty.
+        """
         if len(audio_array) == 0:
-            return []
+            return [], None
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
         if self._should_skip_vad(audio_array, sample_rate):
-            return []
+            return [], None
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
@@ -758,12 +759,16 @@ class VoiceActivityDetector:
             and prior_audio is not None
             and len(prior_audio) > 0
         ):
-            vad_input, vad_offset_sec = self._prepare_preprocessed_lookback(
-                audio_array, sample_rate, prior_audio
+            vad_input, vad_offset_sec, current_chunk_preprocessed = (
+                self._prepare_preprocessed_lookback(
+                    audio_array, sample_rate, prior_audio
+                )
             )
         else:
-            vad_input, vad_offset_sec = self._prepare_raw_lookback(
-                audio_array, sample_rate, prior_audio
+            vad_input, vad_offset_sec, current_chunk_preprocessed = (
+                self._prepare_raw_lookback(
+                    audio_array, sample_rate, prior_audio
+                )
             )
 
         raw_segments = self._extract_vad_frames(
@@ -779,7 +784,10 @@ class VoiceActivityDetector:
         )
 
         audio_len_sec = len(audio_array) / float(sample_rate)
-        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
+        segments = self._pad_and_merge_segments(
+            filtered_segments, audio_len_sec
+        )
+        return segments, current_chunk_preprocessed
 
     def _dither_and_normalize(
         self,
@@ -814,7 +822,7 @@ class VoiceActivityDetector:
         audio_array: np.ndarray,
         sample_rate: int,
         prior_audio: np.ndarray,
-    ) -> tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float, np.ndarray]:
         """Preprocesses current chunk alone and concatenates preprocessed lookback tail."""
         audio_array = self._dither_and_normalize(audio_array)
 
@@ -825,7 +833,6 @@ class VoiceActivityDetector:
             curr_audio = audio_array
 
         curr_preprocessed = self.preprocess(curr_audio)
-        self.last_preprocessed_audio = curr_preprocessed
 
         prior_prep = (
             prior_audio.astype(np.float32)
@@ -834,16 +841,17 @@ class VoiceActivityDetector:
         )
         preprocessed = np.concatenate([prior_prep, curr_preprocessed])
         prior_len_sec = len(prior_prep) / float(TARGET_SAMPLE_RATE)
-        return self._slice_vad_input(
+        vad_input, vad_offset_sec = self._slice_vad_input(
             preprocessed, prior_len_sec, is_fallback_priming=False
         )
+        return vad_input, vad_offset_sec, curr_preprocessed
 
     def _prepare_raw_lookback(
         self,
         audio_array: np.ndarray,
         sample_rate: int,
         prior_audio: np.ndarray | None,
-    ) -> tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float, np.ndarray]:
         """Concatenates raw audio tail before single-pass resampling and preprocessing."""
         # Dither Stabilization:
         # We inject a tiny, deterministic Gaussian dither (-120dB RMS) to stabilize the downstream
@@ -900,9 +908,10 @@ class VoiceActivityDetector:
 
         preprocessed = self.preprocess(extended_audio)
         curr_start_idx = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        self.last_preprocessed_audio = preprocessed[curr_start_idx:]
+        current_chunk_preprocessed = preprocessed[curr_start_idx:]
 
         # 3. Slicing strategy for VAD state warming (Lookback Priming):
-        return self._slice_vad_input(
+        vad_input, vad_offset_sec = self._slice_vad_input(
             preprocessed, prior_len_sec, is_fallback_priming=is_fallback_priming
         )
+        return vad_input, vad_offset_sec, current_chunk_preprocessed
