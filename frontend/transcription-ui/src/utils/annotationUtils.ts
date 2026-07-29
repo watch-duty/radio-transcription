@@ -48,6 +48,17 @@ export function findWaveformAnnotationData(
   return null;
 }
 
+export function findTranscriptFlagAnnotation(
+  annotations: Annotation[]
+): Annotation | null {
+  for (const annotation of annotations) {
+    if (annotation.type === AnnotationType.TRANSCRIPT_FLAG) {
+      return annotation;
+    }
+  }
+  return null;
+}
+
 // Speech if classified as speech or carrying a transcript (the backend
 // transcribes some UNSPECIFIED segments).
 export function segmentHasSpeech(segment: AudioSegment): boolean {
