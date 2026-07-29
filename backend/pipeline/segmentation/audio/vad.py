@@ -778,7 +778,19 @@ class VoiceActivityDetector:
         return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
 
     def _dither_and_normalize(self, audio_array: np.ndarray) -> np.ndarray:
-        """Injects deterministic Gaussian dither (-120dB RMS) and applies peak normalization."""
+        """Injects deterministic Gaussian dither (-120dB RMS) and applies peak normalization.
+
+        Applying dither before peak normalization is essential because 1-LSB decoder
+        rounding mismatches exist in un-normalized audio. If peak normalization
+        applies large gain to quiet audio, adding dither before normalization
+        ensures the dither scales proportionally with signal and decoder noise.
+
+        Args:
+            audio_array: Raw floating-point audio array.
+
+        Returns:
+            Peak-normalized audio array with dither applied.
+        """
         if self.dither_rms > 0:
             rng = np.random.default_rng(seed=self.seed)
             audio_array = audio_array + rng.normal(
