@@ -777,7 +777,11 @@ class VoiceActivityDetector:
         audio_len_sec = len(audio_array) / float(sample_rate)
         return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
 
-    def _dither_and_normalize(self, audio_array: np.ndarray) -> np.ndarray:
+    def _dither_and_normalize(
+        self,
+        audio_array: np.ndarray,
+        rng: np.random.Generator | None = None,
+    ) -> np.ndarray:
         """Injects deterministic Gaussian dither (-120dB RMS) and applies peak normalization.
 
         Applying dither before peak normalization is essential because 1-LSB decoder
@@ -787,12 +791,14 @@ class VoiceActivityDetector:
 
         Args:
             audio_array: Raw floating-point audio array.
+            rng: Optional shared random number generator to maintain a continuous stream.
 
         Returns:
             Peak-normalized audio array with dither applied.
         """
         if self.dither_rms > 0:
-            rng = np.random.default_rng(seed=self.seed)
+            if rng is None:
+                rng = np.random.default_rng(seed=self.seed)
             audio_array = audio_array + rng.normal(
                 0.0, self.dither_rms, len(audio_array)
             ).astype(np.float32)
@@ -853,17 +859,17 @@ class VoiceActivityDetector:
         # 16-bit quantization floor of -96dB), we "swamp" the 1 LSB decoder rounding mismatch.
         # This keeps the RNN states locked in phase across all platforms/decoders, recovering VAD
         # sensitivity and restoring F1 accuracy without introducing false positives on static.
-        if (
-            prior_audio is not None
-            and len(prior_audio) > 0
-            and self.dither_rms > 0
-        ):
-            rng = np.random.default_rng(seed=self.seed)
+        rng = (
+            np.random.default_rng(seed=self.seed)
+            if self.dither_rms > 0
+            else None
+        )
+        if prior_audio is not None and len(prior_audio) > 0 and rng is not None:
             prior_audio = prior_audio + rng.normal(
                 0.0, self.dither_rms, len(prior_audio)
             ).astype(np.float32)
 
-        audio_array = self._dither_and_normalize(audio_array)
+        audio_array = self._dither_and_normalize(audio_array, rng=rng)
 
         # Fallback Priming (Call Starts / Segment 0):
         is_fallback_priming = False
