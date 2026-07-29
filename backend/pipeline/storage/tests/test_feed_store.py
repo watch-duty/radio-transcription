@@ -3403,14 +3403,30 @@ class TestSidAdminSqlContracts(unittest.TestCase):
         sql = feed_sid_admin_queries.REGISTER_MEMBER_ON_EXISTING_LEASE_SQL
 
         self.assertIn("membership_revision = membership_revision + 1", sql)
-        self.assertIn("WHEN status = 'deactivated'::feed_status", sql)
+        self.assertIn(
+            "WHEN ingestion_leases.status = 'deactivated'::feed_status",
+            sql,
+        )
         self.assertIn("THEN 'unclaimed'::feed_status", sql)
-        # An active owner's authority and a failing parent's backoff are
-        # preserved exactly.
-        self.assertNotIn("worker_id", sql)
-        self.assertNotIn("last_heartbeat", sql)
+        # Reactivation yields a clean, unowned Lease with a fresh failure
+        # budget; the fence is never rewritten.
+        for column in (
+            "worker_id",
+            "last_heartbeat",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(f"{column} = CASE", sql)
+        self.assertIn("THEN 0", sql)
         self.assertNotIn("fencing_token", sql)
-        self.assertNotIn("retry_after", sql)
+        # An active owner's authority and a failing parent's backoff are
+        # preserved exactly via the non-deactivated branch.
+        self.assertIn("ELSE ingestion_leases.worker_id", sql)
+        self.assertIn("ELSE ingestion_leases.retry_after", sql)
+        self.assertIn("ELSE ingestion_leases.failure_count", sql)
 
     def test_sid_create_inserts_enabled_member_with_null_cursor(self) -> None:
         sql = feed_sid_admin_queries.CREATE_SID_FEED_SQL
@@ -3465,13 +3481,50 @@ class TestSidAdminSqlContracts(unittest.TestCase):
         sql = feed_sid_admin_queries.RESET_SID_CHILD_SQL
 
         self.assertIn(
-            "WHEN ingestion_leases.status = 'active'::feed_status",
+            "WHEN ingestion_leases.status <> 'active'::feed_status",
             sql,
         )
-        self.assertIn("ELSE 'unclaimed'::feed_status", sql)
+        self.assertIn("THEN 'unclaimed'::feed_status", sql)
+        self.assertIn("ELSE ingestion_leases.status", sql)
+        self.assertIn("ELSE ingestion_leases.worker_id", sql)
+        self.assertIn("ELSE ingestion_leases.failure_count", sql)
         self.assertIn("AND updated.id IS NOT NULL", sql)
         # The fencing token is preserved for both parent branches.
         self.assertNotIn("fencing_token", sql)
+
+    def test_sid_reset_repairs_inactive_parent_under_clean_child(self) -> None:
+        """A dirty parent alone must trigger the reset (GOO-768 review)."""
+        sql = feed_sid_admin_queries.RESET_SID_CHILD_SQL
+
+        # The parent-dirty probe reads the caller-locked Lease row and
+        # feeds the same change gate as the child's own fields, so a
+        # clean child under an inactive parent still resets the parent,
+        # bumps the revision, and emits the feed.reset audit event.
+        self.assertIn("lease_before AS (", sql)
+        self.assertIn("parent_needs_reset", sql)
+        self.assertIn(
+            "OR COALESCE(lease_before.parent_needs_reset, FALSE)",
+            sql,
+        )
+        # An absent permanent Lease row degrades to child-only reset
+        # instead of erasing the child row from the change probe.
+        self.assertIn("LEFT JOIN lease_before ON TRUE", sql)
+        # The probe fires only when the reactivation rule would change
+        # the row: never for an active parent, never for one already
+        # clean unclaimed (idempotent replay stays a no-op).
+        self.assertIn(
+            "ingestion_leases.status <> 'active'::feed_status\n"
+            "            AND (",
+            sql,
+        )
+        self.assertIn(
+            "ingestion_leases.status IS DISTINCT FROM 'unclaimed'::feed_status",
+            sql,
+        )
+        self.assertIn(
+            "ingestion_leases.failure_count IS DISTINCT FROM 0",
+            sql,
+        )
 
 
 class TestCreateSidFeed(unittest.IsolatedAsyncioTestCase):

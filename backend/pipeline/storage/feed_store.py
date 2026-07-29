@@ -1191,9 +1191,10 @@ class FeedStore:
 
         One transaction: insert an absent parent Lease as ``unclaimed``
         (fence 0, revision 1), or lock the existing parent and advance its
-        revision (reactivating a ``deactivated`` parent to ``unclaimed``
-        while preserving an active owner or failing backoff exactly), then
-        insert the enabled child. Any uniqueness or audit failure rolls
+        revision (reactivating a ``deactivated`` parent to a clean
+        ``unclaimed`` with a fresh failure budget, while preserving an
+        active owner or failing backoff exactly), then insert the enabled
+        child. Any uniqueness or audit failure rolls
         back the Lease insert/revision along with the Feed, so a retry
         cannot allocate a second revision or event.
         """
@@ -1287,8 +1288,11 @@ class FeedStore:
         """Reset one SID child using the parent-first lock order.
 
         Supported for active and inactive parents; the parent branch is
-        decided inside the SQL from the locked Lease row. An already-clean
-        child is an idempotent no-op with no audit event or revision bump.
+        decided inside the SQL from the locked Lease row. An inactive
+        parent is reset to clean ``unclaimed`` even when the child itself
+        is already clean. Only when neither the child nor the parent needs
+        a change is the reset an idempotent no-op with no audit event or
+        revision bump.
         """
         async with self._pool.acquire() as conn:
             async with conn.transaction(isolation="read_committed"):

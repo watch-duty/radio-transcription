@@ -20,6 +20,53 @@ _AUDIT_EVENT_RETURNING_SQL = (
 )
 _AUDIT_EVENT_SELECT_SQL = feed_audit_sql.feed_audit_event_scalar_sql()
 
+# The shared authority-reactivation rule: a reactivating parent becomes
+# a clean, unowned ``unclaimed`` Lease with a fresh failure budget. The
+# fencing token is never rewritten. Each pair is (column, clean value).
+_LEASE_REACTIVATION_CLEAN_VALUES = (
+    ("status", "'unclaimed'::feed_status"),
+    ("worker_id", "NULL"),
+    ("last_heartbeat", "NULL"),
+    ("failure_count", "0"),
+    ("retry_after", "NULL"),
+    ("status_reason", "NULL"),
+    ("status_reason_detail", "NULL"),
+)
+
+
+def _lease_reactivation_assignments(
+    reactivate_when_sql: str,
+    indent: str,
+) -> str:
+    """SET clauses applying the authority-reactivation rule.
+
+    A parent matching ``reactivate_when_sql`` becomes clean
+    ``unclaimed``; any other parent keeps every field exactly.
+    """
+    return ",\n".join(
+        f"{indent}{column} = CASE\n"
+        f"{indent}    WHEN {reactivate_when_sql}\n"
+        f"{indent}        THEN {clean_value}\n"
+        f"{indent}    ELSE ingestion_leases.{column}\n"
+        f"{indent}END"
+        for column, clean_value in _LEASE_REACTIVATION_CLEAN_VALUES
+    )
+
+
+def _lease_reactivation_pending_sql(indent: str) -> str:
+    """Predicate: the authority-reactivation rule would change this row."""
+    checks = f"\n{indent}    OR ".join(
+        f"ingestion_leases.{column} IS DISTINCT FROM {clean_value}"
+        for column, clean_value in _LEASE_REACTIVATION_CLEAN_VALUES
+    )
+    return (
+        f"{indent}ingestion_leases.status <> 'active'::feed_status\n"
+        f"{indent}AND (\n"
+        f"{indent}    {checks}\n"
+        f"{indent})"
+    )
+
+
 # Lock-free routing pre-read; the SID branch re-verifies this identity
 # under the child lock, so a stale read degrades to not-found, never to
 # a different parent. Legacy rows return no row and keep legacy paths.
@@ -43,17 +90,19 @@ ON CONFLICT (source_type, lease_key) DO NOTHING
 RETURNING lease_key
 """
 
-# A deactivated parent gains an eligible member and must become claimable
-# again; every other lifecycle (active owner, failing backoff) is
-# preserved exactly.
-REGISTER_MEMBER_ON_EXISTING_LEASE_SQL = """\
+# A deactivated parent gaining an eligible member is an explicit
+# reactivation: it becomes a clean unclaimed Lease with a fresh failure
+# budget and no stale owner, its fence preserved. Every other lifecycle
+# (active owner, failing backoff, quarantine) is preserved exactly.
+REGISTER_MEMBER_ON_EXISTING_LEASE_SQL = f"""\
 UPDATE ingestion_leases
 SET membership_revision = membership_revision + 1,
-    status = CASE
-        WHEN status = 'deactivated'::feed_status
-            THEN 'unclaimed'::feed_status
-        ELSE status
-    END,
+{
+    _lease_reactivation_assignments(
+        "ingestion_leases.status = 'deactivated'::feed_status",
+        indent="    ",
+    )
+},
     updated_at = NOW()
 WHERE source_type = 'bcfy_calls'
   AND lease_key = $1
@@ -192,10 +241,12 @@ LEFT JOIN updated ON updated.id = before_row.id
 """
 
 # Supported for active and inactive parents: the child becomes an
-# enabled member with a cleared cursor for page-boundary re-adoption. An
-# already-clean child is a full no-op. An active parent keeps its owner,
-# fence, and failure state; an inactive parent becomes unclaimed with
-# its fence preserved.
+# enabled member with a cleared cursor for page-boundary re-adoption,
+# and an inactive parent independently becomes clean unclaimed with its
+# fence preserved — even when the child itself is already clean. An
+# active parent keeps its owner, fence, and failure state. Only when
+# neither the child nor the parent needs a change is the reset a full
+# no-op (no audit event, no revision bump).
 RESET_SID_CHILD_SQL = f"""\
 WITH before_row AS (
     SELECT
@@ -208,7 +259,20 @@ WITH before_row AS (
       AND fp.bcfy_calls_sid = $2
     FOR NO KEY UPDATE OF f
 ),
+lease_before AS (
+    -- The caller already holds this row FOR NO KEY UPDATE
+    -- (LOCK_LEASE_SQL), so this read is stable for the transaction.
+    SELECT
+        (
+{_lease_reactivation_pending_sql("            ")}
+        ) AS parent_needs_reset
+    FROM ingestion_leases
+    WHERE ingestion_leases.source_type = 'bcfy_calls'
+      AND ingestion_leases.lease_key = $2
+),
 change AS (
+    -- LEFT JOIN: an absent permanent Lease row (a configuration error
+    -- surfaced by the health projection) degrades to child-only reset.
     SELECT
         before_row.*,
         (
@@ -221,8 +285,10 @@ change AS (
             OR before_row.status_reason_detail IS NOT NULL
             OR before_row.worker_id IS NOT NULL
             OR before_row.last_heartbeat IS NOT NULL
+            OR COALESCE(lease_before.parent_needs_reset, FALSE)
         ) AS changed
     FROM before_row
+    LEFT JOIN lease_before ON TRUE
 ),
 updated AS (
     UPDATE feeds
@@ -271,36 +337,12 @@ after_row AS (
 lease_update AS (
     UPDATE ingestion_leases
     SET membership_revision = ingestion_leases.membership_revision + 1,
-        status = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.status
-            ELSE 'unclaimed'::feed_status
-        END,
-        worker_id = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.worker_id
-        END,
-        last_heartbeat = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.last_heartbeat
-        END,
-        failure_count = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.failure_count
-            ELSE 0
-        END,
-        retry_after = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.retry_after
-        END,
-        status_reason = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.status_reason
-        END,
-        status_reason_detail = CASE
-            WHEN ingestion_leases.status = 'active'::feed_status
-                THEN ingestion_leases.status_reason_detail
-        END,
+{
+    _lease_reactivation_assignments(
+        "ingestion_leases.status <> 'active'::feed_status",
+        indent="        ",
+    )
+},
         updated_at = NOW()
     FROM updated
     WHERE ingestion_leases.source_type = 'bcfy_calls'
