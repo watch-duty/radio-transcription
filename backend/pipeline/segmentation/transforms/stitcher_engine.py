@@ -733,24 +733,32 @@ class StitcherEngine:
                         # deafening on prior channel static. As a result, we no longer need the
                         # legacy `ended_in_speech` discard rule, guaranteeing continuous lookback
                         # warmup for every chunk without cold-start onset clipping.
-                        priming_samples = int(
+                        priming_samples_16k = int(
                             trans_constants.VAD_DEFAULT_PRIMING_SEC * 16000
+                        )
+                        priming_samples_native = int(
+                            trans_constants.VAD_DEFAULT_PRIMING_SEC
+                            * chunk_data.sample_rate
                         )
                         if (
                             chunk_data.denoised_audio is not None
                             and len(chunk_data.denoised_audio) > 0
                         ):
                             denoised_tail = chunk_data.denoised_audio[
-                                -priming_samples:
+                                -priming_samples_16k:
                             ]
                             prior_tail = (
-                                (denoised_tail * 32767.0)
+                                np.clip(
+                                    denoised_tail * 32767.0,
+                                    -32768.0,
+                                    32767.0,
+                                )
                                 .astype(np.int16)
                                 .tobytes()
                             )
                         elif len(chunk_data.audio) > 0:
                             prior_tail = chunk_data.audio[
-                                -priming_samples:
+                                -priming_samples_native:
                             ].tobytes()
                         else:
                             prior_tail = None

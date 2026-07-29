@@ -734,6 +734,7 @@ class VoiceActivityDetector:
         prior_is_preprocessed: bool = False,
     ) -> list[tuple[float, float]]:
         """Analyzes normalized float32 audio array, returning speech segments as (start, end)."""
+        self.last_preprocessed_audio = None
         if len(audio_array) == 0:
             return []
 
@@ -776,6 +777,16 @@ class VoiceActivityDetector:
         audio_len_sec = len(audio_array) / float(sample_rate)
         return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
 
+    def _dither_and_normalize(self, audio_array: np.ndarray) -> np.ndarray:
+        """Injects deterministic Gaussian dither (-120dB RMS) and applies peak normalization."""
+        if self.dither_rms > 0:
+            rng = np.random.default_rng(seed=self.seed)
+            audio_array = audio_array + rng.normal(
+                0.0, self.dither_rms, len(audio_array)
+            ).astype(np.float32)
+
+        return self._peak_normalize(audio_array)
+
     def _prepare_preprocessed_lookback(
         self,
         audio_array: np.ndarray,
@@ -783,17 +794,7 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray,
     ) -> tuple[np.ndarray, float]:
         """Preprocesses current chunk alone and concatenates preprocessed lookback tail."""
-        # Dither Stabilization:
-        # We inject a tiny, deterministic Gaussian dither (-120dB RMS) to swamp LSB decoder
-        # rounding mismatches and lock UL-UNAS RNN states in phase across platforms.
-        if self.dither_rms > 0:
-            rng = np.random.default_rng(seed=self.seed)
-            audio_array = audio_array + rng.normal(
-                0.0, self.dither_rms, len(audio_array)
-            ).astype(np.float32)
-
-        # Peak Normalization Heuristic
-        audio_array = self._peak_normalize(audio_array)
+        audio_array = self._dither_and_normalize(audio_array)
 
         if sample_rate != TARGET_SAMPLE_RATE:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
@@ -840,28 +841,27 @@ class VoiceActivityDetector:
         # 16-bit quantization floor of -96dB), we "swamp" the 1 LSB decoder rounding mismatch.
         # This keeps the RNN states locked in phase across all platforms/decoders, recovering VAD
         # sensitivity and restoring F1 accuracy without introducing false positives on static.
-        if self.dither_rms > 0:
+        if (
+            prior_audio is not None
+            and len(prior_audio) > 0
+            and self.dither_rms > 0
+        ):
             rng = np.random.default_rng(seed=self.seed)
-            audio_array = audio_array + rng.normal(
-                0.0, self.dither_rms, len(audio_array)
+            prior_audio = prior_audio + rng.normal(
+                0.0, self.dither_rms, len(prior_audio)
             ).astype(np.float32)
-            if prior_audio is not None and len(prior_audio) > 0:
-                prior_audio = prior_audio + rng.normal(
-                    0.0, self.dither_rms, len(prior_audio)
-                ).astype(np.float32)
 
-        # Peak Normalization Heuristic
-        audio_array = self._peak_normalize(audio_array)
+        audio_array = self._dither_and_normalize(audio_array)
 
         # Fallback Priming (Call Starts / Segment 0):
-        is_fallback = False
+        is_fallback_priming = False
         if prior_audio is None:
             prior_audio = self._generate_comfort_noise(sample_rate)
-            is_fallback = True
+            is_fallback_priming = True
 
         # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
-            if not is_fallback:
+            if not is_fallback_priming:
                 prior_audio = self._peak_normalize(prior_audio)
             prior_len_sec = len(prior_audio) / float(sample_rate)
             extended_native = np.concatenate([prior_audio, audio_array])
@@ -882,5 +882,5 @@ class VoiceActivityDetector:
 
         # 3. Slicing strategy for VAD state warming (Lookback Priming):
         return self._slice_vad_input(
-            preprocessed, prior_len_sec, is_fallback_priming=is_fallback
+            preprocessed, prior_len_sec, is_fallback_priming=is_fallback_priming
         )

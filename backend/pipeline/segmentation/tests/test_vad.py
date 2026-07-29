@@ -665,5 +665,24 @@ class TestVadEngine(unittest.TestCase):
         self.assertAlmostEqual(padded[0][1], 2.112)  # 2.0 + 0.112
         self.assertAlmostEqual(padded[1][0], 2.912)  # 3.024 - 0.112
         self.assertAlmostEqual(padded[1][1], 4.324)  # 4.024 + 0.3
-        # Difference between padded segments is 2.912 - 2.112 = 0.8s (800ms)
         self.assertAlmostEqual(padded[1][0] - padded[0][1], 0.8)
+
+    def test_last_preprocessed_audio_cleared_on_skip(self) -> None:
+        """Verifies that last_preprocessed_audio is reset to None on empty or skipped VAD calls."""
+        detector = vad.VoiceActivityDetector()
+        detector.setup()
+
+        # Set stale value on instance
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with empty array
+        detector.detect_speech_segments(np.array([], dtype=np.float32))
+        self.assertIsNone(detector.last_preprocessed_audio)
+
+        # Set stale value again
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with silent audio that triggers skip
+        silent_audio = np.zeros(16000, dtype=np.float32)
+        detector.detect_speech_segments(silent_audio)
+        self.assertIsNone(detector.last_preprocessed_audio)
