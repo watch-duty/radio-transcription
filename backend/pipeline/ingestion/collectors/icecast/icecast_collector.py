@@ -551,7 +551,7 @@ async def _process_finalized_segment(
             if stream_interval_lag_sec is not None
             else "N/A"
         )
-        logger.warning(
+        logger.debug(
             "[Ingestion Audio Lag] Feed %s (%s): chunk audio timestamp %s is %.1fs behind wall-clock receipt time %s (stream_interval_lag_sec=%s)",
             feed_id,
             feed_name,

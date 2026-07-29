@@ -2307,8 +2307,8 @@ class TestIcecastTimelineManager(unittest.TestCase):
                     feed_name="test-feed-name",
                 )
                 self.assertIsNotNone(chunk)
-                mock_logger.warning.assert_called_once()
-                warning_call = mock_logger.warning.call_args[0]
+                mock_logger.debug.assert_called_once()
+                warning_call = mock_logger.debug.call_args[0]
                 self.assertIn("[Ingestion Audio Lag]", warning_call[0])
                 self.assertEqual(warning_call[1], "test-feed-id")
 
@@ -2334,7 +2334,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
                     feed_name="test-feed-name",
                 )
                 self.assertIsNotNone(chunk_below)
-                mock_logger.warning.assert_not_called()
+                mock_logger.debug.assert_not_called()
 
                 # Case 3: Initial stream startup chunk (previous_receipt_time is None) -> Warning NOT logged
                 tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
@@ -2354,7 +2354,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
                     feed_name="test-feed-name",
                 )
                 self.assertIsNotNone(chunk_startup)
-                mock_logger.warning.assert_not_called()
+                mock_logger.debug.assert_not_called()
 
         asyncio.run(_run())
 
