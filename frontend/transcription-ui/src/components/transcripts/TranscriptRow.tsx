@@ -1,19 +1,30 @@
 import { useState } from 'react';
 
+import FlagIcon from '@mui/icons-material/Flag';
+import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
+import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  type Annotation,
   AudioClassification,
   type TranscriptAnnotationData,
 } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { useUserInfo } from '../../hooks/useUserInfo';
+import { flagSegment } from '../../service/flagSegment';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
+  findTranscriptFlagAnnotation,
 } from '../../utils/annotationUtils';
+import { cacheAudioSegment } from '../../utils/cacheUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
@@ -56,6 +67,9 @@ export function TranscriptRow({
   isNarrow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { token } = useAuth();
+  const { data: user } = useUserInfo(token);
+  const queryClient = useQueryClient();
 
   const [isHovered, setIsHovered] = useState(false);
 
@@ -67,6 +81,13 @@ export function TranscriptRow({
   const transcriptAnnotation = findTranscriptAnnotationData(
     audioSegment.annotations
   );
+
+  const flagAnnotation = findTranscriptFlagAnnotation(audioSegment.annotations);
+  const flagData = flagAnnotation?.data as
+    | { flaggedByUserIds: string[] }
+    | undefined;
+  const flaggedByUserIds = flagData?.flaggedByUserIds || [];
+  const hasUserFlagged = !!user && flaggedByUserIds.includes(user.email);
 
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
@@ -149,6 +170,42 @@ export function TranscriptRow({
     }
     return theme.palette.primary.light;
   };
+
+  const flagMutation = useMutation({
+    mutationFn: async () => {
+      if (!user || !token) return;
+
+      const newAnnotation = await flagSegment(
+        audioSegment.id,
+        !hasUserFlagged,
+        token
+      );
+      return newAnnotation;
+    },
+    onSuccess: (updatedAnnotation) => {
+      triggerSnackbar(
+        hasUserFlagged ? 'Flag removed' : 'Transcript flagged as incorrect'
+      );
+      if (!updatedAnnotation) return;
+      // Update cache immediately to avoid flashing
+      cacheAudioSegment(queryClient, audioSegment.id, (segment) => {
+        const oldFlagAnnotation = findTranscriptFlagAnnotation(
+          segment.annotations
+        );
+        const newAnnotations = segment.annotations.filter(
+          (a: Annotation) => a !== oldFlagAnnotation
+        );
+        newAnnotations.push(updatedAnnotation);
+        return {
+          ...segment,
+          annotations: newAnnotations,
+        };
+      });
+    },
+    onError: () => {
+      triggerSnackbar('Failed to flag transcript');
+    },
+  });
 
   return (
     <Box
@@ -396,8 +453,32 @@ export function TranscriptRow({
             gridArea: { xs: 'actions', sm: 'unset' },
             flexShrink: 0,
             alignSelf: 'center',
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
+          {!isOutage && (
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                flagMutation.mutate();
+              }}
+              disabled={flagMutation.isPending}
+              title={
+                hasUserFlagged ? 'Remove flag' : 'Flag transcript as incorrect'
+              }
+              sx={{ mr: 1 }}
+            >
+              {flagMutation.isPending ? (
+                <CircularProgress size={20} color="inherit" />
+              ) : hasUserFlagged ? (
+                <FlagIcon fontSize="small" color="error" />
+              ) : (
+                <FlagOutlinedIcon fontSize="small" />
+              )}
+            </IconButton>
+          )}
           <SegmentInfoPopover
             audioSegment={audioSegment}
             transcriptAnnotation={transcriptAnnotation}

@@ -133,7 +133,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             max_size=5,
         )
         await self.pool.execute("TRUNCATE feeds CASCADE")
-        self.store = FeedStore(self.pool)
+        self.store = FeedStore(
+            self.pool,
+            claim_types=[SourceType.BCFY_CALLS],
+        )
         self.worker_id = uuid.uuid4()
 
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url

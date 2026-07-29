@@ -404,9 +404,6 @@ class CollectorRuntime:
             active_feed_count=self._active_feed_count,
             active_sid_count=self._active_sid_count,
             integrity_failed=self._integrity_failed,
-            bcfy_calls_authority_mode=(
-                settings.bcfy_calls_authority_mode.value
-            ),
         )
         self._health_runner: web.AppRunner | None = None
 
@@ -667,7 +664,7 @@ class CollectorRuntime:
                 for allocation in settings.worker_profile.allocations
             ],
             "bcfy_calls_authority_mode": (
-                settings.bcfy_calls_authority_mode.value
+                health_server.BCFY_CALLS_AUTHORITY_MODE
             ),
             "process_id": os.getpid(),
         }

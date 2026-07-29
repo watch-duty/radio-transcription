@@ -26,6 +26,7 @@ import {
   Tags,
 } from 'tsoa';
 
+import { mutationActorHeaders } from '../actorHeaders.js';
 import { AuthenticatedRequest } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
 import {
@@ -227,11 +228,13 @@ export class RulesController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
     try {
+      const actorHeaders = mutationActorHeaders(request);
       const client = await this.getClient();
       const response = await client.request({
         url: RULES_API_URL,
         method: 'POST',
         data: convertRuleCreate(requestBody),
+        headers: actorHeaders,
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
@@ -256,11 +259,13 @@ export class RulesController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
     try {
+      const actorHeaders = mutationActorHeaders(request);
       const client = await this.getClient();
       const response = await client.request({
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'PUT',
         data: convertRuleUpdate(requestBody),
+        headers: actorHeaders,
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
@@ -288,10 +293,12 @@ export class RulesController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
     try {
+      const actorHeaders = mutationActorHeaders(request);
       const client = await this.getClient();
       await client.request({
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'DELETE',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

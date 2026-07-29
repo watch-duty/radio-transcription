@@ -17,7 +17,10 @@ import ast
 import pathlib
 import unittest
 
-from backend.pipeline.transcription.transcribers.prompts import GEMINI_PROMPT
+from backend.pipeline.transcription.transcribers.prompts import (
+    GEMINI_SYSTEM_PROMPT,
+    GEMINI_USER_PROMPT,
+)
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _CANONICAL_PROMPT = (
@@ -52,7 +55,15 @@ class TestPromptConsistency(unittest.TestCase):
             _CANONICAL_PROMPT, "GEMINI_TRANSCRIBE_SYSTEM_PROMPT"
         )
         self.assertIsNotNone(canonical)
-        self.assertEqual(GEMINI_PROMPT, canonical)
+        self.assertEqual(GEMINI_SYSTEM_PROMPT, canonical)
+
+    def test_backend_user_prompt_matches_canonical_user_prompt(self) -> None:
+        """GEMINI_USER_PROMPT must match the canonical user prompt."""
+        canonical = _module_constant(
+            _CANONICAL_PROMPT, "GEMINI_TRANSCRIBE_USER_PROMPT"
+        )
+        self.assertIsNotNone(canonical)
+        self.assertEqual(GEMINI_USER_PROMPT, canonical)
 
 
 if __name__ == "__main__":

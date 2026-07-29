@@ -653,6 +653,73 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             }
             self.assertEqual(categories, expected_categories)
 
+    async def test_gemini_transcriber_user_prompt(self) -> None:
+        """Verifies that Gemini transcriber includes default or configured user prompt."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="Hello")]
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            # Test default user prompt
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            await transcriber.transcribe(
+                audio_data=b"\x00" * 10,
+                duration_ms=1000,
+            )
+
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            contents = kwargs["contents"]
+            self.assertEqual(len(contents.parts), 2)
+            self.assertEqual(
+                contents.parts[0].text,
+                "Transcribe this emergency radio communication segment verbatim per the rules above.",
+            )
+
+            # Test configured custom user prompt
+            custom_transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1", "user_prompt": "Custom prompt"}',
+            )
+            custom_transcriber.setup()
+
+            await custom_transcriber.transcribe(
+                audio_data=b"\x00" * 10,
+                duration_ms=1000,
+            )
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            contents = kwargs["contents"]
+            self.assertEqual(contents.parts[0].text, "Custom prompt")
+
+            # Test empty user prompt fails at config load with ValueError
+            with self.assertRaises(ValueError):
+                get_transcriber(
+                    TranscriberType.GEMINI,
+                    "test-project",
+                    '{"location": "us-central1", "user_prompt": ""}',
+                )
+
     async def test_gemini_transcriber_unintelligible(self) -> None:
         """Verifies that [UNINTELLIGIBLE] response maps to "[UNINTELLIGIBLE]"."""
         with patch(

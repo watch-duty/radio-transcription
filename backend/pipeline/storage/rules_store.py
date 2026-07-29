@@ -35,7 +35,9 @@ class RulesStore:
                 data[field] = json.loads(value)
         return data
 
-    async def create_rule(self, rule_in: RuleCreate) -> Rule:
+    async def create_rule(
+        self, rule_in: RuleCreate, actor_id: str = ""
+    ) -> Rule:
         """Create a new transcription rule."""
         scope_json = json.dumps(rule_in.scope.model_dump(mode="json"))
         conditions_json = json.dumps(rule_in.conditions.model_dump(mode="json"))
@@ -86,7 +88,7 @@ class RulesStore:
         return [Rule.model_validate(self._prepare_row(row)) for row in rows]
 
     async def update_rule(
-        self, rule_id: str, rule_in: RuleUpdate
+        self, rule_id: str, rule_in: RuleUpdate, actor_id: str = ""
     ) -> Rule | None:
         """Partially update an existing transcription rule."""
         try:
@@ -135,7 +137,7 @@ class RulesStore:
 
         return Rule.model_validate(self._prepare_row(row))
 
-    async def delete_rule(self, rule_id: str) -> bool:
+    async def delete_rule(self, rule_id: str, actor_id: str = "") -> bool:
         """Delete a transcription rule."""
         try:
             uid = uuid.UUID(rule_id)
