@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import EditIcon from '@mui/icons-material/Edit';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
@@ -18,6 +19,7 @@ export interface RuleRowProps {
   editingRuleId?: string;
   allowEdit: boolean;
   onEditRule?: (rule: Rule) => void;
+  onViewHistory?: (rule: Rule) => void;
   isSubmitting?: boolean;
   isNarrow?: boolean;
 }
@@ -29,6 +31,7 @@ export function RuleRow({
   editingRuleId,
   allowEdit,
   onEditRule,
+  onViewHistory,
   isSubmitting = false,
   isNarrow = false,
 }: RuleRowProps) {
@@ -289,8 +292,27 @@ export function RuleRow({
             justifyContent: 'flex-end',
             minWidth: 0,
             py: { xs: 0.5, sm: 1 },
+            gap: 1,
           }}
         >
+          <IconButton
+            size="small"
+            onClick={() => onViewHistory?.(rule)}
+            sx={{
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1.5,
+              p: 0.5,
+              '&:hover': {
+                borderColor: 'primary.main',
+                bgcolor: 'primary.soft',
+                color: 'primary.main',
+              },
+            }}
+            aria-label={`View audit trail for ${rule.ruleName}`}
+          >
+            <VisibilityIcon fontSize="small" />
+          </IconButton>
           <IconButton
             size="small"
             onClick={() => onEditRule?.(rule)}

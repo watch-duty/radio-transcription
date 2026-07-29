@@ -154,6 +154,59 @@ components:
           description: Optional list of rule IDs to filter by.
       type: object
       additionalProperties: false
+    Record_string.unknown_:
+      properties: {}
+      additionalProperties: {}
+      type: object
+      description: Construct a type with a set of properties K of type T
+    RuleAuditEvent:
+      properties:
+        id:
+          type: string
+        ruleId:
+          type: string
+        action:
+          type: string
+        actorId:
+          type: string
+        occurredAt:
+          type: string
+        ruleRevision:
+          type: number
+          format: double
+        beforeValues:
+          $ref: "#/components/schemas/Record_string.unknown_"
+        afterValues:
+          $ref: "#/components/schemas/Record_string.unknown_"
+      required:
+        - id
+        - ruleId
+        - action
+        - actorId
+        - occurredAt
+        - ruleRevision
+        - beforeValues
+        - afterValues
+      type: object
+      additionalProperties: false
+    PaginatedRuleAuditEvents:
+      properties:
+        auditEvents:
+          items:
+            $ref: "#/components/schemas/RuleAuditEvent"
+          type: array
+        nextToken:
+          type: string
+          nullable: true
+        total:
+          type: number
+          format: double
+      required:
+        - auditEvents
+        - nextToken
+        - total
+      type: object
+      additionalProperties: false
     RuleCreate:
       properties:
         ruleName:
@@ -1069,6 +1122,82 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/rules/{ruleId}/history:
+    get:
+      operationId: ListRuleHistory
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedRuleAuditEvents"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            format: double
+            type: number
       x-google-backend: radio-transcription-api
   /api/v1/rules/dry-run:
     post:
