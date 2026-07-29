@@ -658,3 +658,50 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # 30,000 ms at 44100 Hz: exact samples is 1,323,000 (not 1,320,000 from 44 * 30000)
         self.assertEqual(ms_to_samples(30000, 44100), 1323000)
         self.assertEqual(samples_to_ms(1323000, 44100), 30000)
+
+    def test_sub_threshold_silence_and_speech_slices_contiguous_at_22050hz(
+        self,
+    ) -> None:
+        """Verifies the sub-threshold silence append and the following speech
+        slice cover contiguous, non-overlapping sample ranges at 22050 Hz.
+
+        22050 // 1000 == 22 truncates 0.05 samples/ms, so the old
+        samples_per_ms-based slice for the silence gap ended at sample 26400
+        while the (already ms_to_samples-based) speech slice started at
+        sample 26460 -- silently dropping 60 samples at the seam. Using
+        ms_to_samples for both slices closes that gap.
+        """
+        sample_rate = 22050
+        duration_ms = 3000
+        total_samples = ms_to_samples(duration_ms, sample_rate)
+        chunk = AudioChunkData(
+            start_ms=0,
+            audio=np.arange(total_samples, dtype=np.int64),
+            speech_segments=[
+                TimeRange(0, 1000),
+                # 200ms gap: below the default significant_gap_ms=3000
+                # threshold, so it takes the sub-threshold append path.
+                TimeRange(1200, 3000),
+            ],
+            gcs_uri="gs://fake/1.flac",
+            duration_ms=duration_ms,
+            sample_rate=sample_rate,
+        )
+
+        actions = self._process(chunk)
+
+        append_actions = [
+            a for a in actions if isinstance(a, AppendBufferAction)
+        ]
+        self.assertEqual(len(append_actions), 3)
+        silence_buffer = append_actions[1].audio_buffer
+        speech_buffer = append_actions[2].audio_buffer
+        self.assertTrue(len(silence_buffer) > 0)
+        self.assertTrue(len(speech_buffer) > 0)
+
+        # Content is np.arange(total_samples), so each element's value is its
+        # own index into the source array.
+        silence_end_sample_idx = int(silence_buffer[-1]) + 1
+        speech_start_sample_idx = int(speech_buffer[0])
+
+        self.assertEqual(silence_end_sample_idx, speech_start_sample_idx)

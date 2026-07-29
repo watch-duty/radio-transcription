@@ -602,7 +602,6 @@ class AudioStitchingStateMachine:
         chunk_data: AudioChunkData,
         ctx: StitcherContext,
         first_speech_start_rel_ms: int,
-        samples_per_ms: int,
     ) -> list[StateMachineAction]:
         """Flushes an open non-speech transmission from a previous chunk up to the new speech onset."""
         actions: list[StateMachineAction] = []
@@ -610,7 +609,9 @@ class AudioStitchingStateMachine:
             actions.append(
                 AppendBufferAction(
                     audio_buffer=chunk_data.audio[
-                        0 : first_speech_start_rel_ms * samples_per_ms
+                        0 : ms_to_samples(
+                            first_speech_start_rel_ms, chunk_data.sample_rate
+                        )
                     ]
                 )
             )
@@ -638,7 +639,6 @@ class AudioStitchingStateMachine:
         ctx: StitcherContext,
         current_file_cursor_ms: int,
         speech_start_rel_ms: int,
-        samples_per_ms: int,
     ) -> list[StateMachineAction]:
         """Captures and flushes pure silence intervals between consecutive speech utterances within a chunk."""
         actions: list[StateMachineAction] = []
@@ -700,7 +700,6 @@ class AudioStitchingStateMachine:
         ctx: StitcherContext,
         segment: TimeRange,
         current_file_cursor_ms: int,
-        samples_per_ms: int,
     ) -> list[StateMachineAction]:
         """Executes overlap validation, mid-stream severing, and appends a single speech utterance to buffer."""
         actions: list[StateMachineAction] = []
@@ -775,7 +774,6 @@ class AudioStitchingStateMachine:
         chunk_data: AudioChunkData,
         ctx: StitcherContext,
         current_file_cursor_ms: int,
-        samples_per_ms: int,
     ) -> list[StateMachineAction]:
         """Initiates a non-speech transmission window for pure silence at the trailing end of a chunk."""
         actions: list[StateMachineAction] = []
@@ -823,7 +821,6 @@ class AudioStitchingStateMachine:
         ctx: StitcherContext,
         current_file_cursor_ms: int,
         silence_end_rel_ms: int,
-        samples_per_ms: int,
         actions: list[StateMachineAction],
         on_significant_gap: Callable[[int], list[StateMachineAction]],
     ) -> bool:
@@ -858,8 +855,11 @@ class AudioStitchingStateMachine:
             else:
                 # Append sub-threshold pause to the active transmission
                 silence_samples = chunk_data.audio[
-                    silence_start_rel_ms * samples_per_ms : silence_end_rel_ms
-                    * samples_per_ms
+                    ms_to_samples(
+                        silence_start_rel_ms, chunk_data.sample_rate
+                    ) : ms_to_samples(
+                        silence_end_rel_ms, chunk_data.sample_rate
+                    )
                 ]
                 if len(silence_samples) > 0:
                     actions.append(
@@ -878,7 +878,6 @@ class AudioStitchingStateMachine:
         ctx: StitcherContext,
         current_file_cursor_ms: int,
         speech_start_rel_ms: int,
-        samples_per_ms: int,
         actions: list[StateMachineAction],
     ) -> int:
         """Handles silence interval between consecutive speech utterances
@@ -890,14 +889,12 @@ class AudioStitchingStateMachine:
             ctx,
             current_file_cursor_ms,
             speech_start_rel_ms,
-            samples_per_ms,
             actions,
             lambda silence_start: self._capture_intra_chunk_silence(
                 chunk_data,
                 ctx,
                 current_file_cursor_ms,
                 speech_start_rel_ms,
-                samples_per_ms,
             ),
         )
         return speech_start_rel_ms if was_processed else current_file_cursor_ms
@@ -907,7 +904,6 @@ class AudioStitchingStateMachine:
         chunk_data: AudioChunkData,
         ctx: StitcherContext,
         current_file_cursor_ms: int,
-        samples_per_ms: int,
         actions: list[StateMachineAction],
     ) -> None:
         """Handles trailing silence at the end of a chunk, either flushing
@@ -918,10 +914,9 @@ class AudioStitchingStateMachine:
             ctx,
             current_file_cursor_ms,
             chunk_data.duration_ms,
-            samples_per_ms,
             actions,
             lambda silence_start: self._capture_trailing_chunk_silence(
-                chunk_data, ctx, silence_start, samples_per_ms
+                chunk_data, ctx, silence_start
             ),
         )
 
@@ -931,7 +926,6 @@ class AudioStitchingStateMachine:
         """Evaluates consecutive speech data and exhaustive non-speech padding to guarantee 100% audio retention."""
         actions: list[StateMachineAction] = []
         current_file_cursor_ms = 0
-        samples_per_ms = chunk_data.sample_rate // 1000
 
         processed_segments = self._pre_split_excessive_speech_segments(
             chunk_data.speech_segments
@@ -947,7 +941,7 @@ class AudioStitchingStateMachine:
         if is_non_speech_active:
             first_speech_start_rel_ms = processed_segments[0].start_ms
             new_actions = self._flush_active_non_speech_transmission(
-                chunk_data, ctx, first_speech_start_rel_ms, samples_per_ms
+                chunk_data, ctx, first_speech_start_rel_ms
             )
             actions.extend(new_actions)
             current_file_cursor_ms = first_speech_start_rel_ms
@@ -961,19 +955,18 @@ class AudioStitchingStateMachine:
                 ctx,
                 current_file_cursor_ms,
                 speech_start_rel_ms,
-                samples_per_ms,
                 actions,
             )
 
             new_actions = self._process_single_speech_utterance(
-                chunk_data, ctx, segment, current_file_cursor_ms, samples_per_ms
+                chunk_data, ctx, segment, current_file_cursor_ms
             )
             actions.extend(new_actions)
             current_file_cursor_ms = max(current_file_cursor_ms, segment.end_ms)
 
         # 2. Capture trailing non-speech audio at the end of the file ONLY if we have an active established stream
         self._handle_trailing_silence(
-            chunk_data, ctx, current_file_cursor_ms, samples_per_ms, actions
+            chunk_data, ctx, current_file_cursor_ms, actions
         )
 
         actions.append(UpdateStateAction())
