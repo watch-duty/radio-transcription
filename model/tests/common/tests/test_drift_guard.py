@@ -107,11 +107,21 @@ class TestDriftGuard(unittest.TestCase):
         companion guard lives in the transcription package tests because CI
         path-filters the lanes: a backend-only edit skips this model lane.
         """
-        backend_prompt = _module_constant(_BACKEND_PROMPT, "GEMINI_PROMPT")
+        backend_prompt = _module_constant(
+            _BACKEND_PROMPT, "GEMINI_SYSTEM_PROMPT"
+        )
         self.assertIsNotNone(backend_prompt)
         self.assertEqual(
             backend_prompt, prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT
         )
+
+    def test_backend_transcriber_user_prompt_matches_canonical_user_prompt(
+        self,
+    ) -> None:
+        """Backend GEMINI_USER_PROMPT must match canonical SFT user prompt."""
+        backend_prompt = _module_constant(_BACKEND_PROMPT, "GEMINI_USER_PROMPT")
+        self.assertIsNotNone(backend_prompt)
+        self.assertEqual(backend_prompt, prompts.GEMINI_TRANSCRIBE_USER_PROMPT)
 
     def test_gemini_sft_config_defaults_to_runtime_common_prompts(self) -> None:
         """SFT config defaults must source prompts from common.gemini.prompts."""
@@ -175,22 +185,53 @@ model = "gemini-3.1-flash-lite"
             ("common.gemini.vertex", "submit_batch_inference"), imports
         )
 
-    def test_packaged_eval_uses_shared_context_builder(self) -> None:
-        """PR1 exposes both provider views while main uses the bridge."""
+    def test_packaged_eval_uses_prediction_only_rolling_schedule(self) -> None:
+        """Packaged eval must use the transcript-free rolling data flow."""
         evaluate_calls = _python_calls(_SRC_DIR / "gemini_sft" / "evaluate.py")
-        artifact_calls = _python_calls(_SRC_DIR / "gemini_sft" / "artifacts.py")
+        target_calls = _python_calls(
+            _SRC_DIR / "gemini_sft" / "target_execution.py"
+        )
 
         self.assertIn(
-            ("artifacts_lib", "eval_rows_with_histories_from_entries"),
+            ("artifacts_lib", "eval_rows_for_inference_from_entries"),
             evaluate_calls,
         )
         self.assertIn(
-            ("context", "build_context_histories"),
-            artifact_calls,
+            ("context", "build_strict_causal_schedule"),
+            target_calls,
         )
-        self.assertIn(
-            ("context", "EvaluationSegment"),
-            artifact_calls,
+        self.assertNotIn(
+            ("context", "build_training_reference_histories"),
+            evaluate_calls,
+        )
+
+    def test_eval_backend_rule_uses_shared_context_contract(self) -> None:
+        """Context/backend compatibility must have one source implementation."""
+        config_calls = _python_calls(_SRC_DIR / "gemini_sft" / "config.py")
+        target_calls = _python_calls(
+            _SRC_DIR / "gemini_sft" / "target_execution.py"
+        )
+
+        expected_call = ("context", "resolve_evaluation_backend_for_context")
+        self.assertIn(expected_call, config_calls)
+        self.assertIn(expected_call, target_calls)
+
+        message = (
+            "predicted-history evaluation requires the online backend; "
+            "batch cannot construct causal prior predictions"
+        )
+        owners = []
+        for path in _SRC_DIR.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if any(
+                isinstance(node, ast.Constant) and node.value == message
+                for node in ast.walk(tree)
+            ):
+                owners.append(path.relative_to(_SRC_DIR))
+        owners.sort()
+        self.assertEqual(
+            owners,
+            [pathlib.Path("common/gemini/context.py")],
         )
 
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:
@@ -201,7 +242,7 @@ model = "gemini-3.1-flash-lite"
         self.assertIn(("vertex", "resource_location"), calls)
 
     def test_tuning_data_uses_shared_content_builder(self) -> None:
-        """Tuning examples must call the reference-only content builder."""
+        """Tuning examples must call the shared content builder."""
         calls = _python_calls(_SRC_DIR / "common" / "gemini" / "tuning_data.py")
 
         self.assertIn(
@@ -210,13 +251,9 @@ model = "gemini-3.1-flash-lite"
         )
 
     def test_vertex_request_uses_shared_content_builder(self) -> None:
-        """Vertex exposes generic and prediction-only request boundaries."""
+        """Batch requests must call the shared content builder."""
         calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
 
-        self.assertIn(
-            ("context", "build_transcription_contents"),
-            calls,
-        )
         self.assertIn(
             ("context", "build_evaluation_transcription_contents"),
             calls,

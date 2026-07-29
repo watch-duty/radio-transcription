@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         AnnotationCreate,
         AudioSegment,
         AudioSegmentCreate,
+        TranscriptFlagAction,
     )
 
 
@@ -83,4 +84,12 @@ class AudioSegmentService:
             segment_id=segment_id,
             annotation_type=annotation.type,
             data=annotation.data.model_dump(),
+        )
+
+    async def flag_transcript(
+        self, segment_id: str, user_id: str, action: TranscriptFlagAction
+    ) -> Annotation:
+        """Atomically flag or unflag a transcript."""
+        return await self._store.flag_transcript(
+            segment_id=segment_id, user_id=user_id, action=action
         )

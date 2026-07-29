@@ -34,6 +34,9 @@ learning_rate_multiplier = 1.0
 # Number of prior same-source transcripts to include. `text_turns` is the
 # recommended SFT shape: prior user turns contain text only, prior model turns
 # contain prior transcripts, and only the current user turn contains audio.
+# SFT preparation may use prior references as supervised training data. Eval
+# never does: it causally uses only this target model's own finalized earlier
+# predictions, and references are joined only after inference for scoring.
 prior_turn_count = 8
 # Supported SFT/eval context modes:
 # - text_turns: prior text-only user/model turns, closest to conversation setup.
@@ -57,9 +60,11 @@ model = "gemini-3.1-flash-lite"
 # Masked and unmasked evals should use separate config files with distinct
 # round_id, eval_manifest_uri, and inference_dataset_slug values.
 
-# Optional eval execution controls. Omit `backend` for default routing:
-# publisher/model IDs use batch inference, full endpoint resources use online
-# generate-content. To compare forced backends, use separate config files/runs.
+# Optional eval execution controls. With zero prior turns, omitting `backend`
+# preserves default routing: publisher/model IDs use batch inference and full
+# endpoint resources use online generate-content. With nonzero prior turns,
+# omitting `backend` automatically selects causal rolling online inference.
+# Explicit batch plus nonzero prior turns is rejected before provider calls.
 [eval.execution]
 # backend = "online"
 # limit = 100

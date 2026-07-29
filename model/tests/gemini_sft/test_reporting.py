@@ -36,6 +36,12 @@ class TestReportingContract(unittest.TestCase):
             missing_prediction_count=1,
             artifacts=reporting.ReportArtifacts(
                 raw_output_uri="gs://bucket/raw/",
+                rolling_history_index_uri=(
+                    "gs://bucket/evals/base/rolling_history_index.json"
+                ),
+                rolling_history_audit_uri=(
+                    "gs://bucket/evals/base/rolling_history_audit.jsonl"
+                ),
                 normalized_manifest_uri="gs://bucket/normalized.jsonl",
                 summary_json_uri="gs://bucket/evals/wer_summary.json",
                 summary_markdown_uri="gs://bucket/evals/wer_summary.md",
@@ -70,6 +76,14 @@ class TestReportingContract(unittest.TestCase):
         self.assertEqual(
             row["artifacts"]["summary_markdown_uri"],
             "gs://bucket/evals/wer_summary.md",
+        )
+        self.assertEqual(
+            row["artifacts"]["rolling_history_index_uri"],
+            "gs://bucket/evals/base/rolling_history_index.json",
+        )
+        self.assertEqual(
+            row["artifacts"]["rolling_history_audit_uri"],
+            "gs://bucket/evals/base/rolling_history_audit.jsonl",
         )
 
     def test_total_reference_words_matches_wer_denominator(self) -> None:

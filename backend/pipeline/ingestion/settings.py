@@ -11,7 +11,6 @@ from backend.pipeline.ingestion import (
     source_runtime_specs,
     worker_profiles,
 )
-from backend.pipeline.storage import feed_store
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 if typing.TYPE_CHECKING:
@@ -27,15 +26,16 @@ def _require_env(name: str) -> str:
     return value
 
 
-# Per-type claim-budget defaults. The key set comes from SourceRuntimeSpec so
-# adding a VM-claimable source updates caps, topic routing metadata, and URL
-# metadata in one place. ECHO is intentionally absent: Echo feeds are served by
-# a separate cloud function, not VM-leased.
-_DEFAULT_CAPS: dict[SourceType, int] = source_runtime_specs.default_caps()
+# Per-type Feed claim-budget defaults. The key set comes from
+# SourceRuntimeSpec. Calls is intentionally absent because SID leases own it;
+# Echo is absent because a separate cloud function owns it.
+_DEFAULT_FEED_CLAIM_CAPS: dict[SourceType, int] = (
+    source_runtime_specs.default_feed_claim_caps()
+)
 
 
-def _load_caps_from_env() -> dict[SourceType, int]:
-    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
+def _load_feed_claim_caps_from_env() -> dict[SourceType, int]:
+    """Build Feed caps from CAP_<NAME> env vars.
 
     Caps are clamped to ``max(0, ...)`` so a misconfigured negative env
     var can't propagate into the SQL as a negative ``LIMIT`` (PostgreSQL
@@ -47,28 +47,8 @@ def _load_caps_from_env() -> dict[SourceType, int]:
     """
     return {
         t: max(0, int(os.environ.get(f"CAP_{t.name}", str(default))))
-        for t, default in _DEFAULT_CAPS.items()
+        for t, default in _DEFAULT_FEED_CLAIM_CAPS.items()
     }
-
-
-def _load_bcfy_calls_authority_mode() -> worker_profiles.BcfyCallsAuthorityMode:
-    """Load the sole process-wide Broadcastify Calls ownership switch.
-
-    Returns:
-        The validated authority mode, defaulting to legacy Feed ownership.
-
-    Raises:
-        ValueError: The configured value is not one of the closed modes.
-    """
-    raw = os.environ.get("BCFY_CALLS_AUTHORITY_MODE", "legacy_feed")
-    try:
-        return worker_profiles.BcfyCallsAuthorityMode(raw)
-    except ValueError as error:
-        msg = (
-            "BCFY_CALLS_AUTHORITY_MODE must be exactly "
-            "'legacy_feed' or 'sid_lease'"
-        )
-        raise ValueError(msg) from error
 
 
 def _load_max_sids_per_worker() -> int:
@@ -96,10 +76,6 @@ class CollectorSettings:
     are loaded via ``AlloyDBSettings``.
 
     """
-
-    bcfy_calls_authority_mode: worker_profiles.BcfyCallsAuthorityMode = field(
-        default_factory=_load_bcfy_calls_authority_mode,
-    )
 
     # Worker identity
     worker_id: uuid.UUID = field(
@@ -193,11 +169,15 @@ class CollectorSettings:
     # Per-type claim budget caps (scaling plan §4/§6). Worker passes
     # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
     # PostgreSQL enforces the cap structurally via the query planner.
-    # Defaults + claimable type set live in module-level _DEFAULT_CAPS;
-    # CAP_<NAME> env vars override individual entries.
-    caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
+    # Defaults + Feed-authority type set live in
+    # module-level _DEFAULT_FEED_CLAIM_CAPS; CAP_<NAME> env vars override
+    # individual entries.
+    feed_claim_caps: typing.Mapping[SourceType, int] = field(
+        default_factory=lambda: types.MappingProxyType(
+            _load_feed_claim_caps_from_env()
+        )
+    )
     worker_profile: worker_profiles.WorkerProfile = field(init=False)
-    feed_claim_caps: typing.Mapping[SourceType, int] = field(init=False)
 
     # GCS
     audio_staging_bucket: str = field(
@@ -347,30 +327,13 @@ class CollectorSettings:
         return self.bcfy_calls_work_concurrency * 2
 
     def __post_init__(self) -> None:
-        profile = worker_profiles.resolve_worker_profile(
-            worker_profiles.MIXED_DORMANT_PROFILE.name,
+        profile = worker_profiles.build_mixed_worker_profile(
             feed_owned_cap=self.max_feeds_per_worker,
             feed_claims_per_cycle=self.lease_admission_cycle_budget,
             sid_owned_cap=self.max_sids_per_worker,
             sid_claims_per_cycle=self.sid_lease_admission_cycle_budget,
         )
-        profile = worker_profiles.derive_bcfy_calls_authority(
-            profile,
-            self.bcfy_calls_authority_mode,
-        )
         object.__setattr__(self, "worker_profile", profile)
-
-        feed_claim_caps = dict(self.caps)
-        if (
-            self.bcfy_calls_authority_mode
-            is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
-        ):
-            feed_claim_caps.pop(feed_store.SourceType.BCFY_CALLS, None)
-        object.__setattr__(
-            self,
-            "feed_claim_caps",
-            types.MappingProxyType(feed_claim_caps),
-        )
 
         if self.lease_admission_cycle_budget <= 0:
             msg = (
