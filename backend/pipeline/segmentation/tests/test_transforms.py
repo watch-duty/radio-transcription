@@ -110,6 +110,18 @@ class MockBagState:
         self.items = []
 
 
+class MockTimer:
+    def __init__(self, name: str = "timer") -> None:
+        self.name = name
+        self.deadline: Any = None
+
+    def set(self, deadline: Any) -> None:
+        self.deadline = deadline
+
+    def clear(self) -> None:
+        self.deadline = None
+
+
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
 original_acquire = SHARED_RESOURCE_HANDLE.acquire
@@ -2642,17 +2654,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
         out_of_order_buffer_state.add(gap_chunk)
 
-        class MockTimer:
-            def __init__(self, name="timer") -> None:
-                self.name = name
-                self.deadline = None
-
-            def set(self, deadline):
-                self.deadline = deadline
-
-            def clear(self):
-                self.deadline = None
-
         gap_timer_event = MockTimer("gap_event")
         gap_timer_proc = MockTimer("gap_proc")
 
@@ -4447,17 +4448,6 @@ class DlqTaggingTest(unittest.TestCase):
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
-
-        class MockTimer:
-            def __init__(self, name="timer") -> None:
-                self.name = name
-                self.deadline = None
-
-            def set(self, deadline):
-                self.deadline = deadline
-
-            def clear(self):
-                self.deadline = None
 
         # --- Scenario 1: Recent chunk (is_backfill=False) -> processing timer SET ---
         recent_ts_ms = int(time.time() * 1000) - 10000
