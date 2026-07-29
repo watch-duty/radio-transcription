@@ -77,7 +77,10 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
-AUDIO_LAG_WARN_THRESHOLD_SEC: Final = 120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins), filtering out baseline ~30-90s Icecast stream delay
+AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
+    120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins);
+    # filters out baseline ~30-90s Icecast stream buffer delay
+)
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
