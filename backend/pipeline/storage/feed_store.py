@@ -60,9 +60,10 @@ class SourceType(enum.StrEnum):
            and ``006_seed_source_types.sql``.
         3. **Runtime source spec** — add an entry to
            ``backend.pipeline.ingestion.source_runtime_specs``. This
-           registry drives ``CollectorSettings.caps``, ``FeedStore``'s
-           generated acquire-batch SQL, topic routing metadata, URL base
-           metadata, and the ``claim_types`` filter on the recovery path.
+           registry drives ``CollectorSettings.feed_claim_caps``,
+           ``FeedStore``'s generated acquire-batch SQL, topic routing metadata,
+           URL base metadata, and the ``claim_types`` filter on the recovery
+           path.
            **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
            the primary CTE nor the recovery sweep will pick them up.
@@ -375,11 +376,9 @@ class FeedStore:
         claim_types: Optional ordered sequence of ``SourceType`` values
             this store will claim via ``acquire_feeds_batch``. The SQL
             is generated at construction time with one MATERIALIZED CTE
-            per type. Defaults to every ``SourceType`` except ``ECHO``
-            (Echo feeds are served by a separate cloud function and
-            are never leased here). ``CollectorRuntime`` passes
-            ``list(settings.caps.keys())`` so the SQL shape and the
-            runtime's per-type budgets are seeded from the same set.
+            per type. Defaults to the source types owned through Feed
+            grants. ``CollectorRuntime`` passes
+            ``list(settings.feed_claim_caps)`` explicitly.
         heartbeat_timeout_sec: Optional total timeout for heartbeat pool
             checkout, query execution, and connection release.
 
@@ -395,7 +394,11 @@ class FeedStore:
         self._pool = pool
         self._heartbeat_timeout_sec = heartbeat_timeout_sec
         if claim_types is None:
-            claim_types = [t for t in SourceType if t != SourceType.ECHO]
+            claim_types = [
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            ]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
         self._acquire_feeds_batch_sql = (
             feed_queries.build_acquire_feeds_batch_sql(

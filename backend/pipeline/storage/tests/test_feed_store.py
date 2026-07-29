@@ -1829,13 +1829,31 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
 
 _DEFAULT_LIMITS: dict[SourceType, int] = {
     SourceType.BCFY_FEEDS: 10,
-    SourceType.BCFY_CALLS: 10,
     SourceType.OPENMHZ: 10,
+    SourceType.FIRE_NOTIFICATIONS: 10,
 }
 
 
 class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.acquire_feeds_batch."""
+
+    async def test_default_store_passes_only_feed_authority_limits(
+        self,
+    ) -> None:
+        pool = make_mock_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        await store.acquire_feeds_batch(
+            _WORKER_ID,
+            {
+                SourceType.BCFY_FEEDS: 2,
+                SourceType.OPENMHZ: 5,
+                SourceType.FIRE_NOTIFICATIONS: 7,
+            },
+        )
+
+        args = pool.fetch.call_args.args
+        self.assertEqual(args[1:], (_WORKER_ID, 2, 5, 7))
 
     async def test_returns_list_of_feeds(self) -> None:
         """Multiple feeds are returned as a list of LeasedFeed dicts."""
@@ -2031,8 +2049,8 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 _WORKER_ID,
                 {
                     SourceType.BCFY_FEEDS: 1,
-                    SourceType.BCFY_CALLS: 1,
                     SourceType.OPENMHZ: 1,
+                    SourceType.FIRE_NOTIFICATIONS: 1,
                 },
             )
 

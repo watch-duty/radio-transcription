@@ -583,6 +583,7 @@ components:
         - TRANSCRIPT
         - EVALUATION
         - WAVEFORM
+        - TRANSCRIPT_FLAG
       type: string
     TranscriptAnnotationData:
       properties:
@@ -644,6 +645,16 @@ components:
         - durationSeconds
       type: object
       additionalProperties: false
+    TranscriptFlagAnnotationData:
+      properties:
+        flaggedByUserIds:
+          items:
+            type: string
+          type: array
+      required:
+        - flaggedByUserIds
+      type: object
+      additionalProperties: false
     Annotation:
       properties:
         type:
@@ -655,6 +666,7 @@ components:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
             - $ref: "#/components/schemas/WaveformAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFlagAnnotationData"
       required:
         - type
         - createdAt
@@ -2051,6 +2063,82 @@ paths:
           required: false
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{audioSegmentId}/flagTranscript:
+    post:
+      operationId: FlagTranscript
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Annotation"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: audioSegmentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                isFlagged:
+                  type: boolean
+              required:
+                - isFlagged
+              type: object
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
