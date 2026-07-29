@@ -420,10 +420,10 @@ class TestVadEngine(unittest.TestCase):
             baseline_f1=0.55,
         )
 
-    def test_integration_watchduty_a5412373_chunk68(self) -> None:
-        """Integration test to verify VAD performance on Watch Duty live feed inter-transmission gap (c1416cf1)."""
+    def test_integration_inter_transmission_gap_speech(self) -> None:
+        """Integration test to verify VAD performance on inter-transmission gap speech bursts (Watch Duty c1416cf1)."""
         self._run_integration_test(
-            "test_watchduty_a5412373_chunk68.flac",
+            "test_vad_inter_transmission_gap_speech.flac",
             [
                 (0.532, 5.872),
                 (6.672, 8.200),
