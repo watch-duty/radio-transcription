@@ -797,7 +797,9 @@ class TestVadEngine(unittest.TestCase):
         for res in results:
             self.assertEqual(res.shape, audio_chunk.shape)
 
-    def test_last_preprocessed_audio_cleared_on_skip(self) -> None:
+    def test_detect_speech_segments_returns_none_preprocessed_on_skip(
+        self,
+    ) -> None:
         """Verifies that the returned preprocessed audio is None on empty or skipped VAD calls."""
         detector = vad.VoiceActivityDetector()
         detector.setup()
