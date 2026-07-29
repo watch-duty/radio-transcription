@@ -130,7 +130,6 @@ from backend.pipeline.segmentation.storage import (
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_VAD_HANDLE = Shared()
-SHARED_RESOURCE_HANDLE = Shared()
 
 # WARNING: Do NOT remove or bypass setup_logging().
 # It explicitly configures structured log propagation for the
