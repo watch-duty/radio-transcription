@@ -518,7 +518,9 @@ class StitcherEngine:
 
                 if (
                     previous_expected_ts is not None
-                    and chunk.timestamp_ms > previous_expected_ts
+                    and chunk.timestamp_ms
+                    > previous_expected_ts
+                    + trans_constants.DEFAULT_FLOAT_TOLERANCE_MS
                 ):
                     # watermark contiguous gap, clear prior tail primordial state
                     curr_context = replace(curr_context, prior_audio_tail=None)
@@ -643,8 +645,10 @@ class StitcherEngine:
                 "error_message": str(e),
                 "traceparent": curr_context.traceparent,
             }
-            fallback_expected = previous_expected_ts or (
-                chunk.timestamp_ms + common_constants.MS_PER_SECOND
+            fallback_expected = (
+                previous_expected_ts
+                if previous_expected_ts is not None
+                else (chunk.timestamp_ms + self.order_config.chunk_duration_ms)
             )
             return datatypes.StitcherChunkResult(
                 outputs=[(trans_constants.DEAD_LETTER_QUEUE_TAG, dlq_payload)],

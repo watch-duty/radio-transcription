@@ -4431,3 +4431,34 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)
+
+    def test_dlq_fallback_preserves_zero_previous_expected(self) -> None:
+        """Verifies that DLQ fallback preserves previous_expected_ts=0 and does not fall back to ts+1000."""
+        config = get_test_stitch_config()
+        order_config = OrderRestorerConfig()
+        engine = stitcher_engine.StitcherEngine(
+            order_config=order_config, stitch_config=config
+        )
+        engine.processor = MagicMock()
+        engine.processor.download_audio_and_detect.side_effect = RuntimeError(
+            "Failed download"
+        )
+
+        chunk = BufferedChunk(timestamp_ms=0, gcs_uri="gs://bucket/bad.flac")
+        curr_ctx = ActiveStitchingState(
+            session_id="sess1",
+        )
+
+        result = engine._process_single_stitch_chunk(
+            chunk,
+            "feed1",
+            curr_ctx,
+            None,
+            MagicMock(),
+            MagicMock(),
+            0,
+            MagicMock(),
+            is_backfill=False,
+        )
+
+        self.assertEqual(result.next_expected_ts, 0)

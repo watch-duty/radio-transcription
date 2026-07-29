@@ -47,7 +47,8 @@ class AudioStitchingStateMachine:
         # 0. Detect if this is an out-of-order LATE chunk
         is_late_chunk = (
             ctx.expected_next_chunk_start_ms is not None
-            and chunk_data.start_ms < ctx.expected_next_chunk_start_ms
+            and chunk_data.start_ms
+            < ctx.expected_next_chunk_start_ms - UPSTREAM_GAP_DRIFT_TOLERANCE_MS
         )
 
         if is_late_chunk:

@@ -628,3 +628,20 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             flush_actions[1].speech_time_range.start_ms,
             int(padded_segments[1][0] * 1000),
         )
+
+    def test_process_chunk_tolerated_minor_lateness(self) -> None:
+        """Verifies that a chunk arriving within UPSTREAM_GAP_DRIFT_TOLERANCE_MS late is not treated as a LATE chunk."""
+        self.ctx.expected_next_chunk_start_ms = 10000
+
+        # Chunk arrives at 9980ms (-20ms drift)
+        chunk = mock_audio_chunk(9980, 5000, [(0.0, 1.0)])
+        actions = self.state_machine.process_chunk(chunk, self.ctx)
+
+        # Should NOT trigger late chunk isolated handling (which increments late metric and returns early)
+        self.assertFalse(
+            any(
+                isinstance(a, FlushAction)
+                and a.reason == "Late arriving audio chunk"
+                for a in actions
+            )
+        )
