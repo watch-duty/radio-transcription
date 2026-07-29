@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -129,3 +129,24 @@ class Rule(RuleBase):
     rule_id: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RuleAuditEvent(BaseModel):
+    """Represents an audit event for a rule mutation."""
+
+    id: str
+    rule_id: str
+    action: str
+    actor_id: str
+    occurred_at: datetime
+    rule_revision: int
+    before_values: dict[str, Any]
+    after_values: dict[str, Any]
+
+
+class PaginatedRuleAuditEvents(BaseModel):
+    """Paginated list of rule audit events."""
+
+    audit_events: list[RuleAuditEvent]
+    next_token: str | None
+    total: int
