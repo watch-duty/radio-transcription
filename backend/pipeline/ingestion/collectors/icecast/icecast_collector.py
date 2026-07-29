@@ -77,9 +77,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
-AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
-    30.0  # Threshold (in seconds) for logging anomalous audio timestamp lag
-)
+AUDIO_LAG_WARN_THRESHOLD_SEC: Final = 120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins), filtering out baseline ~30-90s Icecast stream delay
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -551,7 +549,7 @@ async def _process_finalized_segment(
             if stream_interval_lag_sec is not None
             else "N/A"
         )
-        logger.debug(
+        logger.warning(
             "[Ingestion Audio Lag] Feed %s (%s): chunk audio timestamp %s is %.1fs behind wall-clock receipt time %s (stream_interval_lag_sec=%s)",
             feed_id,
             feed_name,
