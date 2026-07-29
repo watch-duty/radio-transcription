@@ -1531,6 +1531,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                     last_start_ms_state,
                     out_of_order_buffer_state,
                 )
+            else:
+                _write_transmission_context(
+                    transmission_context_state,
+                    curr_context,
+                    last_start_ms_state,
+                    out_of_order_buffer_state,
+                )
 
         yield from self._yield_tagged_outputs(results)
 
@@ -1544,6 +1551,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
         deferred_drain_timer: RuntimeTimer = DEFERRED_DRAIN_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -1640,6 +1649,23 @@ class OrderedStitchAudioFn(beam.DoFn):
                     context_label="Deferred drain clamped",
                     rescheduled_deadline=next_deadline,
                 )
+            elif new_buffer_elements:
+                # Not clamped: the remaining buffered chunks are a genuine
+                # gap (not yet ready to drain), so arm the gap timeout
+                # rather than immediately re-chaining the deferred drain.
+                _reschedule_gap_timeout(
+                    gap_timer_event=gap_timer_event,
+                    gap_timer_proc=gap_timer_proc,
+                    order_config=self.order_config,
+                    timestamp=timestamp,
+                    clamped=False,
+                    is_backfill=_evaluate_is_backfill(
+                        new_buffer_elements[0].timestamp_ms,
+                        self.stitch_config.backfill_lateness_threshold_ms,
+                    ),
+                    new_expected=initial_expected_ts,
+                    new_expected_next_ts=new_expected_next_ts,
+                )
 
             curr_context = replace(
                 curr_context,
@@ -1651,8 +1677,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Assume backfill under backlog
-                is_backfill = True
+                is_backfill = _evaluate_is_backfill(
+                    elements_to_emit[0].timestamp_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
+                )
                 previous_expected_ts = initial_expected_ts
                 last_start_ms = last_start_ms_state.read()
                 (
