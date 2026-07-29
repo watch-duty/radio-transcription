@@ -93,5 +93,8 @@ class FakeStorageClient:
     def get(self, uri: str) -> str:
         return self.store[split_gcs(uri)]
 
+    def delete(self, uri: str) -> None:
+        del self.store[split_gcs(uri)]
+
     def has(self, uri: str) -> bool:
         return split_gcs(uri) in self.store

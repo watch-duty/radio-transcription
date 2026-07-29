@@ -88,61 +88,6 @@ class EvalRowsForInference:
     segments: list[context.EvaluationSegment]
 
 
-# Temporary stacked-PR bridge for latest-main evaluation. PR #1003 removes
-# this history-bearing loader when evaluate.py consumes transcript-free rows.
-@dataclasses.dataclass(frozen=True)
-class EvalRowsWithHistory:
-    """Canonical eval rows plus aligned generic prior-context histories.
-
-    Attributes:
-        source_rows: Validated raw eval rows preserved for normalized output.
-        eval_rows: Typed canonical rows aligned with ``source_rows``.
-        histories: Generic prior turns aligned with each evaluation row.
-    """
-
-    source_rows: list[dict[str, typing.Any]]
-    eval_rows: list[manifest.CanonicalRow]
-    histories: list[list[context.ContextTurn]]
-
-
-def eval_rows_with_histories_from_entries(
-    entries: list[dict[str, typing.Any]],
-    *,
-    source: str,
-    prior_context_count: int,
-    limit: int | None = None,
-) -> EvalRowsWithHistory:
-    """Return legacy scoring rows and aligned generic histories.
-
-    Args:
-        entries: Raw canonical eval manifest dictionaries.
-        source: Human-readable manifest source used in validation errors.
-        prior_context_count: Maximum prior same-source turns per eval row.
-        limit: Optional maximum number of aligned eval rows to return.
-
-    Returns:
-        Validated rows and legacy histories in matching order.
-    """
-    source_rows, eval_rows = canonical_rows_from_entries(
-        entries,
-        split="eval",
-        source=source,
-    )
-    histories = context.build_context_histories(
-        source_rows,
-        max_turns=prior_context_count,
-    )
-    if limit is not None:
-        source_rows = source_rows[:limit]
-        eval_rows = eval_rows[:limit]
-        histories = histories[:limit]
-    return EvalRowsWithHistory(
-        source_rows=source_rows,
-        eval_rows=eval_rows,
-        histories=histories,
-    )
-
-
 def utc_now() -> str:
     """Return an ISO UTC timestamp."""
     return datetime.datetime.now(datetime.UTC).isoformat()

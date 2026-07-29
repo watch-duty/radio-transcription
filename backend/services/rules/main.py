@@ -8,6 +8,9 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
+from backend.pipeline.common.actor_identity import (
+    is_well_formed_google_user_actor_id,
+)
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.common.rules.models import (
@@ -49,6 +52,20 @@ app = FastAPI(
 setup_fastapi_tracing(app, service_name="rules-service")
 
 
+_INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
+
+
+def _resolve_admin_actor_id(request: Request) -> str:
+    """Resolve the BFF-provided human actor for admin mutations."""
+    actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
+    if actor_id is None or not is_well_formed_google_user_actor_id(actor_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trusted actor context required",
+        )
+    return actor_id
+
+
 def get_rules_service(request: Request) -> BaseRulesService:
     """Dependency that retrieves the rules service from application state."""
     return request.app.state.rules_service
@@ -69,11 +86,12 @@ async def create_rule(
     rule_in: RuleCreate,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
     user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> Rule:
     """Create a new transcription rule."""
     # Assign the authenticated user's email to created_by
     rule_in.metadata.created_by = user.get("email")
-    return await service.create_rule(rule_in)
+    return await service.create_rule(rule_in, actor_id=actor_id)
 
 
 @app.get(
@@ -117,9 +135,10 @@ async def update_rule(
     rule_id: str,
     rule_in: RuleUpdate,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> Rule:
     """Fully update an existing transcription rule."""
-    rule = await service.update_rule(rule_id, rule_in)
+    rule = await service.update_rule(rule_id, rule_in, actor_id=actor_id)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -136,9 +155,10 @@ async def update_rule(
 async def delete_rule(
     rule_id: str,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> None:
     """Delete a transcription rule."""
-    success = await service.delete_rule(rule_id)
+    success = await service.delete_rule(rule_id, actor_id=actor_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

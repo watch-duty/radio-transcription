@@ -38,8 +38,8 @@ mirrors only.
 
 ## Eval Model Artifacts
 
-Each `[eval.model].label` gets its own eval directory under the run prefix.
-Batch and online eval backends write different provider-output artifacts:
+Each `[eval.model].label` gets a stable eval directory under the run prefix.
+Zero-context batch and online backends write these provider-output artifacts:
 
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/input.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/output/`
@@ -48,9 +48,28 @@ Batch and online eval backends write different provider-output artifacts:
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.meta.json`
 
+Nonzero-context rolling evaluation instead writes stable target-level audit
+artifacts plus digest-versioned per-wave attempt artifacts:
+
+- `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/rolling_history_index.json`
+- `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/rolling_history_audit.jsonl`
+- `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL-rolling-wave-NNNN-DIGEST/online_predictions.jsonl`
+- `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL-rolling-wave-NNNN-DIGEST/online_predictions.meta.json`
+
 The online predictions JSONL is an attempt cache. It can include successful
 prediction rows and the latest errored attempt rows. Successful rows are reused
 on resume; errored rows are retried.
+
+The rolling-history files are present for nonzero prior context. The index maps
+causal waves to their durable online attempt artifacts. If a recovered upstream
+prediction changes a downstream request, that wave's digest and artifact path
+also change; the stale artifact remains available for audit but is not reused.
+The JSONL audit records row identity, eligible and supplied dependency counts,
+omission categories, and dependency hashes without transcript text. It is
+evidence that history came from the same target's finalized earlier
+predictions. Errors, missing or blank outputs, and case-insensitive
+`[UNINTELLIGIBLE]` outputs are omitted after the last K candidate rows are
+selected; older candidates do not refill those slots.
 
 For batch eval, `batch_job.meta.json` records the submitted Vertex job name and
 request identity before polling so an interrupted process can resume the same
@@ -75,11 +94,13 @@ run prefix:
 gs://BUCKET/inference_manifests/INFERENCE_DATASET_SLUG/MODEL_FAMILY_SLUG/ROUND_ID/LABEL.jsonl
 ```
 
-The normalized manifest preserves the eval source rows and adds prediction
-fields for rows that received successful provider predictions. Missing provider
-outputs and unresolved online errors omit prediction fields and are scored as
-empty hypotheses in eval reports. The normalized manifest is a durable artifact,
-not a local experiment output.
+The normalized manifest is assembled only after provider inference has
+finalized. At that point, evaluation references are joined back for scoring. It
+preserves the eval source rows and adds prediction fields for rows that received
+successful provider predictions. Missing provider outputs and unresolved online
+errors omit prediction fields and are scored as empty hypotheses in eval
+reports. The normalized manifest is a durable artifact, not a local experiment
+output.
 
 ## Local Cache Or Mirror
 

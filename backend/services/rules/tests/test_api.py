@@ -41,7 +41,9 @@ class TestRulesAPI(unittest.TestCase):
         app.dependency_overrides[get_audio_segment_store] = lambda: (
             self.mock_audio_store
         )
-        self.client = TestClient(app)
+        self.client = TestClient(
+            app, headers={"X-WD-Actor-Id": "user:google:test@example.com"}
+        )
 
     def tearDown(self) -> None:
         """Clean up after each test."""
@@ -204,7 +206,9 @@ class TestRulesAPI(unittest.TestCase):
         response = self.client.delete(f"/v1/rules/{rule_id}")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_service.delete_rule.assert_called_once_with(rule_id)
+        self.mock_service.delete_rule.assert_called_once_with(
+            rule_id, actor_id="user:google:test@example.com"
+        )
 
     def test_delete_rule_not_found(self) -> None:
         """Test deleting a non-existent rule returns 404."""

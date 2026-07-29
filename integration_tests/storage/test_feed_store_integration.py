@@ -176,16 +176,20 @@ async def test_primary_cte_respects_per_type_limits(
     """Each branch's LIMIT bounds the rows returned of that source_type."""
     for i in range(3):
         await _insert_feed(db_pool, f"bf-{i}", source_type="bcfy_feeds")
-        await _insert_feed(db_pool, f"bc-{i}", source_type="bcfy_calls")
         await _insert_feed(db_pool, f"om-{i}", source_type="openmhz")
+        await _insert_feed(
+            db_pool,
+            f"fn-{i}",
+            source_type="fire_notifications",
+        )
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 2,
-            SourceType.BCFY_CALLS: 1,
             SourceType.OPENMHZ: 3,
+            SourceType.FIRE_NOTIFICATIONS: 1,
         },
     )
 
@@ -193,8 +197,8 @@ async def test_primary_cte_respects_per_type_limits(
     for lease in result:
         counts[lease["source_type"]] += 1
     assert counts[SourceType.BCFY_FEEDS] == 2
-    assert counts[SourceType.BCFY_CALLS] == 1
     assert counts[SourceType.OPENMHZ] == 3
+    assert counts[SourceType.FIRE_NOTIFICATIONS] == 1
 
 
 async def test_primary_cte_limit_zero_skips_type(
@@ -203,15 +207,19 @@ async def test_primary_cte_limit_zero_skips_type(
     """A per-branch LIMIT of 0 returns zero rows of that source_type."""
     await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
     await _insert_feed(db_pool, "bf-1", source_type="bcfy_feeds")
-    await _insert_feed(db_pool, "bc-0", source_type="bcfy_calls")
+    await _insert_feed(
+        db_pool,
+        "fn-0",
+        source_type="fire_notifications",
+    )
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 0,
-            SourceType.BCFY_CALLS: 10,
             SourceType.OPENMHZ: 10,
+            SourceType.FIRE_NOTIFICATIONS: 10,
         },
     )
 
@@ -219,7 +227,8 @@ async def test_primary_cte_limit_zero_skips_type(
         lease["source_type"] != SourceType.BCFY_FEEDS for lease in result
     )
     assert any(
-        lease["source_type"] == SourceType.BCFY_CALLS for lease in result
+        lease["source_type"] == SourceType.FIRE_NOTIFICATIONS
+        for lease in result
     )
 
 
@@ -234,8 +243,8 @@ async def test_primary_cte_sets_status_to_active(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 10,
-            SourceType.BCFY_CALLS: 10,
             SourceType.OPENMHZ: 10,
+            SourceType.FIRE_NOTIFICATIONS: 10,
         },
     )
 

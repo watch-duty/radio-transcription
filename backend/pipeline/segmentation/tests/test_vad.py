@@ -421,6 +421,20 @@ class TestVadEngine(unittest.TestCase):
             baseline_f1=0.55,
         )
 
+    def test_integration_inter_transmission_gap_speech(self) -> None:
+        """Integration test to verify VAD performance on inter-transmission gap speech bursts (Watch Duty c1416cf1)."""
+        self._run_integration_test(
+            "test_vad_inter_transmission_gap_speech.flac",
+            [
+                (0.532, 5.872),
+                (6.672, 8.200),
+                (9.675, 10.433),
+                (11.268, 11.768),
+                (13.548, 15.020),
+            ],
+            baseline_f1=0.793,
+        )
+
     def test_integration_static_middlebury_file(self) -> None:
         """Integration test to verify VAD rejects all segments on static-only audio file."""
         audio_path = (
@@ -652,7 +666,6 @@ class TestVadEngine(unittest.TestCase):
         self.assertAlmostEqual(padded[0][1], 2.112)  # 2.0 + 0.112
         self.assertAlmostEqual(padded[1][0], 2.912)  # 3.024 - 0.112
         self.assertAlmostEqual(padded[1][1], 4.324)  # 4.024 + 0.3
-        # Difference between padded segments is 2.912 - 2.112 = 0.8s (800ms)
         self.assertAlmostEqual(padded[1][0] - padded[0][1], 0.8)
 
     def test_vad_preprocess_thread_safety(self) -> None:
@@ -670,3 +683,23 @@ class TestVadEngine(unittest.TestCase):
         self.assertEqual(len(results), 16)
         for res in results:
             self.assertEqual(res.shape, audio_chunk.shape)
+
+    def test_last_preprocessed_audio_cleared_on_skip(self) -> None:
+        """Verifies that last_preprocessed_audio is reset to None on empty or skipped VAD calls."""
+        detector = vad.VoiceActivityDetector()
+        detector.setup()
+
+        # Set stale value on instance
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with empty array
+        detector.detect_speech_segments(np.array([], dtype=np.float32))
+        self.assertIsNone(detector.last_preprocessed_audio)
+
+        # Set stale value again
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with silent audio that triggers skip
+        silent_audio = np.zeros(16000, dtype=np.float32)
+        detector.detect_speech_segments(silent_audio)
+        self.assertIsNone(detector.last_preprocessed_audio)
