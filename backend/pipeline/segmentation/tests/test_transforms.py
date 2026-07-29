@@ -2903,11 +2903,11 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
-    def test_prior_audio_tail_not_cached_if_chunk_ends_in_silence(
+    def test_prior_audio_tail_cached_even_if_chunk_ends_in_silence(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that under the Conditional State Continuity logic, the prior_audio_tail
-        is NOT cached if the chunk ends in silence, preventing noise propagation.
+        """Verifies that under the Lookback Priming Cache logic, the prior_audio_tail
+        is cached even if the chunk ends in silence, preserving VAD lookback warmup.
         """
         mock_processor_inst = mock_audio_processor.return_value
         # Chunk has speech from 1.0s to 4.0s, but ends in silence (duration is 5.0s)
@@ -2972,10 +2972,10 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # State context must be ActiveStitchingState, but prior_audio_tail must be None!
+        # State context must be ActiveStitchingState, and prior_audio_tail must be cached!
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
-        self.assertIsNone(saved_context.prior_audio_tail)
+        self.assertIsNotNone(saved_context.prior_audio_tail)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"

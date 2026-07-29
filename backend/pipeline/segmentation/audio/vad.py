@@ -136,6 +136,7 @@ class VoiceActivityDetector:
         self.spikiness_ratio_threshold = spikiness_ratio_threshold
         self.min_rms_threshold = min_rms_threshold
         self.dither_rms = dither_rms
+        self.last_preprocessed_audio: np.ndarray | None = None
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stft_sequence.onnx"
@@ -729,15 +730,16 @@ class VoiceActivityDetector:
         chunk_size: int = DEFAULT_SILERO_WINDOW_SIZE,
         context_size: int = 64,
         prior_audio: np.ndarray | None = None,
+        *,
+        prior_is_preprocessed: bool = False,
     ) -> list[tuple[float, float]]:
-        """Analyzes a normalized float32 audio array, returning speech segments as (start_sec, end_sec)."""
+        """Analyzes normalized float32 audio array, returning speech segments as (start, end)."""
         if len(audio_array) == 0:
             return []
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        # Check for silence/static early on the raw input audio to prevent redundant execution
         if self._should_skip_vad(audio_array, sample_rate):
             return []
 
@@ -746,34 +748,76 @@ class VoiceActivityDetector:
         ):
             prior_audio = prior_audio.astype(np.float32) / 32768.0
 
-        # Dither Stabilization:
-        # We inject a tiny, deterministic Gaussian dither (-120dB RMS) to stabilize the downstream
-        # recurrent denoiser (UL-UNAS) RNN.
-        #
-        # Why this is essential:
-        # 1. Under the hood, different decoders (e.g., FFmpeg CLI vs. in-process PyAV) can output
-        #    samples that differ by exactly 1 LSB (rounding/dither differences during decoding).
-        # 2. For extremely quiet, borderline speech, this 1 LSB difference represents a large
-        #    relative signal change (low SNR).
-        # 3. Because the UL-UNAS denoiser is a Recurrent Neural Network (RNN) operating near its
-        #    threshold, these tiny input perturbations can cause the internal RNN hidden states to
-        #    diverge out of phase catastrophically (up to 110.0 in state magnitude, 0.369 in output).
-        # 4. This divergence suppresses quiet speech onsets, delaying VAD activation by 1.0s+.
-        #
-        # By adding a steady, mathematically inaudible noise floor (-120dB RMS is well below the
-        # 16-bit quantization floor of -96dB), we "swamp" the 1 LSB decoder rounding mismatch.
-        # This keeps the RNN states locked in phase across all platforms/decoders, recovering VAD
-        # sensitivity and restoring F1 accuracy without introducing false positives on static.
-        #
-        # Why dither is applied BEFORE peak normalization:
-        # The 1-LSB decoder rounding mismatches exist in the original, un-normalized audio. If the
-        # audio is extremely quiet, peak normalization will apply a massive gain (up to 1000x / +60dB)
-        # to the signal, which also amplifies the decoder noise. If we added dither *after* normalization
-        # at a fixed -120dB, it would be far too quiet to swamp the now-amplified decoder noise (which
-        # could be at -60dB). Applying dither *before* normalization ensures that the dither scales
-        # proportionally with the signal and the decoder noise, maintaining the correct swamping ratio.
-        # The amplified dither on quiet files is harmless because it is completely masked by the
-        # also-amplified real channel static.
+        if (
+            prior_is_preprocessed
+            and prior_audio is not None
+            and len(prior_audio) > 0
+        ):
+            vad_input, vad_offset_sec = self._prepare_preprocessed_lookback(
+                audio_array, sample_rate, prior_audio
+            )
+        else:
+            vad_input, vad_offset_sec = self._prepare_raw_lookback(
+                audio_array, sample_rate, prior_audio
+            )
+
+        raw_segments = self._extract_vad_frames(
+            vad_input, chunk_size, context_size
+        )
+
+        shifted_segments = self._trim_and_shift_segments(
+            raw_segments, vad_offset_sec
+        )
+
+        filtered_segments = self._filter_noise_segments(
+            shifted_segments, vad_input, vad_offset_sec, chunk_size
+        )
+
+        audio_len_sec = len(audio_array) / float(sample_rate)
+        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
+
+    def _prepare_preprocessed_lookback(
+        self,
+        audio_array: np.ndarray,
+        sample_rate: int,
+        prior_audio: np.ndarray,
+    ) -> tuple[np.ndarray, float]:
+        """Preprocesses current chunk alone and concatenates preprocessed lookback tail."""
+        if self.dither_rms > 0:
+            rng = np.random.default_rng(seed=self.seed)
+            audio_array = audio_array + rng.normal(
+                0.0, self.dither_rms, len(audio_array)
+            ).astype(np.float32)
+
+        audio_array = self._peak_normalize(audio_array)
+
+        if sample_rate != TARGET_SAMPLE_RATE:
+            resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
+            curr_audio = resampler.resample(audio_array)
+        else:
+            curr_audio = audio_array
+
+        curr_preprocessed = self.preprocess(curr_audio)
+        self.last_preprocessed_audio = curr_preprocessed
+
+        prior_prep = (
+            prior_audio.astype(np.float32)
+            if prior_audio.dtype != np.float32
+            else prior_audio
+        )
+        preprocessed = np.concatenate([prior_prep, curr_preprocessed])
+        prior_len_sec = len(prior_prep) / float(TARGET_SAMPLE_RATE)
+        return self._slice_vad_input(
+            preprocessed, prior_len_sec, is_fallback_priming=False
+        )
+
+    def _prepare_raw_lookback(
+        self,
+        audio_array: np.ndarray,
+        sample_rate: int,
+        prior_audio: np.ndarray | None,
+    ) -> tuple[np.ndarray, float]:
+        """Concatenates raw audio tail before single-pass resampling and preprocessing."""
         if self.dither_rms > 0:
             rng = np.random.default_rng(seed=self.seed)
             audio_array = audio_array + rng.normal(
@@ -784,27 +828,22 @@ class VoiceActivityDetector:
                     0.0, self.dither_rms, len(prior_audio)
                 ).astype(np.float32)
 
-        # Peak Normalization Heuristic
         audio_array = self._peak_normalize(audio_array)
 
-        # Fallback Priming (Call Starts / Segment 0):
-        is_fallback_priming = False
+        is_fallback = False
         if prior_audio is None:
             prior_audio = self._generate_comfort_noise(sample_rate)
-            is_fallback_priming = True
+            is_fallback = True
 
-        # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
-            if not is_fallback_priming:
+            if not is_fallback:
                 prior_audio = self._peak_normalize(prior_audio)
-
             prior_len_sec = len(prior_audio) / float(sample_rate)
             extended_native = np.concatenate([prior_audio, audio_array])
         else:
             prior_len_sec = 0.0
             extended_native = audio_array
 
-        # 2. Resample the entire unified array in a single pass to TARGET_SAMPLE_RATE
         if sample_rate != TARGET_SAMPLE_RATE:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             extended_audio = resampler.resample(extended_native)
@@ -812,30 +851,9 @@ class VoiceActivityDetector:
             extended_audio = extended_native
 
         preprocessed = self.preprocess(extended_audio)
+        curr_start_idx = int(prior_len_sec * TARGET_SAMPLE_RATE)
+        self.last_preprocessed_audio = preprocessed[curr_start_idx:]
 
-        # 3. Slicing strategy for VAD state warming (Lookback Priming):
-        # We run VAD starting from up to 1.5 seconds of the preamble to warm up the VAD RNN states,
-        # preventing cold-start vocal onset clipping.
-        # However, we only do this VAD state warming if we have a genuine prior audio tail.
-        # Warming up the VAD on synthetic comfort noise (is_fallback_priming=True) biases the VAD LSTM
-        # toward silence, which drastically reduces sensitivity at vocal onset.
-        vad_input, vad_offset_sec = self._slice_vad_input(
-            preprocessed, prior_len_sec, is_fallback_priming=is_fallback_priming
+        return self._slice_vad_input(
+            preprocessed, prior_len_sec, is_fallback_priming=is_fallback
         )
-
-        raw_segments = self._extract_vad_frames(
-            vad_input, chunk_size, context_size
-        )
-
-        # Time Coordinate Trimming & Shifting Mathematics:
-        shifted_segments = self._trim_and_shift_segments(
-            raw_segments, vad_offset_sec
-        )
-
-        filtered_segments = self._filter_noise_segments(
-            shifted_segments, vad_input, vad_offset_sec, chunk_size
-        )
-
-        # Pad and merge overlapping segments using the clean native-rate duration calculation
-        audio_len_sec = len(audio_array) / float(sample_rate)
-        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)

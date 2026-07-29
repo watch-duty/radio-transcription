@@ -420,6 +420,20 @@ class TestVadEngine(unittest.TestCase):
             baseline_f1=0.55,
         )
 
+    def test_integration_watchduty_a5412373_chunk68(self) -> None:
+        """Integration test to verify VAD performance on Watch Duty live feed inter-transmission gap (c1416cf1)."""
+        self._run_integration_test(
+            "test_watchduty_a5412373_chunk68.flac",
+            [
+                (0.532, 5.872),
+                (6.672, 8.200),
+                (9.675, 10.433),
+                (11.268, 11.768),
+                (13.548, 15.020),
+            ],
+            baseline_f1=0.793,
+        )
+
     def test_integration_static_middlebury_file(self) -> None:
         """Integration test to verify VAD rejects all segments on static-only audio file."""
         audio_path = (
