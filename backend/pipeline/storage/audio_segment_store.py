@@ -22,6 +22,7 @@ from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
     AudioSegment,
+    TranscriptFlagAction,
 )
 
 annotation_adapter = TypeAdapter(Annotation)
@@ -72,6 +73,10 @@ class AudioSegmentStore:
         self, segment_id: str, annotation_type: AnnotationType, data: dict
     ) -> Annotation:
         """Add an annotation to an audio segment."""
+        if annotation_type == AnnotationType.TRANSCRIPT_FLAG:
+            msg = "Use flag_transcript() to modify TRANSCRIPT_FLAG annotations."
+            raise ValueError(msg)
+
         try:
             uid = uuid.UUID(segment_id)
         except ValueError as e:
@@ -93,6 +98,38 @@ class AudioSegmentStore:
 
         if row is None:
             msg = f"Unable to add annotation for segment {segment_id}."
+            raise ValueError(msg)
+
+        return annotation_adapter.validate_python(
+            self._prepare_annotation(dict(row))
+        )
+
+    async def flag_transcript(
+        self, segment_id: str, user_id: str, action: TranscriptFlagAction
+    ) -> Annotation:
+        """Atomically flag or unflag a transcript for a specific user."""
+        try:
+            uid = uuid.UUID(segment_id)
+        except ValueError as e:
+            msg = f"Invalid segment_id UUID: {segment_id}"
+            raise ValueError(msg) from e
+
+        if action == TranscriptFlagAction.FLAG:
+            sql_query = audio_segment_queries.FLAG_TRANSCRIPT_SQL
+        elif action == TranscriptFlagAction.UNFLAG:
+            sql_query = audio_segment_queries.UNFLAG_TRANSCRIPT_SQL
+        else:
+            msg = f"Invalid action: {action}. Must be 'flag' or 'unflag'."
+            raise ValueError(msg)
+
+        try:
+            row = await self._pool.fetchrow(sql_query, uid, user_id)
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            msg = f"Audio segment {segment_id} does not exist."
+            raise ValueError(msg) from e
+
+        if row is None:
+            msg = f"Unable to update flag for segment {segment_id}."
             raise ValueError(msg)
 
         return annotation_adapter.validate_python(

@@ -35,6 +35,25 @@ async def _update_feed_bookmark(
     await conn.close()
 
 
+async def _deactivate_bcfy_calls_sid_lease(sid: str) -> None:
+    """Fence the temporary parent lease before deactivating its child Feed."""
+    conn = await asyncpg.connect(**_CONN_KWARGS)
+    try:
+        await conn.execute(
+            """
+            UPDATE public.ingestion_leases
+            SET status = 'deactivated'::public.feed_status,
+                worker_id = NULL,
+                last_heartbeat = NULL
+            WHERE source_type = 'bcfy_calls'
+              AND lease_key = $1
+            """,
+            sid,
+        )
+    finally:
+        await conn.close()
+
+
 def _create_and_cleanup_feed(
     payload: dict[str, Any],
 ) -> Generator[tuple[str, str]]:
@@ -95,20 +114,34 @@ def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
     yield from _create_and_cleanup_feed(payload)
 
 
-@pytest.fixture(name="test_polling_feed")
-def create_test_polling_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary polling feed for testing.
+@pytest.fixture(name="test_sid_polling_feed")
+def create_test_sid_polling_feed() -> Generator[tuple[str, str]]:
+    """Create a temporary Calls Feed beneath its current SID authority.
+
+    Creating a ``bcfy_calls`` feed via the API provisions the parent SID
+    lease, membership properties, and active child in one transaction.
 
     Yields:
         tuple[str, str]: A tuple containing (feed_id, feed_name).
     """
+    sid = str(uuid.uuid4().fields[0])
+    group_id = "2912"
     feed_name = f"integration-test-polling-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
         "source_type": "bcfy_calls",
-        "source_feed_id": f"{uuid.uuid4().fields[0]}-{uuid.uuid4().fields[1]}",
+        "source_feed_id": f"{sid}-{group_id}",
     }
-    yield from _create_and_cleanup_feed(payload)
+    gen = _create_and_cleanup_feed(payload)
+    feed_id, _ = next(gen)
+    try:
+        yield feed_id, feed_name
+    finally:
+        asyncio.run(_deactivate_bcfy_calls_sid_lease(sid))
+        try:
+            next(gen)
+        except StopIteration:
+            pass
 
 
 @pytest.fixture(name="test_echo_feed")

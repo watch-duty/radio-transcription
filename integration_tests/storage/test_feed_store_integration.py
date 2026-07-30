@@ -176,16 +176,20 @@ async def test_primary_cte_respects_per_type_limits(
     """Each branch's LIMIT bounds the rows returned of that source_type."""
     for i in range(3):
         await _insert_feed(db_pool, f"bf-{i}", source_type="bcfy_feeds")
-        await _insert_feed(db_pool, f"bc-{i}", source_type="bcfy_calls")
         await _insert_feed(db_pool, f"om-{i}", source_type="openmhz")
+        await _insert_feed(
+            db_pool,
+            f"fn-{i}",
+            source_type="fire_notifications",
+        )
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 2,
-            SourceType.BCFY_CALLS: 1,
             SourceType.OPENMHZ: 3,
+            SourceType.FIRE_NOTIFICATIONS: 1,
         },
     )
 
@@ -193,8 +197,8 @@ async def test_primary_cte_respects_per_type_limits(
     for lease in result:
         counts[lease["source_type"]] += 1
     assert counts[SourceType.BCFY_FEEDS] == 2
-    assert counts[SourceType.BCFY_CALLS] == 1
     assert counts[SourceType.OPENMHZ] == 3
+    assert counts[SourceType.FIRE_NOTIFICATIONS] == 1
 
 
 async def test_primary_cte_limit_zero_skips_type(
@@ -203,15 +207,19 @@ async def test_primary_cte_limit_zero_skips_type(
     """A per-branch LIMIT of 0 returns zero rows of that source_type."""
     await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
     await _insert_feed(db_pool, "bf-1", source_type="bcfy_feeds")
-    await _insert_feed(db_pool, "bc-0", source_type="bcfy_calls")
+    await _insert_feed(
+        db_pool,
+        "fn-0",
+        source_type="fire_notifications",
+    )
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 0,
-            SourceType.BCFY_CALLS: 10,
             SourceType.OPENMHZ: 10,
+            SourceType.FIRE_NOTIFICATIONS: 10,
         },
     )
 
@@ -219,7 +227,8 @@ async def test_primary_cte_limit_zero_skips_type(
         lease["source_type"] != SourceType.BCFY_FEEDS for lease in result
     )
     assert any(
-        lease["source_type"] == SourceType.BCFY_CALLS for lease in result
+        lease["source_type"] == SourceType.FIRE_NOTIFICATIONS
+        for lease in result
     )
 
 
@@ -234,8 +243,8 @@ async def test_primary_cte_sets_status_to_active(
         worker,
         limits={
             SourceType.BCFY_FEEDS: 10,
-            SourceType.BCFY_CALLS: 10,
             SourceType.OPENMHZ: 10,
+            SourceType.FIRE_NOTIFICATIONS: 10,
         },
     )
 
@@ -2667,3 +2676,251 @@ async def test_list_feed_history_records_decodes_jsonb(
     # And check content
     assert event["before_values"]["status"] == "unclaimed"
     assert event["after_values"]["status"] == "deactivated"
+
+
+# -- Tests: SID-managed Calls admin mutations -------------------------
+
+
+def _unique_sid() -> str:
+    """Return a numeric SID unique across parallel test runs."""
+    return str(uuid.uuid4().int)[:12]
+
+
+async def _create_sid_member(
+    store: FeedStore,
+    sid: str,
+    group_id: str,
+) -> uuid.UUID:
+    """Create one maintained SID child and return its feed id."""
+    feed = await store.create_feed(
+        f"SID {sid} group {group_id}",
+        "bcfy_calls",
+        f"{sid}-{group_id}",
+        actor_id=_TEST_ACTOR_ID,
+    )
+    return feed["id"]
+
+
+async def _get_sid_lease(pool: asyncpg.Pool, sid: str) -> dict:
+    """Read the parent Lease authority row for one SID."""
+    row = await pool.fetchrow(
+        "SELECT status::text AS status, worker_id, last_heartbeat,"
+        " fencing_token, membership_revision, failure_count, retry_after,"
+        " status_reason, status_reason_detail"
+        " FROM ingestion_leases"
+        " WHERE source_type = 'bcfy_calls' AND lease_key = $1",
+        sid,
+    )
+    assert row is not None
+    return dict(row)
+
+
+async def _quarantine_sid_lease(pool: asyncpg.Pool, sid: str) -> None:
+    """Drive the parent Lease into a retained SID-wide failure episode."""
+    await pool.execute(
+        "UPDATE ingestion_leases SET status = 'quarantined'::feed_status,"
+        " failure_count = 5, status_reason = $2, status_reason_detail = $3,"
+        " fencing_token = 7"
+        " WHERE source_type = 'bcfy_calls' AND lease_key = $1",
+        sid,
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        "SID-wide outage",
+    )
+
+
+async def test_sid_child_is_born_with_null_cursor(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """SID children are born awaiting page-boundary adoption: the
+    set_default_feed_bookmarks() trigger must no longer seed bcfy_calls
+    cursors (migration 032).
+    """
+    sid = _unique_sid()
+
+    feed = await store.create_feed(
+        f"SID {sid} null cursor",
+        "bcfy_calls",
+        f"{sid}-1001",
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    assert feed["last_bookmark_time"] is None
+    cursor = await db_pool.fetchval(
+        "SELECT last_bookmark_time FROM feeds WHERE id = $1",
+        feed["id"],
+    )
+    assert cursor is None
+
+
+async def test_sid_reset_repairs_inactive_parent_under_clean_child(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Resetting an already-clean child still reactivates the parent."""
+    sid = _unique_sid()
+    feed_id = await _create_sid_member(store, sid, "1001")
+    await _quarantine_sid_lease(db_pool, sid)
+    revision_before = (await _get_sid_lease(db_pool, sid))[
+        "membership_revision"
+    ]
+
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert feed is not None
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["status"] == "unclaimed"
+    assert lease["failure_count"] == 0
+    assert lease["retry_after"] is None
+    assert lease["status_reason"] is None
+    assert lease["status_reason_detail"] is None
+    assert lease["worker_id"] is None
+    assert lease["last_heartbeat"] is None
+    # The fencing token survives every admin reactivation.
+    assert lease["fencing_token"] == 7
+    assert lease["membership_revision"] == revision_before + 1
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert [row["action"] for row in audit_rows] == [
+        "feed.created",
+        "feed.reset",
+    ]
+    reset_row = audit_rows[-1]
+    before_values = _decode_json_object(reset_row["before_values"])
+    after_values = _decode_json_object(reset_row["after_values"])
+    # The child itself was already clean: the event records the
+    # parent-only repair with an unchanged child snapshot.
+    assert before_values == after_values
+    assert after_values["status"] == "active"
+
+
+async def test_sid_reset_replay_is_full_noop(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A reset with nothing to change bumps nothing and logs nothing."""
+    sid = _unique_sid()
+    feed_id = await _create_sid_member(store, sid, "1001")
+
+    # Clean child under a clean unclaimed parent: full no-op.
+    noop = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+    assert noop is not None
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["membership_revision"] == 1
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert [row["action"] for row in audit_rows] == ["feed.created"]
+
+    # One real repair, then an idempotent replay.
+    await _quarantine_sid_lease(db_pool, sid)
+    first = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+    assert first is not None
+    lease_after_first = await _get_sid_lease(db_pool, sid)
+
+    second = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert second is not None
+    assert await _get_sid_lease(db_pool, sid) == lease_after_first
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert [row["action"] for row in audit_rows] == [
+        "feed.created",
+        "feed.reset",
+    ]
+
+
+async def test_sid_reset_preserves_active_parent_authority(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Resetting a dirty child never disturbs an active parent's episode."""
+    sid = _unique_sid()
+    feed_id = await _create_sid_member(store, sid, "1001")
+    worker = uuid.uuid4()
+    await db_pool.execute(
+        "UPDATE ingestion_leases SET status = 'active'::feed_status,"
+        " worker_id = $2, last_heartbeat = NOW(), fencing_token = 3,"
+        " failure_count = 2, status_reason = $3"
+        " WHERE source_type = 'bcfy_calls' AND lease_key = $1",
+        sid,
+        worker,
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status = 'failing'::feed_status, failure_count = 1"
+        " WHERE id = $1",
+        feed_id,
+    )
+    revision_before = (await _get_sid_lease(db_pool, sid))[
+        "membership_revision"
+    ]
+
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert feed is not None
+    child = await _get_feed_diagnostics(db_pool, feed_id)
+    assert child["status"] == "active"
+    assert child["failure_count"] == 0
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["status"] == "active"
+    assert lease["worker_id"] == worker
+    assert lease["fencing_token"] == 3
+    assert lease["failure_count"] == 2
+    assert lease["status_reason"] == FeedStatusReason.SOURCE_UNREACHABLE.value
+    assert lease["membership_revision"] == revision_before + 1
+
+
+async def test_sid_member_add_reactivates_parent_with_fresh_budget(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Adding a member to a deactivated SID clears the old episode."""
+    sid = _unique_sid()
+    feed_a = await _create_sid_member(store, sid, "1001")
+    await _quarantine_sid_lease(db_pool, sid)
+    assert await store.deactivate_feed(feed_a, actor_id=_TEST_ACTOR_ID)
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["status"] == "deactivated"
+    # Deactivation retains the closing episode for post-mortem reads.
+    assert lease["failure_count"] == 5
+    revision_before = lease["membership_revision"]
+
+    await _create_sid_member(store, sid, "1002")
+
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["status"] == "unclaimed"
+    assert lease["failure_count"] == 0
+    assert lease["retry_after"] is None
+    assert lease["status_reason"] is None
+    assert lease["status_reason_detail"] is None
+    assert lease["worker_id"] is None
+    assert lease["last_heartbeat"] is None
+    assert lease["fencing_token"] == 7
+    assert lease["membership_revision"] == revision_before + 1
+
+
+async def test_sid_member_add_preserves_failing_parent_budget(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Adding a member to a failing SID keeps its backoff and budget."""
+    sid = _unique_sid()
+    await _create_sid_member(store, sid, "1001")
+    await db_pool.execute(
+        "UPDATE ingestion_leases SET status = 'failing'::feed_status,"
+        " failure_count = 2, retry_after = NOW() + INTERVAL '5 minutes',"
+        " status_reason = $2"
+        " WHERE source_type = 'bcfy_calls' AND lease_key = $1",
+        sid,
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+    )
+    revision_before = (await _get_sid_lease(db_pool, sid))[
+        "membership_revision"
+    ]
+
+    await _create_sid_member(store, sid, "1002")
+
+    lease = await _get_sid_lease(db_pool, sid)
+    assert lease["status"] == "failing"
+    assert lease["failure_count"] == 2
+    assert lease["retry_after"] is not None
+    assert lease["status_reason"] == FeedStatusReason.SOURCE_UNREACHABLE.value
+    assert lease["membership_revision"] == revision_before + 1

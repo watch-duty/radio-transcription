@@ -4,9 +4,10 @@ Exercises the model loaders, preprocess filters, and validates accuracy metrics
 against actual ground-truth voice activity segments from the Colab.
 """
 
+import sys
 import unittest
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 import av
 import numpy as np
@@ -18,20 +19,41 @@ from backend.pipeline.segmentation.constants import (
     TONE_QUIK_CALL_II_FREQ1_HZ,
     TONE_QUIK_CALL_II_FREQ2_HZ,
     TONE_STFT_HOP_LENGTH,
+    VAD_DEFAULT_PAD_SEC,
     VAD_DEFAULT_PRIMING_SEC,
     VAD_TEST_SUBAUDIBLE_RUMBLE_FREQ_HZ,
 )
 
 SAMPLES_PER_MS: Final = 16
 
+# Annotated speech in test_vad_inter_transmission_gap_speech.flac, the 15s
+# Hood River stream chunk behind segment c1416cf1. Shared by the pad_sec=0.0
+# accuracy benchmark and the production-padding clipping guard so the two can
+# never drift apart.
+HOOD_RIVER_CHUNK_GROUND_TRUTH: Final[list[tuple[float, float]]] = [
+    (0.532, 5.872),
+    (6.672, 8.200),
+    (9.675, 10.433),
+    (11.268, 11.768),
+    (13.548, 15.020),
+]
 
-def calculate_f1_score(
+
+class SegmentMetrics(NamedTuple):
+    """Frame-based accuracy metrics for a set of detected speech segments."""
+
+    f1: float
+    precision: float
+    recall: float
+
+
+def calculate_segment_metrics(
     ground_truth: list[tuple[float, float]],
     detected: list[tuple[float, float]],
     audio_len_sec: float,
     resolution_ms: int = 10,
-) -> float:
-    """Calculates the frame-based F1-score between ground truth and detected speech segments."""
+) -> SegmentMetrics:
+    """Calculates frame-based precision, recall, and F1 between ground truth and detected speech."""
     num_frames = int(np.ceil(audio_len_sec * 1000 / resolution_ms))
 
     gt_array = np.zeros(num_frames, dtype=bool)
@@ -52,11 +74,12 @@ def calculate_f1_score(
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    return (
+    f1 = (
         2 * (precision * recall) / (precision + recall)
         if (precision + recall) > 0
         else 0.0
     )
+    return SegmentMetrics(f1=f1, precision=precision, recall=recall)
 
 
 def load_audio(audio_path: Path) -> tuple[np.ndarray, int]:
@@ -190,8 +213,21 @@ class TestVadEngine(unittest.TestCase):
         tolerance: float = 0.02,
         vad_instance: vad.VoiceActivityDetector | None = None,
         chunk_len_sec: float = 15.0,
+        min_recall: float | None = None,
     ) -> None:
-        """Helper to run VAD over an audio file in simulated chunks and assert F1 differentially."""
+        """Helper to run VAD over an audio file in simulated chunks and assert F1 differentially.
+
+        Args:
+            filename: Fixture name under `test_data/`.
+            ground_truth: Annotated (start, end) speech ranges in seconds.
+            baseline_f1: Recorded F1 for this fixture (see VAD_BENCHMARKS.md).
+            tolerance: Permitted F1 drift below `baseline_f1`.
+            vad_instance: Detector override; defaults to the shared instance.
+            chunk_len_sec: Simulated production chunk length.
+            min_recall: Absolute recall floor. Set this on fixtures that guard
+                detector sensitivity, since F1 alone lets a recall drop hide
+                behind the precision gain that clipping speech produces.
+        """
         audio_path = Path(__file__).parent / "test_data" / filename
         if not audio_path.exists():
             self.skipTest(f"Audio file not found at: {audio_path}")
@@ -245,18 +281,32 @@ class TestVadEngine(unittest.TestCase):
         padded_segments = detector._pad_and_merge_segments(
             detected_segments, audio_len
         )
-        f1 = calculate_f1_score(ground_truth, padded_segments, audio_len)
+        metrics = calculate_segment_metrics(
+            ground_truth, padded_segments, audio_len
+        )
 
-        # Print the F1 score to stdout for differential tracking
-        print(  # noqa: T201
-            f"BENCHMARK_F1: {filename} = {f1:.4f} (baseline: {baseline_f1:.4f})"
+        # Emit the full metric triple to stdout so CI output is the source of
+        # truth for the table in VAD_BENCHMARKS.md.
+        sys.stdout.write(
+            f"BENCHMARK: {filename} f1={metrics.f1:.4f} "
+            f"precision={metrics.precision:.4f} recall={metrics.recall:.4f} "
+            f"(baseline f1: {baseline_f1:.4f})\n"
         )
 
         self.assertGreaterEqual(
-            f1,
+            metrics.f1,
             baseline_f1 - tolerance,
-            f"Regression detected on {filename}! F1 score was {f1:.4f} (baseline: {baseline_f1:.4f}, tolerance: {tolerance:.4f})",
+            f"Regression detected on {filename}! F1 score was {metrics.f1:.4f} (baseline: {baseline_f1:.4f}, tolerance: {tolerance:.4f})",
         )
+
+        if min_recall is not None:
+            self.assertGreaterEqual(
+                metrics.recall,
+                min_recall,
+                f"Recall regression on {filename}! Recall was {metrics.recall:.4f} "
+                f"(floor: {min_recall:.4f}). Speech is being clipped -- see the "
+                f"high-recall quality philosophy in VAD_BENCHMARKS.md.",
+            )
 
     def test_integration_stress_file(self) -> None:
         """Integration test to verify VAD performance on test_stress.flac."""
@@ -418,6 +468,79 @@ class TestVadEngine(unittest.TestCase):
                 (12.830, 13.413),
             ],
             baseline_f1=0.55,
+        )
+
+    def test_integration_hood_river_stream_chunk(self) -> None:
+        """Integration test to verify VAD performance on inter-transmission gap speech bursts (Hood River c1416cf1).
+
+        Runs on the raw 15s stream chunk. Hood River is a `bcfy_feeds` source,
+        which the icecast collector cuts into CHUNK_DURATION_SECONDS windows, so
+        this is the audio shape the VAD actually receives in production.
+
+        Like every row in VAD_BENCHMARKS.md this runs at `pad_sec = 0.0`, which
+        measures intrinsic boundary accuracy rather than shipped output. The
+        residual recall gap is speech-edge clipping at `0.532s`, `5.872s`, and
+        `6.672s`; production padding closes it, which
+        `test_integration_hood_river_stream_chunk_production_padding` asserts.
+        """
+        self._run_integration_test(
+            "test_vad_inter_transmission_gap_speech.flac",
+            HOOD_RIVER_CHUNK_GROUND_TRUTH,
+            baseline_f1=0.791,
+            min_recall=0.90,
+        )
+
+    def test_integration_hood_river_stream_chunk_production_padding(
+        self,
+    ) -> None:
+        """Verifies the shipped, padded output clips no annotated speech on the c1416cf1 chunk.
+
+        The tracked benchmarks deliberately run at `pad_sec = 0.0` so that pad
+        tuning does not move every row, but that is not the configuration whose
+        recall the high-recall quality philosophy is about -- what reaches the
+        ASR is padded. Without this test a regression that widened intrinsic
+        edge clipping past what `VAD_DEFAULT_PAD_SEC` can absorb would ship
+        clipped dispatches while the 0.0 benchmark stayed inside tolerance.
+        """
+        prod_vad = vad.VoiceActivityDetector(
+            models_dir=self.models_dir, pad_sec=VAD_DEFAULT_PAD_SEC
+        )
+        prod_vad.setup()
+        self._run_integration_test(
+            "test_vad_inter_transmission_gap_speech.flac",
+            HOOD_RIVER_CHUNK_GROUND_TRUTH,
+            baseline_f1=0.794,
+            vad_instance=prod_vad,
+            min_recall=1.0,
+        )
+
+    def test_integration_hood_river_segment_payload(self) -> None:
+        """Integration test to verify VAD performance on the stitched segment payload for Hood River c1416cf1.
+
+        The fixture is the [8.868s, 13.548s] window of the stream chunk above,
+        i.e. the payload the stitcher emitted for this segment. Because its
+        boundaries come from a prior run of the detector under test, it is not an
+        independent sensitivity guard -- that is
+        `test_integration_hood_river_stream_chunk`. What it does track is how the
+        detector scores on a short stitched payload, where the over-trigger
+        around each burst is a far larger share of the file than on a 15s chunk
+        (precision 0.571 here versus 0.687 on the chunk, same audio).
+
+        These two ranges are the hand-supplied annotation for this segment. In
+        stream-chunk coordinates (+8.868s) they are `9.675-10.433` and
+        `11.516-11.768`. The second onset sits 248ms later than the chunk
+        annotation's `11.268`; both are hand-supplied, and the 11.268-11.516
+        lead-in is the quietest stretch either labels (p90 -33.9 dB), so the two
+        readings of where that burst starts are not reconciled here.
+        """
+        self._run_integration_test(
+            "test_vad_hood_river_segment_payload.flac",
+            [
+                (0.807, 1.565),
+                (2.648, 2.900),
+            ],
+            baseline_f1=0.606,
+            min_recall=0.90,
         )
 
     def test_integration_static_middlebury_file(self) -> None:
@@ -651,5 +774,24 @@ class TestVadEngine(unittest.TestCase):
         self.assertAlmostEqual(padded[0][1], 2.112)  # 2.0 + 0.112
         self.assertAlmostEqual(padded[1][0], 2.912)  # 3.024 - 0.112
         self.assertAlmostEqual(padded[1][1], 4.324)  # 4.024 + 0.3
-        # Difference between padded segments is 2.912 - 2.112 = 0.8s (800ms)
         self.assertAlmostEqual(padded[1][0] - padded[0][1], 0.8)
+
+    def test_last_preprocessed_audio_cleared_on_skip(self) -> None:
+        """Verifies that last_preprocessed_audio is reset to None on empty or skipped VAD calls."""
+        detector = vad.VoiceActivityDetector()
+        detector.setup()
+
+        # Set stale value on instance
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with empty array
+        detector.detect_speech_segments(np.array([], dtype=np.float32))
+        self.assertIsNone(detector.last_preprocessed_audio)
+
+        # Set stale value again
+        detector.last_preprocessed_audio = np.ones(100, dtype=np.float32)
+
+        # Call with silent audio that triggers skip
+        silent_audio = np.zeros(16000, dtype=np.float32)
+        detector.detect_speech_segments(silent_audio)
+        self.assertIsNone(detector.last_preprocessed_audio)

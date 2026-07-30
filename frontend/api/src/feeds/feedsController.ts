@@ -34,8 +34,7 @@ import {
   Tags,
 } from 'tsoa';
 
-import { feedMutationActorHeaders } from './actorHeaders.js';
-
+import { mutationActorHeaders } from '../actorHeaders.js';
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import {
@@ -61,6 +60,14 @@ interface FeedBackend extends BaseFeedBackend {
   status_reason_detail?: string | null;
   status_reason: BackendFeedStatusReason | null;
   last_speech_segment_timestamp: string | null;
+  bcfy_calls_sid?: string | null;
+  lease_status?: BackendFeedStatus | null;
+  lease_last_heartbeat?: string | null;
+  lease_status_reason?: string | null;
+  effective_status?: BackendFeedStatus | null;
+  effective_status_reason?: string | null;
+  effective_status_reason_detail?: string | null;
+  effective_last_heartbeat?: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -181,6 +188,18 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
+  // Without effective fields, the feed's own lifecycle is effective.
+  const hasEffective = response.effective_status != null;
+  const effectiveStatus = response.effective_status ?? response.status;
+  const effectiveReason = hasEffective
+    ? response.effective_status_reason
+    : response.status_reason;
+  const effectiveReasonDetail = hasEffective
+    ? response.effective_status_reason_detail
+    : response.status_reason_detail;
+  const effectiveHeartbeat = hasEffective
+    ? (response.effective_last_heartbeat ?? null)
+    : response.last_heartbeat;
   return {
     id: response.id,
     name: response.name,
@@ -188,15 +207,20 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceFeedId: response.source_feed_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
-    status: convertFeedStatusBackend(response.status),
-    substatus: response.status,
-    lastHeartbeat: parseTimestamp(response.last_heartbeat),
+    status: convertFeedStatusBackend(effectiveStatus),
+    substatus: effectiveStatus,
+    childStatus: response.status,
+    lastHeartbeat: parseTimestamp(effectiveHeartbeat),
     tags: response.tags,
-    statusReasonDetail: response.status_reason_detail ?? undefined,
-    statusReason: convertFeedStatusReason(response.status_reason),
+    statusReasonDetail: effectiveReasonDetail ?? undefined,
+    statusReason: convertFeedStatusReason(effectiveReason),
     lastSpeechSegmentTimestamp: parseTimestamp(
       response.last_speech_segment_timestamp
     ),
+    bcfyCallsSid: response.bcfy_calls_sid ?? undefined,
+    leaseStatus: response.lease_status ?? undefined,
+    leaseLastHeartbeat: parseTimestamp(response.lease_last_heartbeat ?? null),
+    leaseStatusReason: convertFeedStatusReason(response.lease_status_reason),
   };
 }
 
@@ -393,7 +417,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -430,7 +454,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -465,7 +489,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -503,7 +527,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
@@ -541,7 +565,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({

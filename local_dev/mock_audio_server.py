@@ -101,7 +101,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise RuntimeError(msg)
 
         qs = parse_qs(parsed_url.query)
+        sid = qs.get("sid", [""])[0]
         source_feed_id = qs.get("groups", [""])[0]
+        if not source_feed_id and sid:
+            source_feed_id = f"{sid}-{DEFAULT_BCFY_FEED_ID}"
 
         current_file = self._get_next_audio_file(
             parsed_url, DATA_SOURCE_BCFY_CALLS, source_feed_id
@@ -120,6 +123,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "start_ts": int(time.time()),
                     "end_ts": int(time.time()) + 5,
                     "ts": int(time.time()),
+                    "groupId": source_feed_id,
                 }
             )
 

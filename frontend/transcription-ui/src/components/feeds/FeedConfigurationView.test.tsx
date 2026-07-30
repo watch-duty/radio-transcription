@@ -950,6 +950,92 @@ describe('FeedConfigurationView', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('should show Reset feed with cursor copy for an active SID-managed Calls feed', async () => {
+    const sidFeed: Feed = {
+      id: 'feed-sid-1',
+      name: 'Ventura County Calls',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '7017-1001',
+      status: 'active',
+      substatus: 'active',
+      childStatus: 'active',
+      bcfyCallsSid: '7017',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [...mockFeeds, sidFeed],
+      total: mockFeeds.length + 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Ventura County Calls')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Ventura County Calls',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    const resetMenuItem = screen.getByRole('menuitem', {
+      name: /Reset feed/i,
+    });
+    fireEvent.click(resetMenuItem);
+
+    expect(screen.getByText('Verify Feed Reset')).toBeInTheDocument();
+    expect(
+      screen.getByText(/clears the saved talkgroup position/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/next page boundary/i)).toBeInTheDocument();
+  });
+
+  it('should use the raw child status for Deactivate visibility on SID-managed feeds', async () => {
+    // Deactivated parent lease, but the child itself is still active.
+    const sidFeed: Feed = {
+      id: 'feed-sid-2',
+      name: 'Kern County Calls',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '7017-2002',
+      status: 'inactive',
+      substatus: 'deactivated',
+      childStatus: 'active',
+      bcfyCallsSid: '7017',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [...mockFeeds, sidFeed],
+      total: mockFeeds.length + 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Kern County Calls')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Kern County Calls',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    expect(
+      screen.getByRole('menuitem', { name: /Deactivate feed/i })
+    ).toBeInTheDocument();
+  });
+
   it('handles timezone tag selection using dropdown', async () => {
     renderView();
 
