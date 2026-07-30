@@ -140,9 +140,9 @@ class TestVadEngine(unittest.TestCase):
         """Verifies that pure digital silence returns no speech segments."""
         # 1 second of digital silence at 16kHz
         silence = np.zeros(16000, dtype=np.float32)
-        segments, _ = self.vad.detect_speech_segments(
+        segments = self.vad.detect_speech_segments(
             silence, sample_rate=16000
-        )
+        ).segments
         self.assertEqual(segments, [])
 
     def test_integer_inputs_converted(self) -> None:
@@ -152,9 +152,9 @@ class TestVadEngine(unittest.TestCase):
         prior_int16 = np.zeros(16000, dtype=np.int16)
 
         # This should execute successfully and return empty segments because it's pure silence
-        segments, _ = self.vad.detect_speech_segments(
+        segments = self.vad.detect_speech_segments(
             silence_int16, sample_rate=16000, prior_audio=prior_int16
-        )
+        ).segments
         self.assertEqual(segments, [])
 
     def test_denoise_boundary_and_empty_arrays(self) -> None:
@@ -187,7 +187,9 @@ class TestVadEngine(unittest.TestCase):
         """Verifies that synthetic tone (constant sine wave) is rejected by the neural VAD."""
         t = np.linspace(0, 1.0, 16000, endpoint=False)
         tone = np.sin(2 * np.pi * 1000 * t).astype(np.float32) * 0.5
-        segments, _ = self.vad.detect_speech_segments(tone, sample_rate=16000)
+        segments = self.vad.detect_speech_segments(
+            tone, sample_rate=16000
+        ).segments
         self.assertEqual(segments, [])
 
     def test_is_speech_segment_spiky_voice_retained(self) -> None:
@@ -254,9 +256,9 @@ class TestVadEngine(unittest.TestCase):
 
         for i in range(0, len(audio_data), chunk_samples):
             chunk = audio_data[i : i + chunk_samples]
-            raw_chunk_segments, _ = detector.detect_speech_segments(
+            raw_chunk_segments = detector.detect_speech_segments(
                 chunk, sample_rate=sample_rate, prior_audio=prior_audio_tail
-            )
+            ).segments
 
             # Shift coordinates relative to global timeline start
             chunk_offset_sec = i / float(sample_rate)
@@ -570,9 +572,9 @@ class TestVadEngine(unittest.TestCase):
 
         for i in range(0, len(audio_data), chunk_samples):
             chunk = audio_data[i : i + chunk_samples]
-            raw_chunk_segments, _ = self.vad.detect_speech_segments(
+            raw_chunk_segments = self.vad.detect_speech_segments(
                 chunk, sample_rate=sample_rate, prior_audio=prior_audio_tail
-            )
+            ).segments
             chunk_offset_sec = i / float(sample_rate)
             for start, end in raw_chunk_segments:
                 detected_segments.append(
@@ -601,15 +603,15 @@ class TestVadEngine(unittest.TestCase):
         chunk2 = speech_signal[500 * SAMPLES_PER_MS :]
 
         # Run chunk2 directly without priming
-        segments_no_prime, _ = self.vad.detect_speech_segments(
+        segments_no_prime = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS
-        )
+        ).segments
         self.assertIsNotNone(segments_no_prime)
 
         # Run chunk2 primed with the tail of chunk1
-        segments_primed, _ = self.vad.detect_speech_segments(
+        segments_primed = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS, prior_audio=chunk1
-        )
+        ).segments
 
         # The primed segments should have shifted coordinates that fall within the [0.0, 0.5] range of chunk2
         for start, end in segments_primed:
@@ -636,9 +638,9 @@ class TestVadEngine(unittest.TestCase):
         chunk2 = np.zeros(3000 * SAMPLES_PER_MS, dtype=np.float32)
 
         # 3. Run VAD on Chunk 2 primed with Chunk 1's tail
-        detected_segments, _ = self.vad.detect_speech_segments(
+        detected_segments = self.vad.detect_speech_segments(
             chunk2, sample_rate=1000 * SAMPLES_PER_MS, prior_audio=chunk1
-        )
+        ).segments
 
         # Assert that absolutely zero segments were detected inside the silent chunk
         self.assertEqual(detected_segments, [])
@@ -663,9 +665,9 @@ class TestVadEngine(unittest.TestCase):
 
         paging_signal = np.concatenate([tone1, tone2])
         self.assertTrue(self.vad.is_tone_segment(paging_signal))
-        segments, _ = self.vad.detect_speech_segments(
+        segments = self.vad.detect_speech_segments(
             paging_signal, sample_rate=16000
-        )
+        ).segments
         self.assertEqual(segments, [])
 
     def test_is_tone_segment_eas_attention(self) -> None:
@@ -676,9 +678,9 @@ class TestVadEngine(unittest.TestCase):
             + np.sin(2 * np.pi * TONE_EAS_FREQ2_HZ * t)
         ).astype(np.float32) * 0.25
         self.assertTrue(self.vad.is_tone_segment(eas_tone))
-        segments, _ = self.vad.detect_speech_segments(
+        segments = self.vad.detect_speech_segments(
             eas_tone, sample_rate=16000
-        )
+        ).segments
         self.assertEqual(segments, [])
 
     def test_is_speech_segment_reject_subaudible_flickering(self) -> None:
@@ -700,9 +702,9 @@ class TestVadEngine(unittest.TestCase):
         self.assertFalse(
             self.vad.is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
         )
-        segments, _ = self.vad.detect_speech_segments(
+        segments = self.vad.detect_speech_segments(
             flickering_signal, sample_rate=16000
-        )
+        ).segments
         self.assertEqual(segments, [])
 
     def test_is_speech_segment_reject_subaudible_flickering_file(
@@ -715,7 +717,9 @@ class TestVadEngine(unittest.TestCase):
             / "test_subaudible_flickering.flac"
         )
         samples, sr = load_audio(flickering_path)
-        segments, _ = self.vad.detect_speech_segments(samples, sample_rate=sr)
+        segments = self.vad.detect_speech_segments(
+            samples, sample_rate=sr
+        ).segments
         self.assertEqual(segments, [])
 
     def test_pad_and_merge_segments_midpoint_clamping(self) -> None:
@@ -793,14 +797,16 @@ class TestVadEngine(unittest.TestCase):
         detector.setup()
 
         # Call with empty array
-        _, denoised = detector.detect_speech_segments(
+        denoised = detector.detect_speech_segments(
             np.array([], dtype=np.float32)
-        )
+        ).preprocessed_audio
         self.assertIsNone(denoised)
 
         # Call with silent audio that triggers skip
         silent_audio = np.zeros(16000, dtype=np.float32)
-        _, denoised = detector.detect_speech_segments(silent_audio)
+        denoised = detector.detect_speech_segments(
+            silent_audio
+        ).preprocessed_audio
         self.assertIsNone(denoised)
 
     def test_concurrent_detect_speech_segments_preprocessed_audio_attribution(
@@ -828,12 +834,12 @@ class TestVadEngine(unittest.TestCase):
 
         # Single-threaded reference: the preprocessed audio each signal must
         # produce, computed serially before any concurrency is introduced.
-        _, expected_low = detector.detect_speech_segments(
+        expected_low = detector.detect_speech_segments(
             signal_low, sample_rate=sample_rate
-        )
-        _, expected_high = detector.detect_speech_segments(
+        ).preprocessed_audio
+        expected_high = detector.detect_speech_segments(
             signal_high, sample_rate=sample_rate
-        )
+        ).preprocessed_audio
         assert expected_low is not None
         assert expected_high is not None
         self.assertFalse(np.allclose(expected_low, expected_high))
@@ -848,9 +854,9 @@ class TestVadEngine(unittest.TestCase):
                 else:
                     signal, expected = signal_high, expected_high
 
-                _, actual = detector.detect_speech_segments(
+                actual = detector.detect_speech_segments(
                     signal, sample_rate=sample_rate
-                )
+                ).preprocessed_audio
                 assert actual is not None
                 self.assertTrue(
                     np.allclose(actual, expected),
@@ -880,12 +886,10 @@ class TestVadEngine(unittest.TestCase):
             np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
         ).astype(np.float32) * 0.0005
 
-        accepted, _rejected, _preprocessed = (
-            detector.detect_speech_segments_with_diagnostics(
-                spiky_static, sample_rate=16000
-            )
+        result = detector.detect_speech_segments_with_diagnostics(
+            spiky_static, sample_rate=16000
         )
-        self.assertEqual(accepted, [])
+        self.assertEqual(result.accepted_segments, [])
 
     def test_detect_speech_segments_with_diagnostics_returns_preprocessed_audio(
         self,
@@ -907,9 +911,9 @@ class TestVadEngine(unittest.TestCase):
         t = np.linspace(0, 1.0, 16000, endpoint=False)
         signal = (np.sin(2 * np.pi * 440 * t) * 0.3).astype(np.float32)
 
-        _, _, preprocessed = detector.detect_speech_segments_with_diagnostics(
+        preprocessed = detector.detect_speech_segments_with_diagnostics(
             signal, sample_rate=16000
-        )
+        ).preprocessed_audio
 
         self.assertIsNotNone(preprocessed)
         assert preprocessed is not None
@@ -917,9 +921,9 @@ class TestVadEngine(unittest.TestCase):
         # Matches the reference computed by the non-diagnostics API for the
         # identical input -- same underlying preprocessing, different entry
         # point.
-        _, expected_preprocessed = detector.detect_speech_segments(
+        expected_preprocessed = detector.detect_speech_segments(
             signal, sample_rate=16000
-        )
+        ).preprocessed_audio
         assert expected_preprocessed is not None
         np.testing.assert_array_equal(preprocessed, expected_preprocessed)
 

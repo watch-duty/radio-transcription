@@ -5,6 +5,7 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,36 @@ logger = get_task_logger(
 MODELS_DIR = Path(__file__).parent / "models"
 TARGET_SAMPLE_RATE = 16000
 DEFAULT_SILERO_WINDOW_SIZE = 512
+
+
+@dataclass(frozen=True)
+class SpeechDetectionResult:
+    """Result of detect_speech_segments.
+
+    preprocessed_audio is the current chunk's preprocessed audio (post
+    denoiser/EQ, excluding any prior-tail preamble) -- the exact signal VAD
+    judged -- or None if VAD was skipped outright (silent/empty input).
+    Returned rather than cached on the VoiceActivityDetector instance: see
+    detect_speech_segments for why that pattern is a cross-thread race once
+    the VAD is a process-wide shared singleton.
+    """
+
+    segments: list[tuple[float, float]]
+    preprocessed_audio: np.ndarray | None
+
+
+@dataclass(frozen=True)
+class SpeechDetectionDiagnostics:
+    """Result of detect_speech_segments_with_diagnostics.
+
+    Same preprocessed_audio semantics as SpeechDetectionResult.
+    rejected_segments carries the reason each candidate was filtered out,
+    for diagnostic tooling that needs to explain non-detections.
+    """
+
+    accepted_segments: list[tuple[float, float]]
+    rejected_segments: list[tuple[float, float, str]]
+    preprocessed_audio: np.ndarray | None
 
 
 class VoiceActivityDetector:
@@ -707,30 +738,24 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray | None = None,
         *,
         prior_is_preprocessed: bool = False,
-    ) -> tuple[
-        list[tuple[float, float]],
-        list[tuple[float, float, str]],
-        np.ndarray | None,
-    ]:
-        """Analyzes a normalized float32 audio array, returning (accepted_segments, rejected_segments_with_reasons, preprocessed_audio).
-
-        preprocessed_audio is the current chunk's preprocessed audio (post
-        denoiser/EQ, excluding any prior-tail preamble) -- the same signal
-        the detector judged internally -- or None if VAD was skipped or the
-        input was empty. Callers that need to plot or re-inspect the exact
-        signal VAD ran on (e.g. diagnostics) should use this return value
-        rather than caching it on the detector instance: see
-        detect_speech_segments for why that pattern is a cross-thread race
-        once the VAD is a shared singleton.
-        """
+    ) -> SpeechDetectionDiagnostics:
+        """Analyzes a normalized float32 audio array, returning accepted/rejected candidates and the signal VAD judged."""
         if len(audio_array) == 0:
-            return [], [], None
+            return SpeechDetectionDiagnostics(
+                accepted_segments=[],
+                rejected_segments=[],
+                preprocessed_audio=None,
+            )
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
         if self._should_skip_vad(audio_array, sample_rate):
-            return [], [], None
+            return SpeechDetectionDiagnostics(
+                accepted_segments=[],
+                rejected_segments=[],
+                preprocessed_audio=None,
+            )
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
@@ -772,7 +797,11 @@ class VoiceActivityDetector:
         accepted_segments = self._pad_and_merge_segments(
             filtered_segments, audio_len_sec
         )
-        return accepted_segments, rejected_segments, current_chunk_preprocessed
+        return SpeechDetectionDiagnostics(
+            accepted_segments=accepted_segments,
+            rejected_segments=rejected_segments,
+            preprocessed_audio=current_chunk_preprocessed,
+        )
 
     def _slice_vad_input(
         self,
@@ -854,19 +883,16 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray | None = None,
         *,
         prior_is_preprocessed: bool = False,
-    ) -> tuple[list[tuple[float, float]], np.ndarray | None]:
-        """Analyzes normalized float32 audio array, returning speech segments as (start, end)
-        alongside the preprocessed audio of the current chunk only (excluding any prior-tail/
-        priming preamble), or None if VAD was skipped or the input was empty.
-        """
+    ) -> SpeechDetectionResult:
+        """Analyzes normalized float32 audio array, returning detected speech segments and the signal VAD judged."""
         if len(audio_array) == 0:
-            return [], None
+            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
         if self._should_skip_vad(audio_array, sample_rate):
-            return [], None
+            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
@@ -906,7 +932,9 @@ class VoiceActivityDetector:
         segments = self._pad_and_merge_segments(
             filtered_segments, audio_len_sec
         )
-        return segments, current_chunk_preprocessed
+        return SpeechDetectionResult(
+            segments=segments, preprocessed_audio=current_chunk_preprocessed
+        )
 
     def _dither_and_normalize(
         self,
