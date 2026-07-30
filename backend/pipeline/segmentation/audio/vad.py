@@ -136,7 +136,6 @@ class VoiceActivityDetector:
         self.spikiness_ratio_threshold = spikiness_ratio_threshold
         self.min_rms_threshold = min_rms_threshold
         self.dither_rms = dither_rms
-        self.last_preprocessed_audio: np.ndarray | None = None
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stft_sequence.onnx"
