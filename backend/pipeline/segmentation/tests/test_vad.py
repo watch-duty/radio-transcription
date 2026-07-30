@@ -199,7 +199,7 @@ class TestVadEngine(unittest.TestCase):
             + 0.25 * np.sin(2 * np.pi * 450 * t)
         ).astype(np.float32) * 0.1
         voice[:100] = 1.0
-        self.assertTrue(self.vad._is_speech_segment(voice, chunk_size=512))
+        self.assertTrue(self.vad.is_speech_segment(voice, chunk_size=512))
 
     def test_is_speech_segment_spiky_static_rejected(self) -> None:
         """Verifies that an unpitched noise burst with high RMS spikiness is rejected by tandem spectral flatness verification."""
@@ -208,7 +208,7 @@ class TestVadEngine(unittest.TestCase):
         static = (
             np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
         ).astype(np.float32) * 0.0005
-        self.assertFalse(self.vad._is_speech_segment(static, chunk_size=512))
+        self.assertFalse(self.vad.is_speech_segment(static, chunk_size=512))
 
     def _run_integration_test(
         self,
@@ -660,7 +660,7 @@ class TestVadEngine(unittest.TestCase):
         )
 
         paging_signal = np.concatenate([tone1, tone2])
-        self.assertTrue(self.vad._is_tone_segment(paging_signal))
+        self.assertTrue(self.vad.is_tone_segment(paging_signal))
         segments, _ = self.vad.detect_speech_segments(
             paging_signal, sample_rate=16000
         )
@@ -673,7 +673,7 @@ class TestVadEngine(unittest.TestCase):
             np.sin(2 * np.pi * TONE_EAS_FREQ1_HZ * t)
             + np.sin(2 * np.pi * TONE_EAS_FREQ2_HZ * t)
         ).astype(np.float32) * 0.25
-        self.assertTrue(self.vad._is_tone_segment(eas_tone))
+        self.assertTrue(self.vad.is_tone_segment(eas_tone))
         segments, _ = self.vad.detect_speech_segments(
             eas_tone, sample_rate=16000
         )
@@ -696,7 +696,7 @@ class TestVadEngine(unittest.TestCase):
         )
         flickering_signal = rumble + ticks
         self.assertFalse(
-            self.vad._is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
+            self.vad.is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
         )
         segments, _ = self.vad.detect_speech_segments(
             flickering_signal, sample_rate=16000

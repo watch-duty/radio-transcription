@@ -288,8 +288,6 @@ class VoiceActivityDetector:
             shifted_segments.append((start_sec, end_sec))
         return shifted_segments
 
-    _trim_and_shift_segments = trim_and_shift_segments
-
     def _pad_and_merge_segments(
         self,
         segments: list[tuple[float, float]],
@@ -396,8 +394,6 @@ class VoiceActivityDetector:
             return audio_array / peak * self.normalization_target_peak
         return audio_array
 
-    _peak_normalize = peak_normalize
-
     def generate_comfort_noise(self, sample_rate: int) -> np.ndarray:
         """Generates shaped synthetic comfort noise static for Segment 0 priming."""
         priming_samples = int(self.fallback_priming_sec * sample_rate)
@@ -414,9 +410,7 @@ class VoiceActivityDetector:
         # We use mode='full' and truncate to priming_samples to completely prevent edge wrap artifacts.
         return np.convolve(noise, np.ones(5) / 5, mode="full")[:priming_samples]
 
-    _generate_comfort_noise = generate_comfort_noise
-
-    def is_speech_segment_with_reason(
+    def _is_speech_segment_with_reason(
         self,
         sig: np.ndarray,
         chunk_size: int,
@@ -466,10 +460,8 @@ class VoiceActivityDetector:
         chunk_size: int,
     ) -> bool:
         """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
-        is_valid, _ = self.is_speech_segment_with_reason(sig, chunk_size)
+        is_valid, _ = self._is_speech_segment_with_reason(sig, chunk_size)
         return is_valid
-
-    _is_speech_segment = is_speech_segment
 
     def is_transient_noise_spike(self, sig: np.ndarray) -> bool:
         """Computes spectral flatness to confirm if a high-RMS spike is static noise/clicks."""
@@ -479,8 +471,6 @@ class VoiceActivityDetector:
         g_mean = np.exp(np.mean(np.log(spec)))
         flatness = float(g_mean / a_mean) if a_mean > 1e-10 else 1.0
         return flatness < 0.0005  # Static noise shelf is ~0.0003
-
-    _is_transient_noise_spike = is_transient_noise_spike
 
     def is_subaudible_flickering(
         self,
@@ -499,8 +489,6 @@ class VoiceActivityDetector:
         vocal_energy = float(np.sum(spec[vocal_mask]))
         ratio = vocal_energy / total_energy
         return ratio < VAD_VOCAL_ENERGY_MIN_RATIO
-
-    _is_subaudible_flickering = is_subaudible_flickering
 
     def is_tone_segment(self, sig: np.ndarray) -> bool:
         """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""
@@ -567,8 +555,6 @@ class VoiceActivityDetector:
             tone_frames / len(active_indices)
         ) >= TONE_SEGMENT_MIN_TONE_FRAME_RATIO
 
-    _is_tone_segment = is_tone_segment
-
     def _filter_noise_segments_with_diagnostics(
         self,
         shifted_segments: list[tuple[float, float]],
@@ -584,7 +570,7 @@ class VoiceActivityDetector:
             end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
             seg_signal = vad_input[start_idx:end_idx]
 
-            is_valid, reason = self.is_speech_segment_with_reason(
+            is_valid, reason = self._is_speech_segment_with_reason(
                 seg_signal, chunk_size
             )
             if is_valid:
@@ -650,6 +636,11 @@ class VoiceActivityDetector:
         def frames_to_sec(frame_idx: float) -> float:
             return (frame_idx * chunk_size) / TARGET_SAMPLE_RATE
 
+        # Thread safety: `state` and `context` are call-local numpy arrays
+        # initialized above. silero_session.run() is thread-safe for the same
+        # reason as ulunas_session — the ONNX graph is immutable; all VAD RNN
+        # state is passed in and returned as tensors rather than stored on the
+        # session.
         for frame_idx, i in enumerate(range(0, len(vad_input), chunk_size)):
             chunk = vad_input[i : i + chunk_size]
             if len(chunk) < chunk_size:
@@ -707,20 +698,6 @@ class VoiceActivityDetector:
                 )
 
         return raw_segments, frame_probs
-
-    def extract_vad_frames(
-        self,
-        vad_input: np.ndarray,
-        chunk_size: int,
-        context_size: int,
-    ) -> list[tuple[float, float]]:
-        """Public method: Evaluates Silero VAD frame window probabilities."""
-        raw_segments, _ = self.extract_vad_frame_probs(
-            vad_input, chunk_size, context_size
-        )
-        return raw_segments
-
-    _extract_vad_frames = extract_vad_frames
 
     def detect_speech_segments_with_diagnostics(
         self,
@@ -896,11 +873,11 @@ class VoiceActivityDetector:
                 )
             )
 
-        raw_segments = self._extract_vad_frames(
+        raw_segments, _ = self.extract_vad_frame_probs(
             vad_input, chunk_size, context_size
         )
 
-        shifted_segments = self._trim_and_shift_segments(
+        shifted_segments = self.trim_and_shift_segments(
             raw_segments, vad_offset_sec
         )
 
@@ -940,7 +917,7 @@ class VoiceActivityDetector:
                 0.0, self.dither_rms, len(audio_array)
             ).astype(np.float32)
 
-        return self._peak_normalize(audio_array)
+        return self.peak_normalize(audio_array)
 
     def _prepare_preprocessed_lookback(
         self,
@@ -1011,13 +988,13 @@ class VoiceActivityDetector:
         # Fallback Priming (Call Starts / Segment 0):
         is_fallback_priming = False
         if prior_audio is None:
-            prior_audio = self._generate_comfort_noise(sample_rate)
+            prior_audio = self.generate_comfort_noise(sample_rate)
             is_fallback_priming = True
 
         # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
             if not is_fallback_priming:
-                prior_audio = self._peak_normalize(prior_audio)
+                prior_audio = self.peak_normalize(prior_audio)
             prior_len_sec = len(prior_audio) / float(sample_rate)
             extended_native = np.concatenate([prior_audio, audio_array])
         else:

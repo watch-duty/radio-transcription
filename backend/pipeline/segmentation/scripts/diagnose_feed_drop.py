@@ -8,17 +8,18 @@ why any expected speech interval was classified as non-speech.
 import argparse
 import datetime
 import io
-import json
 import logging
 import os
 import re
 import sys
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
 
+import google.auth
 import numpy as np
+import requests
+from google.auth import impersonated_credentials
+from google.auth.transport import requests as google_requests
 from google.cloud import storage
 
 from backend.pipeline.segmentation import constants as trans_constants
@@ -26,6 +27,65 @@ from backend.pipeline.segmentation.audio import processor as audio_processor
 from backend.pipeline.segmentation.audio import vad
 
 logger = logging.getLogger("diagnose_feed_drop")
+
+# Nominal duration of a single continuous-feed audio chunk. Used only as a
+# last-resort fallback when a blob carries no duration metadata and cannot be
+# decoded; a wrong value here skews every downstream reconciliation window, so
+# callers are warned whenever it is applied.
+NOMINAL_CHUNK_DURATION_SEC = 15.0
+
+# Identity impersonated when calling the Audio Segments API. Both environments
+# currently use the prod service account; only the target audience differs.
+# Override with --service-account or DIAGNOSTIC_SERVICE_ACCOUNT.
+DEFAULT_SERVICE_ACCOUNT = (
+    "transcription-sa-prod@automatic-hawk-481415-m9.iam.gserviceaccount.com"
+)
+
+# Per-environment GCP configuration. Keyed by the canonical environment name;
+# `_canonical_env` maps user-supplied aliases (development, production) onto
+# these keys. Every value is overridable via CLI flag or environment variable
+# so the tool can be pointed at a new project without a source edit.
+ENVIRONMENT_CONFIG = {
+    "dev": {
+        "bucket": "ingestion-staging-bucket-dev",
+        "project": "probable-symbol-492218-i7",
+        "segments_api_url": (
+            "https://audio-segments-api-dev-lu3a6psyna-uc.a.run.app"
+        ),
+    },
+    "prod": {
+        "bucket": "ingestion-staging-bucket",
+        "project": "automatic-hawk-481415-m9",
+        "segments_api_url": (
+            "https://audio-segments-api-prod-lu3a6psyna-uc.a.run.app"
+        ),
+    },
+}
+
+
+def _canonical_env(env_name: str | None) -> str:
+    """Normalizes environment aliases onto ENVIRONMENT_CONFIG keys."""
+    key = (env_name or "dev").lower()
+    if key in ("prod", "production"):
+        return "prod"
+    return "dev"
+
+
+@dataclass(frozen=True)
+class DiagnosticConfig:
+    """Resolved GCP targets for a diagnostic run.
+
+    Attributes:
+        bucket: GCS staging bucket holding raw continuous audio chunks.
+        project: GCP project owning the bucket.
+        segments_api_url: Base URL of the Audio Segments API.
+        service_account: Service account impersonated for API calls.
+    """
+
+    bucket: str
+    project: str
+    segments_api_url: str
+    service_account: str
 
 
 @dataclass(frozen=True)
@@ -132,77 +192,69 @@ def _find_segment_blob(
 
 
 def _resolve_segment_via_api(
-    bucket_name: str,
+    api_url: str,
+    service_account: str,
     segment_id: str,
     feed_id: str | None = None,
 ) -> tuple[str, datetime.datetime, datetime.datetime] | None:
     """Attempts to resolve exact timestamps from Audio Segments API."""
     try:
-        import google.auth  # noqa: PLC0415
-        from google.auth.impersonated_credentials import (  # noqa: PLC0415
-            Credentials,
-            IDTokenCredentials,
-        )
-        from google.auth.transport.requests import Request  # noqa: PLC0415
-
-        aud = "https://audio-segments-api-prod-lu3a6psyna-uc.a.run.app"
-        if "dev" in bucket_name or "staging-bucket-dev" in bucket_name:
-            aud = "https://audio-segments-api-dev-lu3a6psyna-uc.a.run.app"
-
-        sa = (
-            "transcription-sa-prod@"
-            "automatic-hawk-481415-m9.iam.gserviceaccount.com"
-        )
         source_creds, _project = google.auth.default()
-        target_creds = Credentials(
+        target_creds = impersonated_credentials.Credentials(
             source_creds,
-            target_principal=sa,
+            target_principal=service_account,
             target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
-        id_creds = IDTokenCredentials(
+        id_creds = impersonated_credentials.IDTokenCredentials(
             target_creds,
-            target_audience=aud,
+            target_audience=api_url,
             include_email=True,
         )
-        request = Request()
-        id_creds.refresh(request)
+        id_creds.refresh(google_requests.Request())
         token = id_creds.token
 
-        query_feed = feed_id or ""
-        url = f"{aud}/v1/audio_segments?limit=5000"
-        if query_feed:
-            url += f"&feed_ids={query_feed}"
+        params = {"limit": "5000"}
+        if feed_id:
+            params["feed_ids"] = feed_id
         if segment_id:
-            url += f"&segment_ids={segment_id}"
+            params["segment_ids"] = segment_id
 
-        req = urllib.request.Request(  # noqa: S310
-            url, headers={"Authorization": f"Bearer {token}"}
+        resp = requests.get(
+            f"{api_url}/v1/audio_segments",
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
         )
-        with urllib.request.urlopen(req) as resp:  # noqa: S310
-            data = json.loads(resp.read().decode("utf-8"))
-            items = (
-                data.get("segments", data)
-                if isinstance(data, dict)
-                else data
-                if isinstance(data, list)
-                else []
-            )
-            for item in items:
-                if item.get("id") == segment_id:
-                    res_feed = item.get("feed_id", feed_id)
-                    st = _parse_timestamp(item.get("start_timestamp"))
-                    et = _parse_timestamp(item.get("end_timestamp"))
-                    logger.info(
-                        "Resolved %s via API: feed=%s, start=%s, end=%s",
-                        segment_id,
-                        res_feed,
-                        st.isoformat(),
-                        et.isoformat(),
-                    )
-                    return res_feed, st, et
+        resp.raise_for_status()
+        data = resp.json()
+        items = (
+            data.get("segments", data)
+            if isinstance(data, dict)
+            else data
+            if isinstance(data, list)
+            else []
+        )
+        for item in items:
+            if item.get("id") == segment_id:
+                res_feed = item.get("feed_id", feed_id)
+                st = _parse_timestamp(item.get("start_timestamp"))
+                et = _parse_timestamp(item.get("end_timestamp"))
+                logger.info(
+                    "Resolved %s via API: feed=%s, start=%s, end=%s",
+                    segment_id,
+                    res_feed,
+                    st.isoformat(),
+                    et.isoformat(),
+                )
+                return res_feed, st, et
     except Exception as e:
-        logger.debug(
-            "Could not resolve segment %s via API: %s",
+        # Isolation point: the API lookup is a best-effort fast path and the
+        # caller falls back to scanning canonical storage. Logged at warning
+        # so auth/impersonation failures stay visible rather than surfacing
+        # later as a misleading "segment not found".
+        logger.warning(
+            "Could not resolve segment %s via Audio Segments API (%s); "
+            "falling back to canonical storage scan.",
             segment_id,
             e,
         )
@@ -235,28 +287,39 @@ def _resolve_blob_end_time(
             dur_sec = len(samples) / float(sr)
             return start_time + datetime.timedelta(seconds=dur_sec)
     except Exception as err:
-        logger.debug(
+        # Isolation point: duration is recoverable from a nominal fallback,
+        # but that fallback fabricates the reconciliation window, so surface
+        # the decode failure rather than hiding it at debug level.
+        logger.warning(
             "Could not decode blob duration for segment %s: %s",
             segment_id,
             err,
         )
 
-    return start_time + datetime.timedelta(seconds=15.0)
+    logger.warning(
+        "Segment %s has no duration metadata and could not be decoded; "
+        "assuming a nominal %.1fs chunk. The reconciliation window is an "
+        "estimate and any reported gap near its end may be an artifact.",
+        segment_id,
+        NOMINAL_CHUNK_DURATION_SEC,
+    )
+    return start_time + datetime.timedelta(seconds=NOMINAL_CHUNK_DURATION_SEC)
 
 
 def _resolve_segment_id(
-    bucket_name: str,
+    config: DiagnosticConfig,
     segment_id: str,
-    project_id: str | None,
     feed_id: str | None = None,
 ) -> tuple[str, datetime.datetime, datetime.datetime]:
     """Resolves feed_id and exact timestamps for a Segment ID."""
-    api_res = _resolve_segment_via_api(bucket_name, segment_id, feed_id)
+    api_res = _resolve_segment_via_api(
+        config.segments_api_url, config.service_account, segment_id, feed_id
+    )
     if api_res:
         return api_res
 
-    client = storage.Client(project=project_id)
-    canonical_bucket = bucket_name.replace("staging", "canonical")
+    client = storage.Client(project=config.project)
+    canonical_bucket = config.bucket.replace("staging", "canonical")
     b = client.bucket(canonical_bucket)
 
     matched_blob = _find_segment_blob(b, segment_id, feed_id)
@@ -367,7 +430,6 @@ class FeedDiagnosticRunner:
         list[DiagnosticUtterance],
         np.ndarray | None,
         np.ndarray,
-        int,
         list[tuple[float, float]],
     ]:
         """Replays audio object to UTC datetimes."""
@@ -382,7 +444,7 @@ class FeedDiagnosticRunner:
         if len(samples) == 0:
             if not is_warmup:
                 logger.warning("Chunk contains zero audio samples.")
-            return [], None, np.array([], dtype=np.float32), sr, []
+            return [], None, np.array([], dtype=np.float32), []
 
         (
             accepted_segments,
@@ -425,22 +487,23 @@ class FeedDiagnosticRunner:
                 )
             )
 
-        last_prep = getattr(self.vad_engine, "last_preprocessed_audio", None)
-        preprocessed = (
-            last_prep
-            if last_prep is not None
-            else (
+        # Plot probabilities against the same signal the detector judged:
+        # 16 kHz, denoised, peak-normalized. Falls back to raw scaling only
+        # when VAD was skipped outright (silent/empty chunk), in which case
+        # there are no segments to reconcile against anyway.
+        preprocessed = self.vad_engine.last_preprocessed_audio
+        if preprocessed is None:
+            preprocessed = (
                 samples.astype(np.float32) / 32768.0
                 if np.issubdtype(samples.dtype, np.integer)
                 else samples
             )
-        )
         _, probs_list = self.vad_engine.extract_vad_frame_probs(
             preprocessed,
             chunk_size=vad.DEFAULT_SILERO_WINDOW_SIZE,
             context_size=64,
         )
-        return utterances, next_prior_tail, preprocessed, sr, probs_list
+        return utterances, next_prior_tail, preprocessed, probs_list
 
     def execute_warm_replay(
         self,
@@ -449,13 +512,11 @@ class FeedDiagnosticRunner:
         target_end: datetime.datetime | None = None,
     ) -> tuple[
         list[DiagnosticUtterance],
-        dict[storage.Blob, tuple[np.ndarray, int]],
         list[tuple[float, float, float]],
     ]:
         """Replays blobs continuously, separating warmup from reporting."""
         prior_tail = None
         live_utterances = []
-        signal_cache = {}
         live_probs = []
 
         warmup_count = 0
@@ -473,7 +534,9 @@ class FeedDiagnosticRunner:
                 or blob.time_created
                 or datetime.datetime.now(tz=datetime.UTC)
             )
-            chunk_end_time = blob_time + datetime.timedelta(seconds=15.0)
+            chunk_end_time = blob_time + datetime.timedelta(
+                seconds=NOMINAL_CHUNK_DURATION_SEC
+            )
             is_warmup = chunk_end_time <= warmup_end_time
 
             if is_warmup:
@@ -485,7 +548,6 @@ class FeedDiagnosticRunner:
                 utts,
                 prior_tail,
                 preprocessed,
-                sr,
                 probs_list,
             ) = self.evaluate_chunk_absolute(
                 blob,
@@ -493,8 +555,6 @@ class FeedDiagnosticRunner:
                 prior_tail,
                 is_warmup=is_warmup,
             )
-
-            signal_cache[blob] = (preprocessed, sr)
 
             for off_sec, prob in probs_list:
                 frame_time = blob_time + datetime.timedelta(seconds=off_sec)
@@ -539,7 +599,7 @@ class FeedDiagnosticRunner:
             warmup_count,
             live_count,
         )
-        return live_utterances, signal_cache, live_probs
+        return live_utterances, live_probs
 
     def _merge_accepted_intervals(
         self,
@@ -641,11 +701,7 @@ class FeedDiagnosticRunner:
                     max_p = max(p for _, p in window_probs)
 
             min_rms = self.vad_engine.min_rms_threshold
-            onset_thresh = getattr(
-                self.vad_engine,
-                "threshold_onset",
-                vad.VAD_DEFAULT_THRESHOLD_ONSET,
-            )
+            onset_thresh = self.vad_engine.threshold_onset
 
             if max_amp < min_rms and max_p < onset_thresh:
                 cause = "Genuine Silence / Inactive Audio Channel"
@@ -753,170 +809,89 @@ class FeedDiagnosticRunner:
         return reports
 
 
-def _build_svg_rects(
+def _compute_overlap_fraction(
     target_start: datetime.datetime,
-    target_end: datetime.datetime,
-    total_dur: float,
-    pad_l: int,
-    pad_t: int,
-    plot_w: int,
-    plot_h: int,
+    bin_start_sec: float,
+    bin_end_sec: float,
     accepted_segments: list[tuple[datetime.datetime, datetime.datetime]],
-    missing_intervals: list[tuple[datetime.datetime, datetime.datetime]],
-    user_speech_ranges: list[tuple[float, float]] | None = None,
-) -> tuple[list[str], list[str], list[str]]:
-    """Builds SVG rect elements for accepted, missing, and user speech."""
-    accepted_rects = []
-    for a_start, a_end in accepted_segments:
-        if a_end < target_start or a_start > target_end:
-            continue
-        s_sec = max((a_start - target_start).total_seconds(), 0.0)
-        e_sec = min((a_end - target_start).total_seconds(), total_dur)
-        x = pad_l + (s_sec / total_dur) * plot_w
-        w = max(((e_sec - s_sec) / total_dur) * plot_w, 2.0)
-        accepted_rects.append(
-            f'<rect x="{x:.1f}" y="{pad_t}" width="{w:.1f}" '
-            f'height="{plot_h * 2 + 20}" fill="rgba(46, 204, 113, 0.25)" '
-            f'stroke="#2ecc71" stroke-width="1.5"/>'
-        )
+    user_speech_ranges: list[tuple[float, float]],
+) -> float:
+    """Computes the fraction of a bin where accepted and expected agree.
 
-    missing_rects = []
-    for m_start, m_end in missing_intervals:
-        if m_end < target_start or m_start > target_end:
-            continue
-        s_sec = max((m_start - target_start).total_seconds(), 0.0)
-        e_sec = min((m_end - target_start).total_seconds(), total_dur)
-        x = pad_l + (s_sec / total_dur) * plot_w
-        w = max(((e_sec - s_sec) / total_dur) * plot_w, 2.0)
-        missing_rects.append(
-            f'<rect x="{x:.1f}" y="{pad_t}" width="{w:.1f}" '
-            f'height="{plot_h * 2 + 20}" fill="rgba(231, 76, 60, 0.25)" '
-            f'stroke="#e74c3c" stroke-width="1.5" stroke-dasharray="4,2"/>'
-        )
+    Args:
+        target_start: Absolute time that relative offsets are measured from.
+        bin_start_sec: Bin start, in seconds relative to target_start.
+        bin_end_sec: Bin end, in seconds relative to target_start.
+        accepted_segments: Absolute intervals the detector emitted as speech.
+        user_speech_ranges: Expected speech ranges, relative to target_start.
 
-    user_rects = []
-    if user_speech_ranges:
-        for u_start, u_end in user_speech_ranges:
-            if u_end < 0.0 or u_start > total_dur:
-                continue
-            s_sec = max(u_start, 0.0)
-            e_sec = min(u_end, total_dur)
-            x = pad_l + (s_sec / total_dur) * plot_w
-            w = max(((e_sec - s_sec) / total_dur) * plot_w, 2.0)
-            user_rects.append(
-                f'<rect x="{x:.1f}" y="{pad_t}" width="{w:.1f}" '
-                f'height="{plot_h * 2 + 20}" fill="rgba(52, 152, 219, 0.2)" '
-                f'stroke="#3498db" stroke-width="2" stroke-dasharray="6,3"/>'
-            )
-    return accepted_rects, missing_rects, user_rects
+    Returns:
+        Fraction of the bin in [0.0, 1.0] covered by both an accepted segment
+        and an expected range.
+    """
+    bin_dur = max(bin_end_sec - bin_start_sec, 0.001)
+    intersection_sec = 0.0
+    for a_s, a_e in accepted_segments:
+        a_rel_s = (a_s - target_start).total_seconds()
+        a_rel_e = (a_e - target_start).total_seconds()
+        for u_s, u_e in user_speech_ranges:
+            inter_s = max(bin_start_sec, a_rel_s, u_s)
+            inter_e = min(bin_end_sec, a_rel_e, u_e)
+            if inter_s < inter_e:
+                intersection_sec += inter_e - inter_s
+    return min(intersection_sec / bin_dur, 1.0)
 
 
-def _generate_html_visual_report(
-    output_path: str,
-    feed_id: str,
-    target_start: datetime.datetime,
-    target_end: datetime.datetime,
-    frame_probs: list[tuple[float, float, float]],
-    accepted_segments: list[tuple[datetime.datetime, datetime.datetime]],
-    missing_intervals: list[tuple[datetime.datetime, datetime.datetime]],
-    user_speech_ranges: list[tuple[float, float]] | None = None,
-) -> None:
-    """Generates an interactive HTML/SVG visual waveform chart."""
-    total_dur = max((target_end - target_start).total_seconds(), 1.0)
-    svg_w, svg_h = 1000, 320
-    pad_l, pad_r, pad_t, pad_b = 60, 40, 40, 40
-    plot_w = svg_w - pad_l - pad_r
-    plot_h = (svg_h - pad_t - pad_b - 20) // 2
-
-    valid_probs = sorted(
-        [(r, a, p) for r, a, p in frame_probs if 0.0 <= r <= total_dur],
-        key=lambda item: item[0],
-    )
-
-    wav_pts = []
-    prob_pts = []
-    for rel_sec, amp, prob in valid_probs:
-        x = pad_l + (rel_sec / total_dur) * plot_w
-        y_wav = pad_t + plot_h / 2 - (amp * plot_h / 2)
-        y_prob = pad_t + plot_h + 20 + (1.0 - prob) * plot_h
-        wav_pts.append(f"{x:.1f},{y_wav:.1f}")
-        prob_pts.append(f"{x:.1f},{y_prob:.1f}")
-
-    wav_d = "M " + " L ".join(wav_pts) if wav_pts else ""
-    prob_d = "M " + " L ".join(prob_pts) if prob_pts else ""
-    onset_y = pad_t + plot_h + 20 + (1.0 - 0.35) * plot_h
-
-    accepted_rects, missing_rects, user_rects = _build_svg_rects(
-        target_start,
-        target_end,
-        total_dur,
-        pad_l,
-        pad_t,
-        plot_w,
-        plot_h,
-        accepted_segments,
-        missing_intervals,
-        user_speech_ranges,
-    )
-
-    t_s_str = target_start.strftime("%H:%M:%S.%f")[:-3]
-    t_e_str = target_end.strftime("%H:%M:%S.%f")[:-3]
-
-    parts = [
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-        f"<title>VAD Diagnostic Report - Feed {feed_id}</title>",
-        "<style>",
-        "body { font-family: sans-serif; background: #0f172a; "
-        "color: #f8fafc; padding: 24px; }",
-        ".card { background: #1e293b; border-radius: 12px; padding: 20px; }",
-        "h1 { font-size: 20px; color: #38bdf8; }",
-        ".meta { font-size: 13px; color: #94a3b8; margin-bottom: 16px; }",
-        ".legend { display: flex; gap: 16px; font-size: 12px; }",
-        ".badge { padding: 4px 8px; border-radius: 4px; font-weight: 600; }",
-        ".b-speech { background: rgba(46,204,113,0.2); color: #2ecc71; "
-        "border: 1px solid #2ecc71; }",
-        ".b-drop { background: rgba(231,76,60,0.2); color: #e74c3c; "
-        "border: 1px solid #e74c3c; }",
-        ".b-user { background: rgba(52,152,219,0.2); color: #38bdf8; "
-        "border: 1px solid #38bdf8; }",
-        "</style></head><body>",
-        "<div class='card'><h1>VAD Diagnostic Chart</h1>",
-        f"<div class='meta'>Feed: <code>{feed_id}</code> | Timeframe: "
-        f"<code>{t_s_str}</code> to <code>{t_e_str} UTC</code></div>",
-        f"<svg width='{svg_w}' height='{svg_h}' viewBox='0 0 {svg_w} {svg_h}'>",
-        "".join(accepted_rects),
-        "".join(missing_rects),
-        "".join(user_rects),
-        f"<line x1='{pad_l}' y1='{pad_t + plot_h / 2}' x2='{pad_l + plot_w}' "
-        f"y2='{pad_t + plot_h / 2}' stroke='#334155'/>",
-        f"<path d='{wav_d}' fill='none' stroke='#64748b' stroke-width='1.2'/>",
-        f"<line x1='{pad_l}' y1='{pad_t + plot_h + 20 + plot_h}' "
-        f"x2='{pad_l + plot_w}' y2='{pad_t + plot_h + 20 + plot_h}' "
-        "stroke='#334155'/>",
-        f"<line x1='{pad_l}' y1='{onset_y}' x2='{pad_l + plot_w}' "
-        f"y2='{onset_y}' stroke='#ef4444' stroke-width='1.5' "
-        "stroke-dasharray='4,4'/>",
-        f"<text x='{pad_l - 10}' y='{onset_y + 4}' fill='#ef4444' "
-        "font-size='10' text-anchor='end'>0.35 Onset</text>",
-        f"<path d='{prob_d}' fill='none' stroke='#38bdf8' stroke-width='2'/>",
-        "</svg><div class='legend'>",
-        "<span class='badge b-speech'>■ Accepted Speech</span>",
-        "<span class='badge b-drop'>■ Dropped Interval</span>",
-        "<span class='badge b-user'>░ Expected Speech</span>",
-        "</div></div></body></html>",
-    ]
-    html_content = "".join(parts)
-    out_p = Path(output_path)
-    out_p.parent.mkdir(parents=True, exist_ok=True)
-    out_p.write_text(html_content, encoding="utf-8")
-    logger.info("Saved Visual Diagnostic Chart to: %s", output_path)
+# Timeline bin labels keyed by (vad_accepted, user_expected) when the caller
+# supplied expected-speech ranges to score against.
+_CONFUSION_MATRIX_LABELS = {
+    (True, True): ("[TP]", "BOTH (MATCH)"),
+    (False, True): ("[FN]", "USER ONLY"),
+    (True, False): ("[FP]", "VAD ONLY"),
+    (False, False): ("[TN]", "SILENCE"),
+}
 
 
-def _render_ascii_vad_timeline(  # noqa: PLR0912, PLR0915
+def _classify_timeline_bin(
+    prob: float,
+    onset_threshold: float,
+    *,
+    is_accepted: bool,
+    is_user: bool,
+    has_user_ranges: bool,
+) -> tuple[str, str]:
+    """Returns the (tag, status) label for a single timeline bin.
+
+    When the caller supplied expected-speech ranges the bin is scored as a
+    confusion-matrix cell against them; otherwise it reports whether the VAD
+    emitted the bin, crossed onset without emitting, or stayed silent.
+
+    Args:
+        prob: Mean Silero speech probability across the bin.
+        onset_threshold: Configured VAD onset threshold to compare against.
+        is_accepted: Whether an emitted speech segment overlaps the bin.
+        is_user: Whether an expected speech range overlaps the bin.
+        has_user_ranges: Whether expected ranges were supplied at all.
+
+    Returns:
+        A (tag, status) pair for display in the timeline chart.
+    """
+    if has_user_ranges:
+        return _CONFUSION_MATRIX_LABELS[(is_accepted, is_user)]
+
+    if is_accepted:
+        return "[V]", "VAD ACCEPTED"
+    if prob >= onset_threshold:
+        return "[?]", "VAD UNEMITTED"
+    return "[.]", "SILENCE"
+
+
+def _render_ascii_vad_timeline(
     target_start: datetime.datetime,
     target_end: datetime.datetime,
     frame_probs: list[tuple[float, float, float]],
     accepted_segments: list[tuple[datetime.datetime, datetime.datetime]],
+    onset_threshold: float,
     user_speech_ranges: list[tuple[float, float]] | None = None,
 ) -> None:
     """Renders a visual ASCII VAD probability timeline chart in console logs."""
@@ -942,7 +917,6 @@ def _render_ascii_vad_timeline(  # noqa: PLR0912, PLR0915
     while t <= total_dur:
         bin_start_sec = t
         bin_end_sec = min(t + step_size, total_dur)
-        bin_dur = max(bin_end_sec - bin_start_sec, 0.001)
 
         curr_start = target_start + datetime.timedelta(seconds=bin_start_sec)
         curr_end = target_start + datetime.timedelta(seconds=bin_end_sec)
@@ -963,48 +937,28 @@ def _render_ascii_vad_timeline(  # noqa: PLR0912, PLR0915
             (max(a_s, curr_start) < min(a_e, curr_end))
             for a_s, a_e in accepted_segments
         )
-        is_user = False
-        if user_speech_ranges:
-            is_user = any(
-                (max(u_s, bin_start_sec) < min(u_e, bin_end_sec))
-                for u_s, u_e in user_speech_ranges
-            )
+        is_user = bool(user_speech_ranges) and any(
+            (max(u_s, bin_start_sec) < min(u_e, bin_end_sec))
+            for u_s, u_e in (user_speech_ranges or [])
+        )
 
         overlap_frac = 0.0
         if user_speech_ranges and accepted_segments:
-            intersection_sec = 0.0
-            for a_s, a_e in accepted_segments:
-                a_rel_s = (a_s - target_start).total_seconds()
-                a_rel_e = (a_e - target_start).total_seconds()
-                for u_s, u_e in user_speech_ranges:
-                    inter_s = max(bin_start_sec, a_rel_s, u_s)
-                    inter_e = min(bin_end_sec, a_rel_e, u_e)
-                    if inter_s < inter_e:
-                        intersection_sec += inter_e - inter_s
-            overlap_frac = min(intersection_sec / bin_dur, 1.0)
+            overlap_frac = _compute_overlap_fraction(
+                target_start,
+                bin_start_sec,
+                bin_end_sec,
+                accepted_segments,
+                user_speech_ranges,
+            )
 
-        if user_speech_ranges:
-            if is_accepted and is_user:
-                tag = "[TP]"
-                status = "BOTH (MATCH)"
-            elif is_user and not is_accepted:
-                tag = "[FN]"
-                status = "USER ONLY"
-            elif is_accepted and not is_user:
-                tag = "[FP]"
-                status = "VAD ONLY"
-            else:
-                tag = "[TN]"
-                status = "SILENCE"
-        elif is_accepted:
-            tag = "[V]"
-            status = "VAD ACCEPTED"
-        elif prob >= 0.35:
-            tag = "[?]"
-            status = "VAD UNEMITTED"
-        else:
-            tag = "[.]"
-            status = "SILENCE"
+        tag, status = _classify_timeline_bin(
+            prob,
+            onset_threshold,
+            is_accepted=is_accepted,
+            is_user=is_user,
+            has_user_ranges=bool(user_speech_ranges),
+        )
 
         logger.info(
             "  [+%05.2fs] | %s (%0.2f) |  %0.2f   | %-4s %-12s",
@@ -1029,17 +983,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "Diagnose dropped speech and timeframe discrepancies on "
             "production feeds with tape backup."
         )
-    )
-    parser.add_argument(
-        "--html-report",
-        nargs="?",
-        const="default",
-        type=str,
-        default=None,
-        help=(
-            "Optional path to export an interactive HTML/SVG visual waveform "
-            "chart (e.g. '--html-report' or '--html-report report.html')."
-        ),
     )
     parser.add_argument(
         "--user-speech",
@@ -1109,6 +1052,27 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--service-account",
+        type=str,
+        required=False,
+        default=os.environ.get("DIAGNOSTIC_SERVICE_ACCOUNT"),
+        help=(
+            "Service account to impersonate for Audio Segments API calls "
+            "(defaults to DIAGNOSTIC_SERVICE_ACCOUNT env var, then the "
+            "built-in transcription service account)."
+        ),
+    )
+    parser.add_argument(
+        "--segments-api-url",
+        type=str,
+        required=False,
+        default=os.environ.get("AUDIO_SEGMENTS_API_URL"),
+        help=(
+            "Base URL of the Audio Segments API (defaults to "
+            "AUDIO_SEGMENTS_API_URL env var or the --env preset)."
+        ),
+    )
+    parser.add_argument(
         "--expected-start",
         type=str,
         required=False,
@@ -1160,21 +1124,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_env_and_bucket(
-    args: argparse.Namespace,
-) -> tuple[str, str]:
-    """Resolves default GCS bucket and GCP project from environment flags."""
-    env_key = (args.env or "dev").lower()
-    if env_key in ("prod", "production"):
-        default_bucket = "ingestion-staging-bucket"
-        default_project = "automatic-hawk-481415-m9"
-    else:
-        default_bucket = "ingestion-staging-bucket-dev"
-        default_project = "probable-symbol-492218-i7"
-
-    bucket = args.bucket or default_bucket
-    project = args.project or default_project
-    return bucket, project
+def _resolve_config(args: argparse.Namespace) -> DiagnosticConfig:
+    """Resolves GCP targets from --env presets, flags, and env vars."""
+    env_defaults = ENVIRONMENT_CONFIG[_canonical_env(args.env)]
+    return DiagnosticConfig(
+        bucket=args.bucket or env_defaults["bucket"],
+        project=args.project or env_defaults["project"],
+        segments_api_url=(
+            args.segments_api_url or env_defaults["segments_api_url"]
+        ),
+        service_account=args.service_account or DEFAULT_SERVICE_ACCOUNT,
+    )
 
 
 def _resolve_url_query_params(
@@ -1212,7 +1172,7 @@ def _resolve_url_query_params(
 
 
 def _resolve_target_timeframe(
-    args: argparse.Namespace, bucket: str, project: str
+    args: argparse.Namespace, config: DiagnosticConfig
 ) -> tuple[str, datetime.datetime, datetime.datetime] | None:
     """Resolves target feed_id, start_time, and end_time from arguments."""
     feed_id = args.feed_id
@@ -1245,7 +1205,7 @@ def _resolve_target_timeframe(
     seg_target_end = None
     if segment_id:
         res_feed, res_start, res_end = _resolve_segment_id(
-            bucket, segment_id, project, feed_id=feed_id
+            config, segment_id, feed_id=feed_id
         )
         feed_id = feed_id or res_feed
         seg_target_start = res_start
@@ -1254,14 +1214,14 @@ def _resolve_target_timeframe(
 
     if args.start_segment_id:
         res_feed, res_start, _ = _resolve_segment_id(
-            bucket, args.start_segment_id, project, feed_id=feed_id
+            config, args.start_segment_id, feed_id=feed_id
         )
         feed_id = feed_id or res_feed
         expected_start = expected_start or res_start.isoformat()
 
     if args.end_segment_id:
         _, _, res_end = _resolve_segment_id(
-            bucket, args.end_segment_id, project, feed_id=feed_id
+            config, args.end_segment_id, feed_id=feed_id
         )
         expected_end = expected_end or res_end.isoformat()
 
@@ -1328,18 +1288,17 @@ def _parse_offset_seconds(time_str: str) -> float:
 
 def _run_diagnostic_session(
     args: argparse.Namespace,
-    bucket: str,
-    project: str,
+    config: DiagnosticConfig,
     feed_id: str,
     target_start: datetime.datetime,
     target_end: datetime.datetime,
 ) -> None:
     """Executes chunk discovery, replay, and reconciliation."""
-    runner = FeedDiagnosticRunner(bucket, feed_id, project)
+    runner = FeedDiagnosticRunner(config.bucket, feed_id, config.project)
 
     warmup_start = target_start - datetime.timedelta(seconds=args.backup_sec)
     search_end = max(
-        target_end + datetime.timedelta(seconds=15.0),
+        target_end + datetime.timedelta(seconds=NOMINAL_CHUNK_DURATION_SEC),
         target_start + datetime.timedelta(seconds=args.window_sec),
     )
 
@@ -1372,10 +1331,10 @@ def _run_diagnostic_session(
         len(blobs),
     )
 
-    live_utterances, _, live_probs = runner.execute_warm_replay(
+    live_utterances, live_probs = runner.execute_warm_replay(
         blobs, target_start, target_end=target_end
     )
-    reports = runner.reconcile_timeframe(
+    runner.reconcile_timeframe(
         target_start, target_end, live_utterances, live_probs=live_probs
     )
 
@@ -1384,10 +1343,9 @@ def _run_diagnostic_session(
         for u in live_utterances
         if u.status == "Accepted"
     ]
-    missing_segs = [(r.missing_start, r.missing_end) for r in reports]
 
     user_ranges = None
-    if getattr(args, "user_speech", None):
+    if args.user_speech:
         user_ranges = []
         for raw_p in args.user_speech.split(","):
             part_str = raw_p.strip()
@@ -1401,28 +1359,13 @@ def _run_diagnostic_session(
                 user_ranges.append((v, v + 1.0))
 
     _render_ascii_vad_timeline(
-        target_start, target_end, live_probs, accepted_segs, user_ranges
+        target_start,
+        target_end,
+        live_probs,
+        accepted_segs,
+        runner.vad_engine.threshold_onset,
+        user_ranges,
     )
-
-    if args.html_report:
-        artifact_dir = os.environ.get("ANTIGRAVITY_ARTIFACT_DIR") or "."
-        if args.html_report == "default":
-            html_path = os.path.join(
-                artifact_dir, f"vad_diagnostic_{feed_id[:8]}.html"
-            )
-        else:
-            html_path = args.html_report
-
-        _generate_html_visual_report(
-            html_path,
-            feed_id,
-            target_start,
-            target_end,
-            live_probs,
-            accepted_segs,
-            missing_segs,
-            user_ranges,
-        )
 
 
 def main() -> None:
@@ -1435,15 +1378,13 @@ def main() -> None:
     )
 
     try:
-        bucket, project = _resolve_env_and_bucket(args)
-        resolved = _resolve_target_timeframe(args, bucket, project)
+        config = _resolve_config(args)
+        resolved = _resolve_target_timeframe(args, config)
         if not resolved:
             return
 
         feed_id, target_start, target_end = resolved
-        _run_diagnostic_session(
-            args, bucket, project, feed_id, target_start, target_end
-        )
+        _run_diagnostic_session(args, config, feed_id, target_start, target_end)
 
     except ValueError as e:
         sys.stderr.write(f"Error: {e}\n")
