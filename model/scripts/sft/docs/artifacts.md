@@ -32,6 +32,10 @@ Run state is rooted under:
 gs://BUCKET/sft/runs/ROUND_ID/
 ```
 
+Training rounds additionally persist canonical training and validation inputs,
+preflight evidence, and tuning state under this prefix. Eval-only rounds omit
+training-only state. Exact filenames and status requirements remain code-owned.
+
 Normalized inference manifests are published under the shared
 `inference_manifests/` namespace. The exact layout is code-owned and may evolve;
 obtain current URIs from durable configuration, metadata, or report artifacts
@@ -49,6 +53,11 @@ When recovering:
 3. let current code decide whether to resume, retry, or reject cached output;
 4. retain stale or failed artifacts for diagnosis without treating them as the
    active result.
+
+For zero-context batch evaluation, `batch_job.meta.json` records the submitted
+Vertex job and its request identity before polling. Current code validates that
+sidecar when resuming; its existence alone is not a distributed lock or proof
+of completed, reusable predictions.
 
 Detailed snapshot, retry, batch-job, and rolling-history behavior belongs to
 [`target_execution.py`](../../../src/gemini_sft/target_execution.py).

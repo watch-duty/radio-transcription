@@ -15,6 +15,26 @@ serialized schema, report columns, normalization, and calculations. Generated
 JSON is the machine-readable contract; this document explains how to interpret
 the main concepts.
 
+## Public Report Columns
+
+This table is machine-checked against `reporting.REPORT_COLUMNS`; the code
+remains authoritative for serialization and calculation.
+
+| Column | Meaning |
+| --- | --- |
+| `target_label` | Operator-facing label for the evaluated target. |
+| `model` | Publisher model, tuned endpoint, or checkpoint endpoint. |
+| `wer` | Word error rate percentage after shared normalization. |
+| `cer` | Character error rate percentage after shared normalization. |
+| `keyword_accuracy` | Occurrence-weighted accuracy for configured dispatch keywords. |
+| `empty_or_unintelligible_rate` | Percentage of scored hypotheses that are empty or explicitly unintelligible. |
+| `insertions` | Word insertions in the WER alignment. |
+| `deletions` | Word deletions in the WER alignment. |
+| `substitutions` | Word substitutions in the WER alignment. |
+| `total_reference_words` | Reference-word denominator used for WER. |
+| `missing_prediction_count` | Eval rows without a successful provider prediction. |
+| `artifacts` | Durable artifact URIs associated with the result. |
+
 ## Quality Metrics
 
 Word error rate is the sum of word insertions, deletions, and substitutions
@@ -32,7 +52,9 @@ different row population is not necessarily an improvement.
 
 The packaged empty-or-unintelligible metric captures scored hypotheses that are
 empty after normalization or equal the implementation's explicit
-unintelligible token.
+unintelligible token. The token comparison is case-insensitive after surrounding
+whitespace is stripped. Missing predictions are represented as empty scored
+hypotheses, so they count in this rate.
 
 Keep three cases distinct:
 

@@ -105,6 +105,11 @@ gemini-sft eval --config /path/to/eval-run.toml
 Evaluation can create paid batch or online inference. Independent prepared runs
 may execute in parallel when quota permits.
 
+For zero-context batch evaluation, `batch_job.meta.json` records the submitted
+job identity before polling. On recovery, let current code validate this
+sidecar and decide whether to resume the existing job; do not infer reusability
+from the file's existence alone.
+
 For prior-context evaluation, references must never enter provider requests.
 History comes from the evaluated target's earlier predictions according to the
 current implementation. See
@@ -138,6 +143,13 @@ Interpret execution gaps separately from transcription quality. See
 
 ## Before Committing
 
-Run the checks in [artifact hygiene](hygiene.md). Do not commit real run
-configs, predictions, downloaded manifests, credentials, or local result
-caches unless explicitly requested.
+Run the checks in [artifact hygiene](hygiene.md), including the shared staged
+artifact guard:
+
+```bash
+git status --short --ignored
+git diff --cached --name-only | rg '(^results/|^model/data/inference_manifests/|\.local\.toml$|^model/scripts/sft/results/.*\.jsonl(\.gz)?$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
+```
+
+Do not commit real run configs, predictions, downloaded manifests,
+credentials, or local result caches unless explicitly requested.
