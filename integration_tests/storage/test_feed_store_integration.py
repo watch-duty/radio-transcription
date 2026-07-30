@@ -2728,6 +2728,31 @@ async def _quarantine_sid_lease(pool: asyncpg.Pool, sid: str) -> None:
     )
 
 
+async def test_sid_child_is_born_with_null_cursor(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """SID children are born awaiting page-boundary adoption: the
+    set_default_feed_bookmarks() trigger must no longer seed bcfy_calls
+    cursors (migration 032).
+    """
+    sid = _unique_sid()
+
+    feed = await store.create_feed(
+        f"SID {sid} null cursor",
+        "bcfy_calls",
+        f"{sid}-1001",
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    assert feed["last_bookmark_time"] is None
+    cursor = await db_pool.fetchval(
+        "SELECT last_bookmark_time FROM feeds WHERE id = $1",
+        feed["id"],
+    )
+    assert cursor is None
+
+
 async def test_sid_reset_repairs_inactive_parent_under_clean_child(
     db_pool: asyncpg.Pool,
     store: FeedStore,
