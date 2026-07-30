@@ -352,9 +352,26 @@ def _child_source_type_from_row(
 def _should_write_cursor(
     current: datetime.datetime | None,
     requested: datetime.datetime | None,
+    *,
+    establish_from_null: bool = True,
 ) -> bool:
-    """Return whether ``requested`` advances the durable Feed cursor."""
-    return requested is not None and (current is None or requested > current)
+    """Return whether ``requested`` advances the durable Feed cursor.
+
+    Args:
+        current: Locked durable Feed cursor.
+        requested: Cursor carried by the child command.
+        establish_from_null: Whether a command may initialize a null
+            cursor. Progress and closed-cohort commands must pass
+            ``False``: an admin reset clears the cursor under the parent
+            Lease lock, and a stale in-flight progress command must not
+            repopulate it before a page-boundary ``SourceObservation``
+            re-establishes it.
+    """
+    if requested is None:
+        return False
+    if current is None:
+        return establish_from_null
+    return requested > current
 
 
 def _has_dirty_child_lifecycle(
@@ -815,6 +832,10 @@ def _plan_prepared_child_mutation(
     write_cursor = _should_write_cursor(
         before_state.last_bookmark_time,
         _mutation_cursor(mutation),
+        establish_from_null=not isinstance(
+            mutation,
+            (AdmittedAudioProgress, ClosedCohortProgress),
+        ),
     )
     if before_state.source_type is not mutation.member.source_type:
         return _PlannedChildMutation(
