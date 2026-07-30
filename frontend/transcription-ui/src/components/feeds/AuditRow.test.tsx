@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { FeedHistoryEvent } from '@transcription/common';
 
 import { AuditRow } from './AuditRow';
@@ -63,5 +63,30 @@ describe('AuditRow', () => {
       screen.getByText('• name changed from "Old Name" to "New Name"')
     ).toBeTruthy();
     expect(screen.getByText('• Tags: added "agency=Fire"')).toBeTruthy();
+  });
+
+  it('renders a popover with the failure reason and details when present', () => {
+    const failureEvent: FeedHistoryEvent = {
+      ...mockEvent,
+      action: 'feed.failure_reported',
+      beforeValues: { status: 'active' },
+      afterValues: {
+        status: 'failing',
+        statusReason: 'Connection timed out',
+        statusReasonDetail: 'Failed to connect to Icecast server on port 8000.',
+      },
+    };
+
+    render(<AuditRow auditEvent={failureEvent} />);
+
+    // Click the info icon button
+    const infoButton = screen.getByRole('button');
+    fireEvent.click(infoButton);
+
+    // Verify the popover content appears
+    expect(screen.getByText('Connection timed out')).toBeTruthy();
+    expect(
+      screen.getByText('Failed to connect to Icecast server on port 8000.')
+    ).toBeTruthy();
   });
 });
