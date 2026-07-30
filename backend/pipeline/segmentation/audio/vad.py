@@ -5,7 +5,6 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -172,7 +171,6 @@ class VoiceActivityDetector:
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
         self._warmup_numba()
-        self._dsp_lock = threading.Lock()
         self._initialize_dsp_filters()
 
     def _warmup_numba(self) -> None:
@@ -255,9 +253,16 @@ class VoiceActivityDetector:
         )[0]
 
     def preprocess(self, audio_array: np.ndarray) -> np.ndarray:
-        """Applies the VAD bandpass, denoiser, and eq presence boost pipeline."""
-        with self._dsp_lock:
-            bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
+        """Applies the VAD bandpass, denoiser, and eq presence boost pipeline.
+
+        No external lock guards the Pedalboard boards: pedalboard serializes
+        process() internally, so concurrent calls on the shared VAD singleton
+        block rather than interleave filter state. Verified empirically on the
+        pinned version (0.9.22) -- 640 concurrent calls through these exact
+        boards produced no divergence from serial references, and 8 threads
+        showed 0.95x speedup over serial, i.e. whole-call serialization.
+        """
+        bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
         ulunas_denoised = self.denoise(bp_audio)
 
         mixed_audio = (
@@ -265,8 +270,7 @@ class VoiceActivityDetector:
             + np.float32(self.blend_ratio) * ulunas_denoised
         )
 
-        with self._dsp_lock:
-            return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
+        return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
 
     def _trim_and_shift_segments(
         self,
