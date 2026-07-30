@@ -97,6 +97,7 @@ describe('FeedSearchView Condensed Mode', () => {
 });
 
 describe('FeedSearchView status filter', () => {
+  const mockTriggerSnackbar = vi.fn();
   const mockOnError = vi.fn();
 
   beforeEach(() => {
@@ -118,7 +119,11 @@ describe('FeedSearchView status filter', () => {
 
   it('offers normalized bucket options and filters by the selection', async () => {
     renderWithQueryClient(
-      <FeedSearchView title="Feeds" onError={mockOnError} />
+      <FeedSearchView
+        title="Feeds"
+        triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
+      />
     );
 
     const statusInput = await screen.findByLabelText('Status');
