@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { SourceType } from '@transcription/common';
+import { FEED_STATUS_BUCKETS, SourceType } from '@transcription/common';
 
 import { getFeedSearchOptions } from '../service/getFeedSearchOptions';
 import { useFeedSearchOptions } from './useFeedSearchOptions';
@@ -43,6 +43,25 @@ describe('useFeedSearchOptions', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(mockData);
     expect(getFeedSearchOptions).toHaveBeenCalledWith('test-token');
+  });
+
+  it('normalizes raw backend statuses into deduplicated presentation buckets', async () => {
+    vi.mocked(getFeedSearchOptions).mockResolvedValueOnce({
+      sourceTypes: [SourceType.BCFY_FEEDS],
+      statuses: Object.keys(FEED_STATUS_BUCKETS),
+      tags: [],
+    });
+
+    const { result } = renderHook(() => useFeedSearchOptions('test-token'), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.statuses).toEqual([
+      'active',
+      'inactive',
+      'error',
+    ]);
   });
 
   it('does not run query when token is null', () => {
