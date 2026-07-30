@@ -72,7 +72,7 @@ describe('AuditRow', () => {
       beforeValues: { status: 'active' },
       afterValues: {
         status: 'failing',
-        statusReason: 'Connection timed out',
+        statusReason: 'source_unreachable',
         statusReasonDetail: 'Failed to connect to Icecast server on port 8000.',
       },
     };
@@ -84,7 +84,7 @@ describe('AuditRow', () => {
     fireEvent.click(infoButton);
 
     // Verify the popover content appears
-    expect(screen.getByText('Connection timed out')).toBeTruthy();
+    expect(screen.getByText('source_unreachable')).toBeTruthy();
     expect(
       screen.getByText('Failed to connect to Icecast server on port 8000.')
     ).toBeTruthy();
