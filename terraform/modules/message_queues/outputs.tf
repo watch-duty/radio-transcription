@@ -95,3 +95,9 @@ output "topic_segmented_audio_claims_dlq_name" {
   description = "The name of the segmented audio claims dead letter queue topic."
   value       = google_pubsub_topic.segmented_audio_claims_dlq.name
 }
+
+output "subscription_segmented_audio_claims_dlq_name" {
+  description = "The name of the segmented audio claims dead letter queue subscription."
+  value       = google_pubsub_subscription.segmented_audio_claims_dlq_subscription.name
+}
+
