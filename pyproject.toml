@@ -176,6 +176,7 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"backend/pipeline/segmentation/scripts/*.py" = ["INP001"]
 "model/**/*.py" = ["E501"]
 "model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
