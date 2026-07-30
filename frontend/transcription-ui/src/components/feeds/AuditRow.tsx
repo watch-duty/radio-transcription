@@ -1,13 +1,18 @@
+import React, { useState } from 'react';
+
 import AddCircleIcon from '@mui/icons-material/AddCircle';
 import BlockIcon from '@mui/icons-material/Block';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import DeleteIcon from '@mui/icons-material/Delete';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import SettingsBackupRestoreIcon from '@mui/icons-material/SettingsBackupRestore';
 import UpdateIcon from '@mui/icons-material/Update';
 import WarningIcon from '@mui/icons-material/Warning';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
+import Popover from '@mui/material/Popover';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { FeedHistoryEvent } from '@transcription/common';
@@ -17,6 +22,7 @@ import { formatDiff, getDisplayStatus } from './AuditRow.utils';
 export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
   const theme = useTheme();
   const date = new Date(auditEvent.occurredAt);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   const getActionDetails = () => {
     let icon = <UpdateIcon fontSize="small" />;
@@ -62,6 +68,16 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
 
   const { icon, message } = getActionDetails();
 
+  const handlePopoverOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handlePopoverClose = () => {
+    setAnchorEl(null);
+  };
+
+  const popoverOpen = Boolean(anchorEl);
+
   const getStatusChipColor = (status: string) => {
     switch (status) {
       case 'active':
@@ -83,6 +99,9 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
     auditEvent.action === 'feed.updated'
       ? formatDiff(auditEvent.beforeValues, auditEvent.afterValues)
       : [];
+
+  const failingReason = auditEvent.afterValues?.statusReason;
+  const failingReasonDetail = auditEvent.afterValues?.statusReasonDetail;
 
   return (
     <ListItem
@@ -158,6 +177,54 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
               ? `${message} by ${auditEvent.actor}`
               : message}
           </Typography>
+          {(failingReason || failingReasonDetail) && (
+            <>
+              <IconButton
+                size="small"
+                onClick={handlePopoverOpen}
+                sx={{ ml: 0.5 }}
+              >
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+              <Popover
+                open={popoverOpen}
+                anchorEl={anchorEl}
+                onClose={handlePopoverClose}
+                anchorOrigin={{
+                  vertical: 'bottom',
+                  horizontal: 'left',
+                }}
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'left',
+                }}
+              >
+                <Box sx={{ p: 2, maxWidth: 400 }}>
+                  {failingReason && (
+                    <Typography
+                      variant="subtitle2"
+                      gutterBottom={!!failingReasonDetail}
+                    >
+                      {String(failingReason)}
+                    </Typography>
+                  )}
+                  {failingReasonDetail && (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        fontFamily: 'monospace',
+                      }}
+                    >
+                      {String(failingReasonDetail)}
+                    </Typography>
+                  )}
+                </Box>
+              </Popover>
+            </>
+          )}
           {beforeStatus && afterStatus && beforeStatus !== afterStatus && (
             <Box
               sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto' }}

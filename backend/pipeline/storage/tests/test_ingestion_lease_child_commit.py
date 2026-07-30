@@ -272,6 +272,62 @@ class TestChildPlanning(unittest.TestCase):
                 )
                 self.assertFalse(plan.clear_lifecycle)
 
+    def test_progress_cursor_cannot_initialize_null_cursor(self) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000160")
+
+        plan = _plan(
+            _progress(feed_id, cursor=_NOW),
+            _child_row(feed_id, last_bookmark_time=None),
+        )
+
+        self.assertFalse(plan.write_cursor)
+        self.assertFalse(plan.write_path)
+        self.assertFalse(plan.needs_update)
+        self.assertIs(plan.disposition, contracts.ChildDisposition.COMMITTED)
+
+    def test_progress_against_null_cursor_still_clears_dirty_lifecycle(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000161")
+
+        plan = _plan(
+            _progress(feed_id, cursor=_NOW),
+            _child_row(
+                feed_id,
+                status="failing",
+                failure_count=2,
+                status_reason="source_unreachable",
+                last_bookmark_time=None,
+            ),
+        )
+
+        self.assertFalse(plan.write_cursor)
+        self.assertTrue(plan.clear_lifecycle)
+        self.assertTrue(plan.needs_update)
+
+    def test_closed_cohort_cursor_cannot_initialize_null_cursor(self) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000162")
+
+        plan = _plan(
+            _closed_cohort(feed_id, cursor=_NOW),
+            _child_row(feed_id, last_bookmark_time=None),
+        )
+
+        self.assertFalse(plan.write_cursor)
+        self.assertTrue(plan.write_path)
+        self.assertIs(plan.disposition, contracts.ChildDisposition.COMMITTED)
+
+    def test_source_observation_still_establishes_null_cursor(self) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000163")
+
+        plan = _plan(
+            contracts.SourceObservation(_member(feed_id), _NOW),
+            _child_row(feed_id, last_bookmark_time=None),
+        )
+
+        self.assertTrue(plan.write_cursor)
+        self.assertIs(plan.disposition, contracts.ChildDisposition.COMMITTED)
+
     def test_failure_charge_is_independent_from_cursor_write(self) -> None:
         feed_id = uuid.UUID("99999999-0000-0000-0000-000000000089")
         earlier = _NOW - datetime.timedelta(seconds=1)
