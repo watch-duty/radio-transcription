@@ -55,10 +55,10 @@ radio-transcription/
 * [Audio Segmentation Module Overview](./backend/pipeline/segmentation/README.md)
 * [VAD Benchmarks](./backend/pipeline/segmentation/tests/VAD_BENCHMARKS.md)
 * [Broadcastify Credential Rotation](./backend/pipeline/ingestion/broadcastify_credential_rotation/README.md)
-* [Local Dev Mock Audio Server](./documentation/local-dev-mock-audio.md)
 * [Feed Change Webhook Relay](./documentation/feed-change-webhook-relay.md)
 * [Protobuf Schema Validation Guide](./documentation/PROTO_VALIDATION.md)
 * [Gemini Retry & Error Handling Guidelines](./documentation/gemini_retry_guidelines.md)
+* [Feed Change Webhook Relay](./documentation/feed-change-webhook-relay.md)
 
 ### ASR Model & Evaluation Infrastructure
 * [ASR Evaluation & Notebook Guide](./documentation/ASR_CONTRIBUTING.md)
@@ -87,6 +87,7 @@ radio-transcription/
 
 <!-- TODO: Add in documentation for infrastructure when migration is complete. -->
 
-### Testing & Quality Assurance
+### Local Development & Testing
+* [Local Mock Audio Server](./documentation/local-dev-mock-audio.md) — Mocking incoming audio streams for local testing.
 * [Component & API Integration Tests](./documentation/CONTRIBUTING.md#integration-and-e2e-tests)
 * [E2E Pipeline Regression Test Suite](./documentation/REGRESSION_TESTS.md)
