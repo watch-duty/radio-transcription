@@ -66,6 +66,7 @@ class AudioChunkData:
     gcs_uri: str
     duration_ms: int
     sample_rate: int
+    denoised_audio: np.ndarray | None = None
 
 
 FeedMetadata = bp_state.FeedMetadataProto
@@ -120,7 +121,12 @@ class StitcherContext:
         """Ordered list of URIs that have been accumulated into the current transmission buffer."""
         return [c.gcs_uri for c in self.contributing_chunks]
 
-    def add_contributing_chunk(self, gcs_uri: str, timestamp_ms: int) -> None:
+    def add_contributing_chunk(
+        self,
+        gcs_uri: str,
+        timestamp_ms: int,
+        receipt_time_ms: int | None = None,
+    ) -> None:
         """Adds a chunk to the contributing lists if not already present.
 
         Args:
@@ -130,6 +136,7 @@ class StitcherContext:
                 downstream stateless stage uses it to align relative segment offsets to
                 absolute timeline boundaries, ensuring sample-accurate slicing and stitching
                 across chunk boundaries.
+            receipt_time_ms: Optional wall-clock arrival time in milliseconds at collector.
         """
         if not any(c.gcs_uri == gcs_uri for c in self.contributing_chunks):
             self.contributing_chunks.append(
@@ -138,6 +145,7 @@ class StitcherContext:
                     gcs_uri=gcs_uri,
                     traceparent=self.traceparent,
                     baggage=self.baggage,
+                    receipt_time_ms=receipt_time_ms,
                 )
             )
 

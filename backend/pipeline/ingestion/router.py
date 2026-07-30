@@ -30,8 +30,18 @@ if TYPE_CHECKING:
 # Typed registry: ty/mypy checks each value matches CollectorFn.
 # Adding a new VM collector is deliberately not just this dict: update
 # SourceType, source_type seed data, SourceRuntimeSpec, and tests. main.py
-# enforces _COLLECTORS == claimable SourceRuntimeSpec types at startup so a new
-# type does not silently remain unclaimed or get claimed without a route.
+# enforces _COLLECTORS == Feed-authority SourceRuntimeSpec types plus the
+# legacy Calls route pending separate collector-code removal, so a new type
+# does not silently remain unclaimed or get claimed without a route.
+#
+# ARCHITECTURAL NOTE:
+# 1. SourceType.BCFY_FEEDS (and future SourceType.ICECAST streams) are
+#    continuous Icecast-protocol streams handled by icecast_collector.py.
+#    Currently, bcfy_feeds is the primary stream source using this collector.
+# 2. SourceType.BCFY_CALLS is a discrete REST polling API collector
+#    (bcfy_calls_collector.py) that does NOT use Icecast.
+# Continuous streams (bcfy_feeds / icecast) are the ONLY source types
+# processed by the downstream Dataflow segmentation pipeline.
 _COLLECTORS: dict[SourceType, CollectorFn] = {
     SourceType.BCFY_FEEDS: icecast_collector.capture_icecast_stream,
     SourceType.BCFY_CALLS: bcfy_calls_collector.capture_bcfy_calls,

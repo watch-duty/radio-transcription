@@ -6,13 +6,8 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import { useQuery } from '@tanstack/react-query';
-import {
-  AudioClassification,
-  type AudioSegment,
-  SourceType,
-} from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
@@ -26,11 +21,12 @@ import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
 } from '../../hooks/useConsolidatedAudioSegments';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
-import { listFeeds } from '../../service/listFeeds';
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { listRules } from '../../service/listRules';
 import {
   getNextContinuousSegment,
@@ -41,7 +37,6 @@ import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import { deriveTimelineState } from '../audio/deriveTimelineState';
 import FeedSearchView from '../feeds/FeedSearchView';
-import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -58,7 +53,7 @@ export function TranscriptView({
   onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
   const { token } = useAuth();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -160,21 +155,7 @@ export function TranscriptView({
     [triggerSnackbar, isAudioPlaying, playbackIntent, togglePlay]
   );
 
-  const {
-    data: feedsData,
-    error: feedsError,
-    isFetching: feedsFetching,
-    isSuccess: isFeedsSuccess,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
-
-  const { data: activeFeedData } = useQuery({
+  const { data: activeFeedData, error: activeFeedError } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
     queryFn: () => getFeed(searchedFeedId, token!),
     enabled: !!token && !!searchedFeedId,
@@ -183,20 +164,12 @@ export function TranscriptView({
   });
 
   useEffect(() => {
-    if (feedsError) {
-      onError(feedsError, 'Loading Feeds');
+    if (activeFeedError) {
+      onError(activeFeedError, 'Loading Feed');
     }
-  }, [feedsError, onError]);
+  }, [activeFeedError, onError]);
 
-  // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
-  const feedIdToFeedMap = useMemo(() => {
-    if (!feeds) {
-      return new Map<string, NonNullable<typeof feeds>[number]>();
-    }
-    return new Map(feeds.map((f) => [f.id, f]));
-  }, [feeds]);
-
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
+  const searchedFeed = activeFeedData || null;
 
   useEffect(() => {
     if (!searchedFeed) return;
@@ -242,7 +215,6 @@ export function TranscriptView({
     searchedFeedId,
     searchedTimestamp,
     alertFilter,
-    isFeedsSuccess,
     pollingEnabled: isViewAtTopOfAudioSegments,
     onNewSegments: handleNewAudioSegments,
     searchQuery: searchQuery,
@@ -251,9 +223,16 @@ export function TranscriptView({
     preloadWindowMs: TIMELINE_RANGE_DURATION_MS,
   });
 
+  const { data: feedHistoryData } = useQuery({
+    queryKey: ['feedHistory', searchedFeedId, token],
+    queryFn: () => listFeedHistory(searchedFeedId!, token!, 100),
+    enabled: !!searchedFeedId && !!token,
+  });
+
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
-    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+    searchedFeed?.sourceType,
+    feedHistoryData?.historyEvents
   );
 
   // View-intent key: a deliberate context switch resets the window and scroll
@@ -270,6 +249,7 @@ export function TranscriptView({
     centerWindowOn,
   } = useAudioTimelineWindow({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,
@@ -318,17 +298,21 @@ export function TranscriptView({
   // Resolve a target id to a playable segment — the raw segment by id, else the
   // consolidated entry containing it (a raw id inside a silence bundle) — and play it.
   const playSegmentById = useCallback(
-    (targetId: string) => {
+    (targetId: string, offsetSeconds?: number) => {
       const raw = rawAudioSegments.find((s) => s.id === targetId);
       if (raw?.playbackAudioUri) {
-        togglePlay(raw.id, raw.playbackAudioUri);
+        togglePlay(raw.id, raw.playbackAudioUri, offsetSeconds);
         return;
       }
       const consolidated = audioSegments.find((t) =>
         isWithinSegment(t, targetId)
       );
       if (consolidated?.playbackAudioUri) {
-        togglePlay(consolidated.id, consolidated.playbackAudioUri);
+        togglePlay(
+          consolidated.id,
+          consolidated.playbackAudioUri,
+          offsetSeconds
+        );
       }
     },
     [rawAudioSegments, audioSegments, togglePlay]
@@ -429,7 +413,7 @@ export function TranscriptView({
   } = useQuery({
     queryKey: ['listRules', token],
     queryFn: () => listRules(token ?? ''),
-    enabled: !!token && isFeedsSuccess,
+    enabled: !!token,
     refetchOnWindowFocus: false,
   });
 
@@ -475,7 +459,7 @@ export function TranscriptView({
     }
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
-  const handleClipClick = (segmentId: string) => {
+  const handleClipClick = (segmentId: string, offsetSeconds?: number) => {
     const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -484,7 +468,12 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
+    setPlaybackIntent('playing');
     setHighlightedSegmentId(segmentId);
+    playSegmentById(segmentId, offsetSeconds);
+    if (offsetSeconds !== undefined) {
+      handleSeek();
+    }
   };
 
   const scrollListToNearestTime = useCallback(
@@ -690,7 +679,8 @@ export function TranscriptView({
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh)',
+        flexGrow: 1,
+        minHeight: 0,
       }}
     >
       <FeedHeader
@@ -709,9 +699,9 @@ export function TranscriptView({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          mt: 1,
+          mt: { xs: 0.5, sm: 1 },
           // Space for the alert icon that hovers above the AudioDisplay.
-          mb: 2.5,
+          mb: { xs: 1.25, sm: 2.5 },
         }}
       >
         <AudioControl
@@ -724,18 +714,13 @@ export function TranscriptView({
           onFastRewind={skipToPreviousSpeech}
           onSkipTime={skipTime}
           disableControls={rawAudioSegments.length === 0}
-          settingsButton={
-            <AudioSettingsButton
-              volumeDb={volumeDb}
-              setVolumeDb={setVolumeDb}
-              pan={pan}
-              setPan={setPan}
-              speed={speed}
-              setSpeed={setSpeed}
-              onReset={reset}
-              disableControls={rawAudioSegments.length === 0}
-            />
-          }
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
+          onReset={reset}
         />
       </Box>
 
@@ -777,7 +762,7 @@ export function TranscriptView({
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />
-        {audioSegments.length > 0 && isFeedsSuccess ? (
+        {audioSegments.length > 0 ? (
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
@@ -801,9 +786,9 @@ export function TranscriptView({
             highlightedSegmentId={highlightedSegmentId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
-            isMobile={isMobile}
+            isNarrow={isNarrow}
           />
-        ) : feedsFetching || isAudioSegmentsInitialLoading ? (
+        ) : isAudioSegmentsInitialLoading ? (
           <Box
             sx={{
               display: 'flex',

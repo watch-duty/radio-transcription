@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -17,9 +17,12 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.storage import (
+    connection,
     feed_change_notifications,
     feed_lifecycle,
     feed_queries,
+    feed_sid_admin_queries,
+    ingestion_lease_queries,
 )
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
@@ -34,7 +37,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
@@ -52,9 +60,10 @@ class SourceType(enum.StrEnum):
            and ``006_seed_source_types.sql``.
         3. **Runtime source spec** — add an entry to
            ``backend.pipeline.ingestion.source_runtime_specs``. This
-           registry drives ``CollectorSettings.caps``, ``FeedStore``'s
-           generated acquire-batch SQL, topic routing metadata, URL base
-           metadata, and the ``claim_types`` filter on the recovery path.
+           registry drives ``CollectorSettings.feed_claim_caps``,
+           ``FeedStore``'s generated acquire-batch SQL, topic routing metadata,
+           URL base metadata, and the ``claim_types`` filter on the recovery
+           path.
            **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
            the primary CTE nor the recovery sweep will pick them up.
@@ -63,7 +72,13 @@ class SourceType(enum.StrEnum):
         deploy.
     """
 
+    # Continuous Icecast-protocol stream for Broadcastify feeds
+    # (handled by icecast_collector.py). Currently the primary stream source
+    # using the Icecast collector; feeds into Dataflow segmentation.
+    # Note: Do not confuse with BCFY_CALLS (discrete REST polling collector).
     BCFY_FEEDS = "bcfy_feeds"
+    # Discrete call REST polling API collector for Broadcastify Calls
+    # (bcfy_calls_collector.py). Does NOT pass through Dataflow segmentation.
     BCFY_CALLS = "bcfy_calls"
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
@@ -142,6 +157,11 @@ class FeedGrant:
     owner_worker_id: uuid.UUID
     fencing_token: int
 
+    @property
+    def unit_key(self) -> uuid.UUID:
+        """Return the permanent identity within the Feed domain."""
+        return self.feed_id
+
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
             msg = "feed_id must be a UUID"
@@ -216,17 +236,16 @@ class SourceObservationResult(TypedDict):
     recorded: bool
 
 
-class HeartbeatResult(TypedDict):
-    """Per-feed diagnostic info returned by diagnostic heartbeat renewal."""
-
-    id: uuid.UUID
-    current_worker: uuid.UUID | None
-    current_status: str
-    renewed: bool
-
-
 class Feed(TypedDict):
-    """Full feed details."""
+    """Full feed details.
+
+    ``status`` and its reason/heartbeat columns are the raw child
+    lifecycle, used by admin action eligibility. The ``effective_*``
+    fields project the parent ingestion Lease health for maintained SID
+    members (and mirror the child for every other row); the display layer
+    should use them. ``bcfy_calls_sid``/``lease_*`` expose the raw SID
+    management metadata.
+    """
 
     id: uuid.UUID
     name: str
@@ -244,6 +263,14 @@ class Feed(TypedDict):
     source_feed_id: str | None
     tags: list[dict[str, str]] | None
     last_speech_segment_timestamp: datetime.datetime | None
+    bcfy_calls_sid: str | None
+    lease_status: FeedStatus | None
+    lease_last_heartbeat: datetime.datetime | None
+    lease_status_reason: FeedStatusReason | None
+    effective_status: FeedStatus
+    effective_status_reason: FeedStatusReason | None
+    effective_status_reason_detail: str | None
+    effective_last_heartbeat: datetime.datetime | None
 
 
 @dataclass
@@ -278,11 +305,56 @@ def _require_actor_id(actor_id: str | None) -> str:
     return actor_id
 
 
-def _require_feed_grant(value: object) -> FeedGrant:
-    if not isinstance(value, FeedGrant):
-        msg = "grant must be a FeedGrant"
-        raise TypeError(msg)
-    return value
+def _feed_status_from_value(
+    value: object,
+    feed_id: object,
+    field_name: str,
+) -> FeedStatus:
+    try:
+        return FeedStatus(value)
+    except ValueError as e:
+        msg = f"Unknown {field_name} {value!r} for feed {feed_id}"
+        raise ValueError(msg) from e
+
+
+def _feed_status_reason_from_value(
+    value: object,
+    feed_id: object,
+    field_name: str,
+) -> FeedStatusReason | None:
+    if value is None:
+        return None
+    try:
+        return FeedStatusReason(value)
+    except ValueError as e:
+        msg = f"Unknown {field_name} {value!r} for feed {feed_id}"
+        raise ValueError(msg) from e
+
+
+def _parse_sid_source_feed_id(source_feed_id: str) -> tuple[str, str]:
+    """Split a Calls ``source_feed_id`` into its canonical SID and group.
+
+    The maintained membership constraint requires ``source_feed_id`` to be
+    exactly ``'<sid>-<group_id>'`` with numeric ASCII components; parsing
+    here keeps the store boundary safe for callers that bypass the API
+    model validation.
+    """
+    sid, separator, group_id = source_feed_id.partition("-")
+    if (
+        separator != "-"
+        or not sid
+        or not sid.isascii()
+        or not sid.isdigit()
+        or not group_id
+        or not group_id.isascii()
+        or not group_id.isdigit()
+    ):
+        msg = (
+            "bcfy_calls source_feed_id must be '<sid>-<group_id>' with "
+            "numeric components"
+        )
+        raise ValueError(msg)
+    return sid, group_id
 
 
 class FeedStore:
@@ -304,11 +376,11 @@ class FeedStore:
         claim_types: Optional ordered sequence of ``SourceType`` values
             this store will claim via ``acquire_feeds_batch``. The SQL
             is generated at construction time with one MATERIALIZED CTE
-            per type. Defaults to every ``SourceType`` except ``ECHO``
-            (Echo feeds are served by a separate cloud function and
-            are never leased here). ``CollectorRuntime`` passes
-            ``list(settings.caps.keys())`` so the SQL shape and the
-            runtime's per-type budgets are seeded from the same set.
+            per type. Defaults to the source types owned through Feed
+            grants. ``CollectorRuntime`` passes
+            ``list(settings.feed_claim_caps)`` explicitly.
+        heartbeat_timeout_sec: Optional total timeout for heartbeat pool
+            checkout, query execution, and connection release.
 
     """
 
@@ -316,10 +388,17 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         claim_types: collections.abc.Sequence[SourceType] | None = None,
+        *,
+        heartbeat_timeout_sec: float | None = None,
     ) -> None:
         self._pool = pool
+        self._heartbeat_timeout_sec = heartbeat_timeout_sec
         if claim_types is None:
-            claim_types = [t for t in SourceType if t != SourceType.ECHO]
+            claim_types = [
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            ]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
         self._acquire_feeds_batch_sql = (
             feed_queries.build_acquire_feeds_batch_sql(
@@ -364,8 +443,45 @@ class FeedStore:
         if tags is not None:
             tags = json.loads(tags)
 
+        # Read queries project lease-aware effective health; audited
+        # mutation rows do not carry those columns and fall back to the
+        # child's own lifecycle so one decoder serves both row shapes.
+        feed_id = row["id"]
+        effective_status_raw = row.get("effective_status")
+        if effective_status_raw is None:
+            effective_status = status
+            effective_status_reason = status_reason
+            effective_status_reason_detail = row["status_reason_detail"]
+            effective_last_heartbeat = row["last_heartbeat"]
+        else:
+            effective_status = _feed_status_from_value(
+                effective_status_raw,
+                feed_id,
+                "effective status",
+            )
+            effective_status_reason = _feed_status_reason_from_value(
+                row.get("effective_status_reason"),
+                feed_id,
+                "effective status reason",
+            )
+            effective_status_reason_detail = row.get(
+                "effective_status_reason_detail"
+            )
+            effective_last_heartbeat = row.get("effective_last_heartbeat")
+
+        lease_status_raw = row.get("lease_status")
+        lease_status = (
+            None
+            if lease_status_raw is None
+            else _feed_status_from_value(
+                lease_status_raw,
+                feed_id,
+                "lease status",
+            )
+        )
+
         return Feed(
-            id=row["id"],
+            id=feed_id,
             name=row["name"],
             source_type=source_type,
             status=status,
@@ -381,6 +497,18 @@ class FeedStore:
             source_feed_id=row["source_feed_id"],
             tags=tags,
             last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
+            bcfy_calls_sid=row.get("bcfy_calls_sid"),
+            lease_status=lease_status,
+            lease_last_heartbeat=row.get("lease_last_heartbeat"),
+            lease_status_reason=_feed_status_reason_from_value(
+                row.get("lease_status_reason"),
+                feed_id,
+                "lease status reason",
+            ),
+            effective_status=effective_status,
+            effective_status_reason=effective_status_reason,
+            effective_status_reason_detail=effective_status_reason_detail,
+            effective_last_heartbeat=effective_last_heartbeat,
         )
 
     @staticmethod
@@ -524,44 +652,6 @@ class FeedStore:
         )
         return result
 
-    async def renew_heartbeats_batch_diagnostic(
-        self,
-        feed_ids: list[uuid.UUID],
-        worker_id: uuid.UUID,
-    ) -> list[HeartbeatResult]:
-        """
-        Batch-renew heartbeats with per-feed diagnostic info.
-
-        Uses an atomic CTE that locks rows, conditionally updates, and
-        always returns per-feed state in a single round-trip. This enables
-        the caller to log *why* a feed wasn't renewed (stolen by another
-        worker, quarantined, etc.) before taking action.
-
-        Args:
-            feed_ids: List of feed UUIDs to renew.
-            worker_id: UUID of the worker holding the leases.
-
-        Returns:
-            List of ``HeartbeatResult`` dicts, one per input feed_id.
-
-        """
-        if not feed_ids:
-            return []
-        rows = await self._pool.fetch(
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
-            feed_ids,
-            worker_id,
-        )
-        return [
-            HeartbeatResult(
-                id=row["id"],
-                current_worker=row["current_worker"],
-                current_status=row["current_status"],
-                renewed=row["renewed"],
-            )
-            for row in rows
-        ]
-
     async def renew_grant_heartbeats(
         self,
         grants: collections.abc.Sequence[FeedGrant],
@@ -576,14 +666,12 @@ class FeedStore:
             One exact, caller-correlated result for every input grant.
 
         Raises:
-            TypeError: If an input is not a ``FeedGrant``.
             ValueError: If inputs repeat or results are malformed or
                 miscorrelated.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
-        for candidate in grants:
-            grant = _require_feed_grant(candidate)
+        for grant in grants:
             if grant.feed_id in feed_ids:
                 msg = f"duplicate Feed identity {grant.feed_id}"
                 raise ValueError(msg)
@@ -595,12 +683,14 @@ class FeedStore:
             enumerate(grants),
             key=lambda item: item[1].feed_id.int,
         )
-        rows = await self._pool.fetch(
+        rows = await connection.fetch_with_timeout_budget(
+            self._pool,
             feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             [grant.feed_id for _, grant in ordered],
             [grant.owner_worker_id for _, grant in ordered],
             [grant.fencing_token for _, grant in ordered],
             [ordinal for ordinal, _ in ordered],
+            timeout_sec=self._heartbeat_timeout_sec,
         )
 
         expected_by_ordinal = dict(enumerate(grants))
@@ -1003,35 +1093,6 @@ class FeedStore:
                 continue
         return counts
 
-    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
-        """Release every active lease still owned by this worker.
-
-        Primary use: ``_shutdown_sequence`` calls this once after
-        cancelling all feed tasks. The cancelled tasks return without
-        running their normal-completion ``release_feed`` (see the
-        ``_process_feed`` shutdown branch), so this single UPDATE flips
-        active rows back to ``unclaimed``. Deactivated rows stay deactivated
-        even if they still carry this worker's metadata.
-
-        Secondary defensive role: catches any straggler row where an
-        earlier per-feed ``release_feed`` call failed mid-lifetime
-        (transient DB error, task reaped before the finally block could
-        retry) and the row was sitting in the DB with ``worker_id = us``
-        until pg_cron reclaimed it.
-
-        Args:
-            worker_id: UUID of the worker releasing its leases.
-
-        Returns:
-            The number of feeds actually released.
-        """
-        result = await self._pool.execute(
-            feed_queries.RELEASE_FEEDS_BATCH_SQL, worker_id
-        )
-        if result.startswith("UPDATE "):
-            return int(result.split()[1])
-        return 0
-
     async def create_feed(
         self,
         name: str,
@@ -1045,6 +1106,12 @@ class FeedStore:
 
         Atomically creates a new feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
+
+        Broadcastify Calls feeds are created as maintained SID members: the
+        canonical SID/group identity is persisted, the permanent parent
+        Lease is created or locked, its membership revision advances, and
+        the child is inserted as an enabled member with a NULL cursor — all
+        in one transaction.
         """
         required_actor_id = _require_actor_id(actor_id)
         if not source_feed_id:
@@ -1063,15 +1130,23 @@ class FeedStore:
             source_type_str = source_type.value
 
         try:
-            async with self._pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    feed_queries.CREATE_FEED_SQL,
+            if source_type_str == SourceType.BCFY_CALLS.value:
+                row = await self._create_sid_feed_row(
                     name,
-                    source_type_str,
                     source_feed_id,
-                    json.dumps(tags or []),
+                    tags,
                     required_actor_id,
                 )
+            else:
+                async with self._pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        feed_queries.CREATE_FEED_SQL,
+                        name,
+                        source_type_str,
+                        source_feed_id,
+                        json.dumps(tags or []),
+                        required_actor_id,
+                    )
             if row is None:
                 msg = f"Failed to create feed {name}"
                 raise ValueError(msg)
@@ -1099,6 +1174,141 @@ class FeedStore:
             msg = f"Invalid source type '{source_type_str}'"
             raise ValueError(msg) from e
 
+        feed = self._row_to_feed(row)
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
+
+    async def _create_sid_feed_row(
+        self,
+        name: str,
+        source_feed_id: str,
+        tags: list[dict[str, str]] | None,
+        actor_id: str,
+    ) -> asyncpg.Record | None:
+        """Create one SID-managed Calls member beneath its locked parent.
+
+        One transaction: insert an absent parent Lease as ``unclaimed``
+        (fence 0, revision 1), or lock the existing parent and advance its
+        revision (reactivating a ``deactivated`` parent to a clean
+        ``unclaimed`` with a fresh failure budget, while preserving an
+        active owner or failing backoff exactly), then insert the enabled
+        child. Any uniqueness or audit failure rolls
+        back the Lease insert/revision along with the Feed, so a retry
+        cannot allocate a second revision or event.
+        """
+        sid, group_id = _parse_sid_source_feed_id(source_feed_id)
+        async with self._pool.acquire() as conn:
+            async with conn.transaction(isolation="read_committed"):
+                inserted = await conn.fetchrow(
+                    feed_sid_admin_queries.INSERT_UNCLAIMED_PARENT_LEASE_SQL,
+                    sid,
+                )
+                lease_row = await conn.fetchrow(
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    SourceType.BCFY_CALLS.value,
+                    sid,
+                )
+                if lease_row is None:
+                    msg = f"bcfy_calls SID Lease {sid!r} is unexpectedly absent"
+                    raise RuntimeError(msg)
+                if inserted is None:
+                    await conn.execute(
+                        feed_sid_admin_queries.REGISTER_MEMBER_ON_EXISTING_LEASE_SQL,
+                        sid,
+                    )
+                return await conn.fetchrow(
+                    feed_sid_admin_queries.CREATE_SID_FEED_SQL,
+                    name,
+                    source_feed_id,
+                    json.dumps(tags or []),
+                    sid,
+                    group_id,
+                    actor_id,
+                )
+
+    async def _get_sid_lease_key(self, feed_id: uuid.UUID) -> str | None:
+        """Resolve a maintained SID membership for admin routing, lock-free.
+
+        Returns ``None`` for non-Calls feeds and legacy Calls rows whose
+        maintained membership fields are NULL; those keep the legacy admin
+        paths. The SID branch re-verifies this identity under the child
+        lock, so a stale read here degrades to not-found, never to a
+        different parent.
+        """
+        row = await self._pool.fetchrow(
+            feed_sid_admin_queries.GET_SID_MEMBERSHIP_KEY_SQL,
+            feed_id,
+        )
+        if row is None:
+            return None
+        return row.get("sid")
+
+    async def _deactivate_sid_feed(
+        self,
+        feed_id: uuid.UUID,
+        sid: str,
+        actor_id: str,
+    ) -> bool:
+        """Deactivate one SID child using the parent-first lock order.
+
+        The parent Lease row is locked before the child Feed, matching the
+        worker's membership-refresh and child-commit order. If the
+        permanent Lease row is absent (a configuration error surfaced by
+        the health projection), the child statement still applies and the
+        lease update simply matches no row.
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.transaction(isolation="read_committed"):
+                await conn.fetchrow(
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    SourceType.BCFY_CALLS.value,
+                    sid,
+                )
+                row = await conn.fetchrow(
+                    feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL,
+                    feed_id,
+                    sid,
+                    actor_id,
+                )
+        if row is None:
+            return False
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return True
+
+    async def _reset_sid_feed(
+        self,
+        feed_id: uuid.UUID,
+        sid: str,
+        actor_id: str,
+    ) -> Feed | None:
+        """Reset one SID child using the parent-first lock order.
+
+        Supported for active and inactive parents; the parent branch is
+        decided inside the SQL from the locked Lease row. An inactive
+        parent is reset to clean ``unclaimed`` even when the child itself
+        is already clean. Only when neither the child nor the parent needs
+        a change is the reset an idempotent no-op with no audit event or
+        revision bump.
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.transaction(isolation="read_committed"):
+                await conn.fetchrow(
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    SourceType.BCFY_CALLS.value,
+                    sid,
+                )
+                row = await conn.fetchrow(
+                    feed_sid_admin_queries.RESET_SID_CHILD_SQL,
+                    feed_id,
+                    sid,
+                    actor_id,
+                )
+        if row is None:
+            return None
         feed = self._row_to_feed(row)
         feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
@@ -1245,8 +1455,20 @@ class FeedStore:
 
         Returns True if the feed exists. Already-deactivated feeds are treated
         as a no-op and do not create another audit event.
+
+        SID-managed Calls members are deactivated beneath their locked
+        parent Lease: the parent revision advances once, and when the final
+        eligible member is removed the parent is deactivated and unowned;
+        otherwise an active parent's authority is preserved exactly.
         """
         required_actor_id = _require_actor_id(actor_id)
+        sid = await self._get_sid_lease_key(feed_id)
+        if sid is not None:
+            return await self._deactivate_sid_feed(
+                feed_id,
+                sid,
+                required_actor_id,
+            )
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.DEACTIVATE_FEED_SQL,
@@ -1272,8 +1494,20 @@ class FeedStore:
         (transcripts, audio segments, annotations, and feed properties).
 
         Returns True if the feed was successfully deleted, False otherwise.
+
+        SID-managed Calls members are deleted in two transactions: a short
+        parent-first membership detach (identical to deactivate, an
+        idempotent no-op when already detached), then the hard cleanup
+        below, which locks only the Feed and never holds the parent Lease
+        lock. The permanent parent Lease row is never deleted, and a retry
+        after a failed cleanup resumes without another membership revision.
+        A detached delete therefore emits ``feed.deactivated`` (when the
+        detach actually changed lifecycle) followed by ``feed.deleted``.
         """
         required_actor_id = _require_actor_id(actor_id)
+        sid = await self._get_sid_lease_key(feed_id)
+        if sid is not None:
+            await self._deactivate_sid_feed(feed_id, sid, required_actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.DELETE_FEED_SQL,
@@ -1314,8 +1548,16 @@ class FeedStore:
         Returns:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.
 
+        SID-managed Calls members take a dedicated parent-first reset that
+        supports active and inactive parents: the child becomes an enabled
+        member with a cleared cursor for page-boundary re-adoption, and the
+        legacy active-feed conflict below does not apply. Legacy rows keep
+        the existing behavior, including the active conflict.
         """
         required_actor_id = _require_actor_id(actor_id)
+        sid = await self._get_sid_lease_key(feed_id)
+        if sid is not None:
+            return await self._reset_sid_feed(feed_id, sid, required_actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.RESET_FEED_SQL,
@@ -1425,3 +1667,23 @@ class FeedStore:
                 )
             )
         return PaginatedFeedAuditEvents(events, new_next_token, total)
+
+    async def get_feed_search_options(self) -> dict[str, list[Any]]:
+        """Fetch precomputed search filter options for feeds."""
+        async with self._pool.acquire() as conn:
+            tag_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_TAGS_SQL
+            )
+            st_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL
+            )
+            status_rows = await conn.fetch(
+                feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL
+            )
+            return {
+                "source_types": [r["source_type"] for r in st_rows],
+                "statuses": [r["status"] for r in status_rows],
+                "tags": [
+                    {"key": r["key"], "value": r["value"]} for r in tag_rows
+                ],
+            }

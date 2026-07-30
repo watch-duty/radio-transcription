@@ -3,6 +3,7 @@ import datetime
 import io
 import os
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -166,7 +167,20 @@ def _make_process_factory(
         async def _wait_impl() -> int:
             if wait_exception is not None:
                 raise wait_exception
-            await asyncio.sleep(wait_delay)
+            if segments and len(segments) > 1:
+                prev_seg = segment_dir / f"chunk_{len(segments) - 2:06d}.pcm"
+                start = time.monotonic()
+                while prev_seg.exists() and (time.monotonic() - start) < 2.0:
+                    encode_func = getattr(
+                        icecast_collector, "_encode_pcm_segment_to_flac", None
+                    )
+                    call_count = getattr(encode_func, "call_count", 0)
+                    if call_count >= len(segments) - 1:
+                        break
+                    await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(wait_delay)
             return wait_result
 
         mock_proc.wait = AsyncMock(side_effect=_wait_impl)
@@ -2076,14 +2090,14 @@ class TestIcecastTimelineManager(unittest.TestCase):
             manager.process_chunk(chunk, 16000 * 15, process_done=False)
         self.assertIn("Negative chunk duration", str(ctx.exception))
 
-    def test_non_monotonic_start_time_raises_value_error(self) -> None:
-        """Verify that non-monotonic chunk start times raise ValueError."""
+    def test_non_monotonic_start_time_clamps_to_last_end(self) -> None:
+        """Verify that non-monotonic chunk start times are clamped to last end time and stream anchor is shifted."""
+        now = datetime.datetime.now(datetime.UTC)
         manager = icecast_collector.IcecastTimelineManager(
-            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            stream_anchor_time=now,
             feed_id=uuid.uuid4(),
             feed_name="test-feed",
         )
-        now = datetime.datetime.now(datetime.UTC)
         chunk1 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now,
@@ -2101,9 +2115,19 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=15),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk2, 16000 * 30, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res_clamped = manager.process_chunk(
+            chunk2, 16000 * 30, process_done=False
+        )
+        self.assertEqual(len(res_clamped), 1)
+        self.assertEqual(
+            res_clamped[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        # Verify stream_anchor_time was shifted forward by 5s to prevent perpetual clamping
+        self.assertEqual(
+            manager.stream_anchor_time,
+            now + datetime.timedelta(seconds=5),
+        )
 
     def test_microsecond_rounding_coalesced(self) -> None:
         """Verify that microsecond-level rounding errors in chunk start times are coalesced."""
@@ -2171,7 +2195,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res3[0].chunk_start_time, now + datetime.timedelta(seconds=45)
         )
 
-        # Test overlap of 3 microseconds (above boundary - should raise ValueError)
+        # Test overlap of 3 microseconds (clamped gracefully without error)
         chunk5 = CapturedChunk(
             audio_bytes=b"data",
             chunk_start_time=now
@@ -2181,9 +2205,172 @@ class TestIcecastTimelineManager(unittest.TestCase):
             session_id="session",
             receipt_time=now + datetime.timedelta(seconds=60),
         )
-        with self.assertRaises(ValueError) as ctx:
-            manager.process_chunk(chunk5, 16000 * 75, process_done=False)
-        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+        res4 = manager.process_chunk(chunk5, 16000 * 75, process_done=False)
+        self.assertEqual(len(res4), 1)
+        self.assertEqual(
+            res4[0].chunk_start_time, now + datetime.timedelta(seconds=60)
+        )
+
+    def test_midstream_burst_does_not_shift_anchor_before_last_yielded_end(
+        self,
+    ) -> None:
+        """Verify mid-stream burst unrolling bounds backward anchor shift to preserve monotonicity."""
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk0 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk0, 16000 * 15, process_done=False)
+        self.assertEqual(manager.stream_anchor_time, now)
+
+        # Mid-stream burst of fast chunks
+        c1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=15),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=18),
+        )
+        c2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=30),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=21),
+        )
+        c3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=45),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=24),
+        )
+        manager.process_chunk(c1, 16000 * 30, process_done=False)
+        manager.process_chunk(c2, 16000 * 45, process_done=False)
+        manager.process_chunk(c3, 16000 * 60, process_done=False)
+
+        # Exit burst mode on steady chunk c4
+        c4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=60),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=39),
+        )
+        res_burst = manager.process_chunk(c4, 16000 * 75, process_done=False)
+        self.assertEqual(len(res_burst), 4)
+
+        # Anchoring should remain contiguous with last yielded end time (now)
+        self.assertEqual(manager.stream_anchor_time, now)
+        self.assertEqual(
+            res_burst[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(
+            res_burst[3].chunk_end_time,
+            now + datetime.timedelta(seconds=75),
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.logger"
+    )
+    def test_audio_lag_warning_logged_when_lag_exceeds_timeout(
+        self, mock_logger: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test that [Ingestion Audio Lag] warning behavior is controlled by AUDIO_LAG_WARN_THRESHOLD_SEC and previous_receipt_time."""
+        fixed_now = datetime.datetime(
+            2026, 7, 27, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.return_value = fixed_now
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_pcm = Path(tmp_dir) / "mock_test_lag_segment.pcm"
+                tmp_pcm.write_bytes(
+                    b"\x00\x00" * 16000 * 10
+                )  # 10 seconds of 16kHz audio
+
+                # Case 1: Above threshold (180s lag > 120s threshold) on an established stream -> Warning logged
+                anchor_above = fixed_now - datetime.timedelta(seconds=180)
+                (
+                    chunk,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=1,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk)
+                mock_logger.warning.assert_called_once()
+                warning_call = mock_logger.warning.call_args[0]
+                self.assertIn("[Ingestion Audio Lag]", warning_call[0])
+                self.assertEqual(warning_call[1], "test-feed-id")
+
+                mock_logger.reset_mock()
+
+                # Case 2: Below threshold (60s lag < 120s threshold, standard stream buffer latency) -> Warning NOT logged
+                anchor_below = fixed_now - datetime.timedelta(seconds=60)
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_below,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=2,
+                    stream_anchor_time=anchor_below,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_below)
+                mock_logger.warning.assert_not_called()
+
+                # Case 3: Initial stream startup chunk (previous_receipt_time is None) -> Warning NOT logged
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_startup,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=0,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=None,
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_startup)
+                mock_logger.warning.assert_not_called()
+
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":

@@ -7,38 +7,37 @@
 # MockCacheProvider is a mock implementation of CacheProvider used in integration and unit tests.
 # Vulture excludes test directories (**/tests/**, **/test_*.py) from analysis, so it misses
 # the imports of this class in tests, falsely flagging it as dead code.
-from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
+from backend.pipeline.common.storage.mock_cache_provider import (
+    MockCacheProvider,
+)
+from backend.pipeline.ingestion import grant_supervisor
+from backend.pipeline.storage import ingestion_lease_store
+
 MockCacheProvider
 _.get_value
 
-# These PRs intentionally introduce the Lease lifecycle and membership storage
-# boundaries before the generic runtime starts calling them. Vulture excludes
-# the focused tests, so keep only dormant public methods, returned result fields,
-# and lifecycle telemetry causes allowlisted until the runtime wiring lands.
-from backend.pipeline.storage.ingestion_lease_store import (
-    IngestionLeaseStore,
-    LeaseHeartbeatResult,
-    LeaseOperationResult,
-    LeaseReleaseCause,
-)
-IngestionLeaseStore.claim_unclaimed
-IngestionLeaseStore.claim_recoverable
-IngestionLeaseStore.renew_heartbeats
-IngestionLeaseStore.release
-IngestionLeaseStore.finalize_failure
-IngestionLeaseStore.load_membership
-LeaseOperationResult.disposition
-LeaseHeartbeatResult.disposition
-LeaseReleaseCause.SHUTDOWN
-LeaseReleaseCause.REBALANCE
-LeaseReleaseCause.CANCELLATION
-LeaseReleaseCause.ABANDONMENT
+# SourceObservationResult TypedDict fields are read by key in
+# CollectorRuntime. Vulture cannot connect subscript access to their
+# declarations.
+current_worker
+current_fencing_token
 
-# The exact Feed-grant heartbeat storage boundary lands before the generic
-# Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
-from backend.pipeline.storage.feed_store import FeedStore
-FeedStore.renew_grant_heartbeats
+# Feed TypedDict and pydantic response-model lease-health fields are read
+# by key / serialized by pydantic; Vulture cannot connect that access to
+# their declarations.
+bcfy_calls_sid
+lease_last_heartbeat
+lease_status_reason
 
+# GrantSupervisor exposes admission state for focused lifecycle tests. Vulture
+# excludes tests from its analysis.
+grant_supervisor.GrantSupervisor.admission_enabled
+
+# Release causes are a public telemetry vocabulary with one storage policy.
+ingestion_lease_store.LeaseReleaseCause.SHUTDOWN
+ingestion_lease_store.LeaseReleaseCause.REBALANCE
+ingestion_lease_store.LeaseReleaseCause.CANCELLATION
+ingestion_lease_store.LeaseReleaseCause.ABANDONMENT
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
@@ -57,3 +56,9 @@ receive_feed_change_notification
 
 # StitcherDlqPayload TypedDict fields consumed by structure definition and dictionary creation.
 error_message
+
+# VoiceActivityDetector public methods called by unit tests and diagnostic scripts
+from backend.pipeline.segmentation.audio.vad import VoiceActivityDetector
+
+VoiceActivityDetector.is_speech_segment
+

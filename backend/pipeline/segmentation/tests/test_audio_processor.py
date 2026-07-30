@@ -65,7 +65,7 @@ class AudioProcessorTest(unittest.TestCase):
         """Tests that download_audio_and_detect calculates duration when not provided."""
         mock_vad_instance = MagicMock()
         mock_vad_instance.detect_speech_segments.side_effect = (
-            lambda *args, **kwargs: []
+            lambda *args, **kwargs: ([], None)
         )
         mock_get_vad.return_value = mock_vad_instance
 
@@ -132,7 +132,7 @@ class AudioProcessorTest(unittest.TestCase):
         buf.seek(0)
 
         # Decode using in-process PyAV
-        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+        actual_samples, actual_sr = self.processor.decode_audio_in_memory(buf)
 
         self.assertEqual(actual_sr, 22050)
         np.testing.assert_array_equal(actual_samples, expected_samples)
@@ -147,13 +147,13 @@ class AudioProcessorTest(unittest.TestCase):
         sf.write(buf, stereo_array, 16000, format="FLAC")
         buf.seek(0)
 
-        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+        actual_samples, actual_sr = self.processor.decode_audio_in_memory(buf)
 
         self.assertEqual(actual_sr, 16000)
         np.testing.assert_array_equal(actual_samples, stereo_array)
 
-        # Verify that _downmix_to_mono correctly averages the multi-channel array
-        downmixed = self.processor._downmix_to_mono(actual_samples)
+        # Verify that downmix_to_mono correctly averages the multi-channel array
+        downmixed = self.processor.downmix_to_mono(actual_samples)
         expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
         self.assertEqual(downmixed.ndim, 1)
         np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
@@ -161,7 +161,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_download_audio_and_detect_with_prior_stereo_audio(self) -> None:
         """Tests that prior multi-channel audio is correctly downmixed to mono during streaming detection."""
         mock_vad = MagicMock()
-        mock_vad.detect_speech_segments.return_value = []
+        mock_vad.detect_speech_segments.return_value = ([], None)
         processor = SegmentationAudioProcessor(
             gcs_client_instance=MagicMock(),
             vad_factory=MagicMock(return_value=mock_vad),
@@ -175,7 +175,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         with patch.object(
             processor,
-            "_decode_audio_in_memory",
+            "decode_audio_in_memory",
             return_value=(curr_stereo, 32000),
         ):
             processor.download_audio_and_detect(
@@ -206,7 +206,7 @@ class AudioProcessorTest(unittest.TestCase):
         damaged_buf = io.BytesIO(truncated_bytes)
 
         # Act
-        samples, sr = self.processor._decode_audio_in_memory(damaged_buf)
+        samples, sr = self.processor.decode_audio_in_memory(damaged_buf)
 
         # Assert: Should return the thousands of intact samples recovered rather than throwing RuntimeError
         self.assertEqual(sr, 16000)

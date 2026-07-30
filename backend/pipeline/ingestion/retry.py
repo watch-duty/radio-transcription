@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc  # noqa: TC003 - public hints resolve at runtime.
+import dataclasses
 import logging
 import random
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +13,80 @@ class LeaseExpiredError(Exception):
     """Raised when a retry loop observes confirmed lease loss."""
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class IssuedOperationSettlement[ResultT]:
+    """Definitive issued-operation outcome and deferred cancellation.
+
+    Exactly one outcome branch applies: ``failure is None`` means ``result``
+    contains the operation result, which may itself be ``None``. Otherwise,
+    ``failure`` contains the operation failure and ``result`` is ``None``.
+
+    Attributes:
+        result: The definitive operation result on success.
+        failure: The definitive operation failure, including an operation's
+            own cancellation.
+        cancellation: The first exact caller cancellation deferred while the
+            issued operation settled.
+    """
+
+    result: ResultT | None
+    failure: BaseException | None
+    cancellation: asyncio.CancelledError | None
+
+
+async def _await_issued_operation[ResultT](
+    awaitable: collections.abc.Awaitable[ResultT],
+) -> ResultT:
+    return await awaitable
+
+
+async def settle_issued_operation[ResultT](
+    awaitable: collections.abc.Awaitable[ResultT],
+) -> IssuedOperationSettlement[ResultT]:
+    """Settle issued async work without losing its definitive outcome.
+
+    Caller cancellation is deferred while the child task settles. Repeated
+    cancellation requests do not reach the child, and the first exact
+    ``CancelledError`` remains available for the caller to propagate after it
+    applies the operation outcome. A cancellation originating in the child is
+    returned as the operation failure, not mistaken for caller cancellation.
+
+    Args:
+        awaitable: Issued async work whose outcome must become definitive.
+
+    Returns:
+        The definitive result or failure plus any deferred caller
+        cancellation.
+    """
+    operation = asyncio.create_task(_await_issued_operation(awaitable))
+    cancellation: asyncio.CancelledError | None = None
+
+    while not operation.done():
+        try:
+            await asyncio.wait((operation,))
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+
+    try:
+        result = operation.result()
+    except BaseException as error:
+        return IssuedOperationSettlement(
+            result=None,
+            failure=error,
+            cancellation=cancellation,
+        )
+    return IssuedOperationSettlement(
+        result=result,
+        failure=None,
+        cancellation=cancellation,
+    )
+
+
 # TODO: https://linear.app/watchduty/issue/GOO-566/ - Move retry callers to a
 # RetryConfig + coroutine-factory API so keyword args and type checking survive.
 async def retry_with_lease_check[T](
-    fn: Callable[..., Awaitable[T]],
+    fn: collections.abc.Callable[..., collections.abc.Awaitable[T]],
     *args: object,
     lease_lost: asyncio.Event,
     shutdown: asyncio.Event,
@@ -111,10 +179,11 @@ async def retry_with_lease_check[T](
             finally:
                 for t in (lease_task, shutdown_task):
                     t.cancel()
-                    try:
-                        await t
-                    except asyncio.CancelledError:
-                        pass
+                await asyncio.gather(
+                    lease_task,
+                    shutdown_task,
+                    return_exceptions=True,
+                )
 
             if lease_lost.is_set():
                 msg = f"Lease lost during {operation_name} backoff"

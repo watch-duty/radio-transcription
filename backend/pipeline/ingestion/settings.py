@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import math
 import os
+import types
+import typing
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion import source_runtime_specs
+from backend.pipeline.ingestion import (
+    source_runtime_specs,
+    worker_profiles,
+)
 from backend.pipeline.storage.settings import AlloyDBSettings
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -22,15 +26,16 @@ def _require_env(name: str) -> str:
     return value
 
 
-# Per-type claim-budget defaults. The key set comes from SourceRuntimeSpec so
-# adding a VM-claimable source updates caps, topic routing metadata, and URL
-# metadata in one place. ECHO is intentionally absent: Echo feeds are served by
-# a separate cloud function, not VM-leased.
-_DEFAULT_CAPS: dict[SourceType, int] = source_runtime_specs.default_caps()
+# Per-type Feed claim-budget defaults. The key set comes from
+# SourceRuntimeSpec. Calls is intentionally absent because SID leases own it;
+# Echo is absent because a separate cloud function owns it.
+_DEFAULT_FEED_CLAIM_CAPS: dict[SourceType, int] = (
+    source_runtime_specs.default_feed_claim_caps()
+)
 
 
-def _load_caps_from_env() -> dict[SourceType, int]:
-    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
+def _load_feed_claim_caps_from_env() -> dict[SourceType, int]:
+    """Build Feed caps from CAP_<NAME> env vars.
 
     Caps are clamped to ``max(0, ...)`` so a misconfigured negative env
     var can't propagate into the SQL as a negative ``LIMIT`` (PostgreSQL
@@ -42,8 +47,23 @@ def _load_caps_from_env() -> dict[SourceType, int]:
     """
     return {
         t: max(0, int(os.environ.get(f"CAP_{t.name}", str(default))))
-        for t, default in _DEFAULT_CAPS.items()
+        for t, default in _DEFAULT_FEED_CLAIM_CAPS.items()
     }
+
+
+def _load_max_sids_per_worker() -> int:
+    """Load the process-wide SID ownership ceiling."""
+    return int(os.environ.get("MAX_SIDS_PER_WORKER", "32"))
+
+
+def _load_sid_lease_admission_cycle_budget() -> int:
+    """Load the per-cycle SID claim budget."""
+    return int(os.environ.get("SID_LEASE_ADMISSION_CYCLE_BUDGET", "2"))
+
+
+def _load_bcfy_calls_work_concurrency() -> int:
+    """Load the process-wide Calls physical-work concurrency."""
+    return int(os.environ.get("BCFY_CALLS_WORK_CONCURRENCY", "16"))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -81,6 +101,15 @@ class CollectorSettings:
         default_factory=lambda: int(
             os.environ.get("LEASE_ADMISSION_CYCLE_BUDGET", "20"),
         ),
+    )
+    max_sids_per_worker: int = field(
+        default_factory=_load_max_sids_per_worker,
+    )
+    sid_lease_admission_cycle_budget: int = field(
+        default_factory=_load_sid_lease_admission_cycle_budget,
+    )
+    bcfy_calls_work_concurrency: int = field(
+        default_factory=_load_bcfy_calls_work_concurrency,
     )
     startup_stagger_max_sec: float = field(
         default_factory=lambda: float(
@@ -121,25 +150,17 @@ class CollectorSettings:
             float(os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0")),
         ),
     )
-    # Documented overall shutdown-budget envelope (NOT an enforced timeout).
-    # Used by `__post_init__` to bound `task_cancel_budget_sec + 2s settle`
-    # at config time. Real enforcement comes from the container `--stop-timeout`
-    # and GCE 120s ACPI cap (HANDOFF-01); inside `_shutdown_sequence` we
-    # deliberately do NOT wrap the sequence in `asyncio.wait_for(...)` because
-    # cancelling mid-`release_feeds_batch` would leave leases stuck for the
-    # 60s abandonment window — letting the OS reap at 120s is safer.
+    # Absolute deadline supplied to GrantSupervisor during shutdown. The
+    # container `--stop-timeout` and GCE 120s ACPI cap remain the final
+    # process-level enforcement boundary.
     graceful_shutdown_timeout_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "90.0"),
         ),
     )
-    # Sub-timeout for the inner `asyncio.wait` of feed tasks during
-    # shutdown (SHUTDOWN-02). Default 30s leaves 90 - 30 - 2 = 58s for
-    # release_feeds_batch + pool/client closes inside the outer
-    # graceful_shutdown_timeout_sec budget. Pitfall 9: when the
-    # sub-timeout fires, pending tasks are explicitly re-cancelled and
-    # given a 2s settle window (hardcoded, NOT a setting) before
-    # release_feeds_batch — see _shutdown_sequence.
+    # Cooperative drain window supplied to GrantSupervisor before it begins
+    # terminal finalization. The remaining shutdown envelope is available for
+    # exact-grant finalization and shared-resource cleanup.
     task_cancel_budget_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("TASK_CANCEL_BUDGET_SEC", "30.0"),
@@ -148,9 +169,15 @@ class CollectorSettings:
     # Per-type claim budget caps (scaling plan §4/§6). Worker passes
     # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
     # PostgreSQL enforces the cap structurally via the query planner.
-    # Defaults + claimable type set live in module-level _DEFAULT_CAPS;
-    # CAP_<NAME> env vars override individual entries.
-    caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
+    # Defaults + Feed-authority type set live in
+    # module-level _DEFAULT_FEED_CLAIM_CAPS; CAP_<NAME> env vars override
+    # individual entries.
+    feed_claim_caps: typing.Mapping[SourceType, int] = field(
+        default_factory=lambda: types.MappingProxyType(
+            _load_feed_claim_caps_from_env()
+        )
+    )
+    worker_profile: worker_profiles.WorkerProfile = field(init=False)
 
     # GCS
     audio_staging_bucket: str = field(
@@ -294,13 +321,29 @@ class CollectorSettings:
         default_factory=lambda: os.environ.get("ICECAST_SEGMENT_DIR"),
     )
 
+    @property
+    def bcfy_calls_work_queue_capacity(self) -> int:
+        """Return the fixed two-batches-per-worker admission bound."""
+        return self.bcfy_calls_work_concurrency * 2
+
     def __post_init__(self) -> None:
+        profile = worker_profiles.build_mixed_worker_profile(
+            feed_owned_cap=self.max_feeds_per_worker,
+            feed_claims_per_cycle=self.lease_admission_cycle_budget,
+            sid_owned_cap=self.max_sids_per_worker,
+            sid_claims_per_cycle=self.sid_lease_admission_cycle_budget,
+        )
+        object.__setattr__(self, "worker_profile", profile)
+
         if self.lease_admission_cycle_budget <= 0:
             msg = (
                 "lease_admission_cycle_budget "
                 f"({self.lease_admission_cycle_budget}) must be greater "
                 "than zero."
             )
+            raise ValueError(msg)
+        if self.bcfy_calls_work_concurrency <= 0:
+            msg = "bcfy_calls_work_concurrency must be greater than zero"
             raise ValueError(msg)
         non_negative_delays = (
             ("startup_stagger_max_sec", self.startup_stagger_max_sec),
@@ -314,23 +357,17 @@ class CollectorSettings:
                 )
                 raise ValueError(msg)
 
-        # SHUTDOWN-02: validate the inner sub-timeout fits inside the
-        # outer graceful budget with the hardcoded 2s settle window.
-        # Triggers at construction time (immediate, clear error) so an
-        # operator misconfiguration surfaces before the runtime starts
-        # rather than as a "shutdown takes too long" symptom under load.
-        # Uses `>` (not `>=`): equality is allowed at the boundary
-        # because release_feeds_batch + pool closes have additional
-        # implicit slack inside graceful_shutdown_timeout_sec; this
-        # validation only guards against overtly invalid configs (e.g.
-        # operator sets TASK_CANCEL_BUDGET_SEC=120 with graceful=90).
+        # Reserve at least two seconds after cooperative draining for exact
+        # grant finalization. Construction-time validation makes an invalid
+        # shutdown envelope fail before the runtime starts.
         if (
             self.task_cancel_budget_sec + 2.0
             > self.graceful_shutdown_timeout_sec
         ):
             msg = (
                 f"task_cancel_budget_sec ({self.task_cancel_budget_sec}s) "
-                f"+ 2s settle exceeds graceful_shutdown_timeout_sec "
+                f"+ 2s finalization headroom exceeds "
+                f"graceful_shutdown_timeout_sec "
                 f"({self.graceful_shutdown_timeout_sec}s); adjust "
                 f"TASK_CANCEL_BUDGET_SEC or GRACEFUL_SHUTDOWN_TIMEOUT_SEC."
             )

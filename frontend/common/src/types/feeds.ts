@@ -48,11 +48,16 @@ export interface Feed extends BaseFeed {
   archiveUrl?: string;
   status: FeedStatus;
   substatus: BackendFeedStatus;
+  childStatus?: BackendFeedStatus;
   lastHeartbeat?: number;
   tags?: Tag[];
   statusReason?: BackendFeedStatusReason;
   lastSpeechSegmentTimestamp?: number;
   statusReasonDetail?: string;
+  bcfyCallsSid?: string;
+  leaseStatus?: BackendFeedStatus;
+  leaseLastHeartbeat?: number;
+  leaseStatusReason?: BackendFeedStatusReason;
 }
 
 export interface FeedCreate extends BaseFeed {
@@ -71,7 +76,13 @@ export interface ListFeedsResponse {
   total: number;
 }
 
-export interface AuditTrailValues { 
+export interface FeedSearchOptionsResponse {
+  sourceTypes: SourceType[];
+  statuses: string[];
+  tags: Tag[];
+}
+
+export interface AuditTrailValues {
   id?: string;
   name?: string;
   sourceType?: SourceType;

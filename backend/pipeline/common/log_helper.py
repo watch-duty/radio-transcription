@@ -14,7 +14,7 @@ from backend.pipeline.common.tracing_utils import (
 )
 
 logger = logging.getLogger(__name__)
-pipeline_metrics_logger = logging.getLogger("pipeline.metrics")
+pipeline_metrics_logger: logging.Logger = logging.getLogger("pipeline.metrics")
 
 
 def record_pipeline_stage(stage: str, status: str = "start") -> None:
@@ -23,7 +23,12 @@ def record_pipeline_stage(stage: str, status: str = "start") -> None:
     Emits a structured log to power Log-Based Metrics. This avoids data loss
     from scale-to-zero container destruction in Cloud Run / GCF.
     """
-    pipeline_metrics_logger.info(
+    active_logger = (
+        pipeline_metrics_logger
+        if pipeline_metrics_logger.handlers
+        else get_logger("pipeline.metrics")
+    )
+    active_logger.info(
         f"Pipeline stage recorded: {stage} -> {status}",
         extra={
             "json_fields": {
@@ -167,7 +172,7 @@ class TaskJsonFormatter(logging.Formatter):
             exc_text = self.formatException(record.exc_info)
             message = f"{message}\n{exc_text}"
 
-        log_record = {
+        log_record: dict[str, Any] = {
             "message": message,
             "severity": record.levelname,
             "logger": record.name,
@@ -190,6 +195,11 @@ class TaskJsonFormatter(logging.Formatter):
                 if key not in RESERVED_ATTRS and not key.startswith("_")
             }
         )
+        if "json_fields" in log_record and isinstance(
+            log_record["json_fields"], dict
+        ):
+            json_fields = log_record.pop("json_fields")
+            log_record.update(json_fields)
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
@@ -222,7 +232,7 @@ class StructuredMessageFilter(logging.Filter):
             record.exc_info = None
             record.exc_text = None
 
-        log_record = {
+        log_record: dict[str, Any] = {
             "message": message,
             "severity": record.levelname,
             "logger": record.name,
@@ -245,6 +255,11 @@ class StructuredMessageFilter(logging.Filter):
                 if key not in RESERVED_ATTRS and not key.startswith("_")
             }
         )
+        if "json_fields" in log_record and isinstance(
+            log_record["json_fields"], dict
+        ):
+            json_fields = log_record.pop("json_fields")
+            log_record.update(json_fields)
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
@@ -330,4 +345,4 @@ def get_task_logger(
 ) -> logging.LoggerAdapter[logging.Logger]:
     """Returns a LoggerAdapter wrapping the configured JSON logger with contextual attributes."""
     logger = get_logger(name)
-    return logging.LoggerAdapter(logger, extra)
+    return logging.LoggerAdapter(logger, extra, merge_extra=True)

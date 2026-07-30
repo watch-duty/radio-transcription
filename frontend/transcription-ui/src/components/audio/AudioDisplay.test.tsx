@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import {
   AnnotationType,
   AudioClassification,
@@ -432,5 +438,134 @@ describe('AudioDisplay', () => {
         /^\d{2}:\d{2}:\d{2}$/
       );
     });
+  });
+
+  it('calls onClipClick with calculated offsetSeconds when clip is clicked mid-segment', () => {
+    const onClipClick = vi.fn();
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        'seg-1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:10Z').toISOString(),
+        'Test clip',
+        'audio1.m4a'
+      ),
+    ];
+
+    render(
+      <AudioDisplay
+        audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
+        onClipClick={onClipClick}
+        isAudioPlaying={false}
+        playbackState="listening"
+        windowEndTime={new Date('2026-04-20T09:00:10Z').getTime()}
+        windowDurationMs={10 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
+        highlightedSegmentId={null}
+      />
+    );
+
+    const waveform = screen.getByTestId('waveform');
+    const clipElement = waveform.parentElement!;
+
+    vi.spyOn(clipElement, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      width: 100,
+      top: 0,
+      bottom: 60,
+      right: 100,
+      height: 60,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    // Click at 50% across clip (x = 50) -> 5 seconds offset
+    fireEvent.click(clipElement, { clientX: 50 });
+
+    expect(onClipClick).toHaveBeenCalledWith('seg-1', 5);
+  });
+
+  it('resolves the correct raw segment and offset when clicking within a silence group', () => {
+    const rawSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        'silence-1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        '',
+        'silence1.m4a'
+      ),
+      makeMockAudioSegment(
+        'silence-2',
+        'feed1',
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        new Date('2026-04-20T09:00:10Z').toISOString(),
+        '',
+        'silence2.m4a'
+      ),
+      makeMockAudioSegment(
+        'silence-3',
+        'feed1',
+        new Date('2026-04-20T09:00:10Z').toISOString(),
+        new Date('2026-04-20T09:00:15Z').toISOString(),
+        '',
+        'silence3.m4a'
+      ),
+    ];
+    rawSegments.forEach((s) => (s.classification = AudioClassification.OTHER));
+
+    const consolidatedBundle = {
+      ...rawSegments[0],
+      endTimestamp: rawSegments[2].endTimestamp,
+      isSilenceBundle: true,
+      bundledSegmentIds: ['silence-1', 'silence-2', 'silence-3'],
+    };
+
+    const onClipClick = vi.fn();
+
+    render(
+      <AudioDisplay
+        audioSegments={[consolidatedBundle]}
+        rawAudioSegments={rawSegments}
+        currentlyPlayingSegmentId={null}
+        onClipClick={onClipClick}
+        isAudioPlaying={false}
+        playbackState="listening"
+        windowEndTime={new Date('2026-04-20T09:00:15Z').getTime()}
+        windowDurationMs={15 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
+        highlightedSegmentId={null}
+      />
+    );
+
+    const waveform = screen.getByTestId('waveform');
+    const clipElement = waveform.parentElement!;
+
+    vi.spyOn(clipElement, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      width: 150,
+      top: 0,
+      bottom: 60,
+      right: 150,
+      height: 60,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    // Click at x = 70 (which is 7 seconds into the 15s silence bundle, landing inside silence-2 from 5s-10s at 2s offset)
+    fireEvent.click(clipElement, { clientX: 70 });
+
+    expect(onClipClick).toHaveBeenCalledWith('silence-2', 2);
   });
 });

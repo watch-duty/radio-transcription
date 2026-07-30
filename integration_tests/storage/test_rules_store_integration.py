@@ -52,7 +52,9 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
     rule_in = _create_sample_rule_in("Fire Alert")
 
     # 1. Create
-    created = await store.create_rule(rule_in)
+    created = await store.create_rule(
+        rule_in, actor_id="user:google:test@example.com"
+    )
     assert created.rule_name == "Fire Alert"
     assert created.rule_id is not None
     assert created.metadata is not None
@@ -73,8 +75,14 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
 
 async def test_list_rules(store: RulesStore) -> None:
     """Verify listing multiple rules."""
-    await store.create_rule(_create_sample_rule_in("Rule 1"))
-    await store.create_rule(_create_sample_rule_in("Rule 2"))
+    await store.create_rule(
+        _create_sample_rule_in("Rule 1"),
+        actor_id="user:google:test@example.com",
+    )
+    await store.create_rule(
+        _create_sample_rule_in("Rule 2"),
+        actor_id="user:google:test@example.com",
+    )
 
     rules = await store.list_rules()
     assert len(rules) == 2
@@ -85,9 +93,18 @@ async def test_list_rules(store: RulesStore) -> None:
 
 async def test_list_rules_with_ids(store: RulesStore) -> None:
     """Verify listing rules filtered by IDs."""
-    r1 = await store.create_rule(_create_sample_rule_in("Rule 1"))
-    r2 = await store.create_rule(_create_sample_rule_in("Rule 2"))
-    await store.create_rule(_create_sample_rule_in("Rule 3"))
+    r1 = await store.create_rule(
+        _create_sample_rule_in("Rule 1"),
+        actor_id="user:google:test@example.com",
+    )
+    r2 = await store.create_rule(
+        _create_sample_rule_in("Rule 2"),
+        actor_id="user:google:test@example.com",
+    )
+    await store.create_rule(
+        _create_sample_rule_in("Rule 3"),
+        actor_id="user:google:test@example.com",
+    )
 
     rules = await store.list_rules(rule_ids=[r1.rule_id, r2.rule_id])
     assert len(rules) == 2
@@ -103,7 +120,10 @@ async def test_list_rules_with_ids(store: RulesStore) -> None:
 
 async def test_update_rule(store: RulesStore) -> None:
     """Verify partial updates to a rule."""
-    created = await store.create_rule(_create_sample_rule_in("Old Name"))
+    created = await store.create_rule(
+        _create_sample_rule_in("Old Name"),
+        actor_id="user:google:test@example.com",
+    )
 
     update_in = RuleUpdate(
         rule_name="New Name",
@@ -113,7 +133,9 @@ async def test_update_rule(store: RulesStore) -> None:
         ),
     )
 
-    updated = await store.update_rule(created.rule_id, update_in)
+    updated = await store.update_rule(
+        created.rule_id, update_in, actor_id="user:google:test@example.com"
+    )
     assert updated is not None
     assert updated.rule_name == "New Name"
     assert not updated.is_active
@@ -140,6 +162,7 @@ async def test_rule_tags_round_trip(store: RulesStore) -> None:
     updated = await store.update_rule(
         created.rule_id,
         RuleUpdate(tags=[Tag(key="geo_event_type", value="wildfire")]),
+        actor_id="user:google:test@example.com",
     )
     assert updated is not None
     assert updated.tags == [Tag(key="geo_event_type", value="wildfire")]
@@ -150,10 +173,14 @@ async def test_rule_tags_round_trip(store: RulesStore) -> None:
 
 async def test_delete_rule(store: RulesStore) -> None:
     """Verify rule deletion."""
-    created = await store.create_rule(_create_sample_rule_in())
+    created = await store.create_rule(
+        _create_sample_rule_in(), actor_id="user:google:test@example.com"
+    )
 
     # Delete
-    success = await store.delete_rule(created.rule_id)
+    success = await store.delete_rule(
+        created.rule_id, actor_id="user:google:test@example.com"
+    )
     assert success is True
 
     # Verify gone
@@ -161,12 +188,24 @@ async def test_delete_rule(store: RulesStore) -> None:
     assert fetched is None
 
     # Delete non-existent
-    success_again = await store.delete_rule(str(uuid.uuid4()))
+    success_again = await store.delete_rule(
+        str(uuid.uuid4()), actor_id="user:google:test@example.com"
+    )
     assert success_again is False
 
 
 async def test_invalid_uuid_returns_none_or_false(store: RulesStore) -> None:
     """Verify handling of malformed UUID strings."""
     assert await store.get_rule("not-a-uuid") is None
-    assert await store.update_rule("not-a-uuid", RuleUpdate()) is None
-    assert await store.delete_rule("not-a-uuid") is False
+    assert (
+        await store.update_rule(
+            "not-a-uuid", RuleUpdate(), actor_id="user:google:test@example.com"
+        )
+        is None
+    )
+    assert (
+        await store.delete_rule(
+            "not-a-uuid", actor_id="user:google:test@example.com"
+        )
+        is False
+    )

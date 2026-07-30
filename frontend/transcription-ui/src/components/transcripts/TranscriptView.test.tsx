@@ -442,17 +442,12 @@ describe('TranscriptView', () => {
   });
 
   it('loads feeds on mount', async () => {
-    vi.mocked(listFeeds).mockResolvedValueOnce({
-      feeds: [
-        {
-          id: 'feed1',
-          name: 'Feed 1',
-          sourceType: SourceType.BCFY_FEEDS,
-          status: 'active' as FeedStatus,
-          substatus: 'active' as BackendFeedStatus,
-        },
-      ],
-      total: 1,
+    vi.mocked(getFeed).mockResolvedValueOnce({
+      id: 'feed123',
+      name: 'Feed 123',
+      sourceType: SourceType.BCFY_FEEDS,
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
     });
 
     renderTranscriptView(
@@ -461,12 +456,12 @@ describe('TranscriptView', () => {
     );
 
     await waitFor(() => {
-      expect(listFeeds).toHaveBeenCalledTimes(2);
+      expect(getFeed).toHaveBeenCalledWith('feed123', 'fake-token');
     });
   });
 
   it('shows error alert when feeds fail to load', async () => {
-    vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
+    vi.mocked(getFeed).mockRejectedValueOnce(new Error('Feeds load failed'));
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -476,7 +471,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(mockHandleError).toHaveBeenCalledWith(
         expect.objectContaining({ message: 'Feeds load failed' }),
-        'Loading Feeds'
+        'Loading Feed'
       );
     });
   });
@@ -498,19 +493,14 @@ describe('TranscriptView', () => {
   });
 
   it('displays source and archive links for the active feed', async () => {
-    vi.mocked(listFeeds).mockResolvedValue({
-      feeds: [
-        {
-          id: 'feed123',
-          name: 'Feed 123',
-          sourceType: SourceType.BCFY_FEEDS,
-          status: 'active' as FeedStatus,
-          substatus: 'active' as BackendFeedStatus,
-          sourceUrl: 'https://partner.broadcastify.com/12345',
-          archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
-        },
-      ],
-      total: 1,
+    vi.mocked(getFeed).mockResolvedValue({
+      id: 'feed123',
+      name: 'Feed 123',
+      sourceType: SourceType.BCFY_FEEDS,
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
+      sourceUrl: 'https://partner.broadcastify.com/12345',
+      archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
     });
     vi.mocked(listAudioSegments).mockResolvedValueOnce({
       segments: mockAudioSegments,
@@ -2042,7 +2032,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(3);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].isOutageBundle).toBe(true);
@@ -2078,7 +2071,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');
@@ -2111,7 +2107,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], false);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_CALLS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');
@@ -2144,7 +2143,10 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([segment1, segment2], true);
+      const result = consolidateAudioSegments(
+        [segment1, segment2],
+        SourceType.BCFY_FEEDS
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');

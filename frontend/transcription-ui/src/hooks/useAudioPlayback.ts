@@ -35,7 +35,11 @@ interface UseAudioPlayback {
   isAudioPlaying: boolean;
   currentlyPlayingSegmentId: string | null;
   currentAudioRef: RefObject<PlaybackController | null>;
-  togglePlay: (segmentId: string, audioUri: string) => void;
+  togglePlay: (
+    segmentId: string,
+    audioUri: string,
+    initialSeekTime?: number
+  ) => void;
   stop: () => void;
 }
 
@@ -106,7 +110,7 @@ export function useAudioPlayback({
   }, []);
 
   const togglePlay = useCallback(
-    (segmentId: string, audioUri: string) => {
+    (segmentId: string, audioUri: string, initialSeekTime?: number) => {
       // Lazy-build on first play so the AudioContext is created inside a user gesture.
       const context = (audioContextRef.current ??= createAudioContext());
       const player = (playerRef.current ??= new WebAudioPlayer(context));
@@ -159,7 +163,15 @@ export function useAudioPlayback({
         });
       }
 
-      if (!isAudioPlayingRef.current || newAudio) {
+      if (initialSeekTime !== undefined) {
+        currentAudio.current.setCurrentTime(initialSeekTime);
+      }
+
+      if (
+        !isAudioPlayingRef.current ||
+        newAudio ||
+        initialSeekTime !== undefined
+      ) {
         currentAudio.current.play();
       } else {
         currentAudio.current.pause();

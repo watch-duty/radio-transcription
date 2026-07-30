@@ -16,7 +16,7 @@ class BaseRulesService(ABC):
     """Abstract base class for Rules Service implementations."""
 
     @abstractmethod
-    async def create_rule(self, rule_in: RuleCreate) -> Rule:
+    async def create_rule(self, rule_in: RuleCreate, actor_id: str) -> Rule:
         """Create a new transcription rule."""
 
     @abstractmethod
@@ -29,12 +29,12 @@ class BaseRulesService(ABC):
 
     @abstractmethod
     async def update_rule(
-        self, rule_id: str, rule_in: RuleUpdate
+        self, rule_id: str, rule_in: RuleUpdate, actor_id: str
     ) -> Rule | None:
         """Fully update an existing transcription rule."""
 
     @abstractmethod
-    async def delete_rule(self, rule_id: str) -> bool:
+    async def delete_rule(self, rule_id: str, actor_id: str) -> bool:
         """Delete a transcription rule."""
 
 
@@ -44,8 +44,8 @@ class AlloyRulesService(BaseRulesService):
     def __init__(self, store: RulesStore) -> None:
         self._store = store
 
-    async def create_rule(self, rule_in: RuleCreate) -> Rule:
-        return await self._store.create_rule(rule_in)
+    async def create_rule(self, rule_in: RuleCreate, actor_id: str) -> Rule:
+        return await self._store.create_rule(rule_in, actor_id=actor_id)
 
     async def get_rule(self, rule_id: str) -> Rule | None:
         return await self._store.get_rule(rule_id)
@@ -54,9 +54,11 @@ class AlloyRulesService(BaseRulesService):
         return await self._store.list_rules(rule_ids)
 
     async def update_rule(
-        self, rule_id: str, rule_in: RuleUpdate
+        self, rule_id: str, rule_in: RuleUpdate, actor_id: str
     ) -> Rule | None:
-        return await self._store.update_rule(rule_id, rule_in)
+        return await self._store.update_rule(
+            rule_id, rule_in, actor_id=actor_id
+        )
 
-    async def delete_rule(self, rule_id: str) -> bool:
-        return await self._store.delete_rule(rule_id)
+    async def delete_rule(self, rule_id: str, actor_id: str) -> bool:
+        return await self._store.delete_rule(rule_id, actor_id=actor_id)

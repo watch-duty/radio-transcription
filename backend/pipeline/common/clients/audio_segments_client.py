@@ -27,19 +27,27 @@ class AudioSegmentsClient:
     Resilient synchronous client for interacting with the Audio Segments API.
     """
 
-    def __init__(self, api_url: str, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        api_url: str,
+        max_retries: int = 3,
+        default_timeout: float = 30.0,
+    ) -> None:
         """
         Initializes the AudioSegmentsClient with retry-resilient sessions.
 
         Args:
             api_url: The base URL of the Audio Segments API.
             max_retries: The maximum number of retries for transient network errors.
+            default_timeout: Default timeout in seconds for HTTP requests.
         """
         self.api_url = api_url.rstrip("/")
+        self.default_timeout = default_timeout
         self.session = create_resilient_session(
             max_retries=max_retries,
             backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
             raise_on_status=False,
+            allowed_methods=None,
         )
         if is_gcp_env():
             self.session.auth = GCPMetadataAuth(self.api_url)
@@ -49,6 +57,7 @@ class AudioSegmentsClient:
         audio_segment_id: str,
         annotation_type: AnnotationType,
         data: dict,
+        timeout: float | None = None,
     ) -> None:
         """
         Adds an annotation to a specific audio segment.
@@ -57,6 +66,7 @@ class AudioSegmentsClient:
             audio_segment_id: The ID of the audio segment.
             annotation_type: The type of annotation (e.g. TRANSCRIPT, EVALUATION).
             data: The annotation data payload.
+            timeout: Optional request timeout override in seconds.
 
         Raises:
             requests.exceptions.HTTPError: If the request fails.
@@ -75,16 +85,19 @@ class AudioSegmentsClient:
             f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
             json=payload,
             headers=headers,
-            timeout=10,
+            timeout=timeout if timeout is not None else self.default_timeout,
         )
         response.raise_for_status()
 
-    def add_audio_segment(self, segment: dict) -> None:
+    def add_audio_segment(
+        self, segment: dict, timeout: float | None = None
+    ) -> None:
         """
         Saves a single audio segment.
 
         Args:
             segment: The audio segment data to add.
+            timeout: Optional request timeout override in seconds.
 
         Raises:
             requests.exceptions.HTTPError: If the request fails.
@@ -98,7 +111,7 @@ class AudioSegmentsClient:
             f"{self.api_url}/v1/audio_segments",
             json=segment,
             headers=headers,
-            timeout=10,
+            timeout=timeout if timeout is not None else self.default_timeout,
         )
         response.raise_for_status()
 
@@ -135,16 +148,23 @@ class AsyncAudioSegmentsClient:
     Resilient asynchronous client for interacting with the Audio Segments API.
     """
 
-    def __init__(self, api_url: str, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        api_url: str,
+        max_retries: int = 3,
+        default_timeout: float = 30.0,
+    ) -> None:
         """
         Initializes the AsyncAudioSegmentsClient.
 
         Args:
             api_url: The base URL of the Audio Segments API.
             max_retries: The maximum number of retries for transient network errors.
+            default_timeout: Default timeout in seconds for HTTP requests.
         """
         self.api_url = api_url.rstrip("/")
         self.max_retries = max_retries
+        self.default_timeout = default_timeout
         transport = httpx.AsyncHTTPTransport(retries=0)
         auth = GCPMetadataAsyncAuth(self.api_url) if is_gcp_env() else None
         self.client = httpx.AsyncClient(transport=transport, auth=auth)
@@ -158,6 +178,7 @@ class AsyncAudioSegmentsClient:
         audio_segment_id: str,
         annotation_type: AnnotationType,
         data: dict,
+        timeout: float | None = None,  # noqa: ASYNC109
     ) -> None:
         """
         Adds an annotation to a specific audio segment asynchronously.
@@ -166,6 +187,7 @@ class AsyncAudioSegmentsClient:
             audio_segment_id: The ID of the audio segment.
             annotation_type: The type of annotation (e.g. TRANSCRIPT, EVALUATION).
             data: The annotation data payload.
+            timeout: Optional request timeout override in seconds.
 
         Raises:
             httpx.HTTPStatusError: If the request fails.
@@ -180,6 +202,8 @@ class AsyncAudioSegmentsClient:
             "data": data,
         }
 
+        timeout_val = timeout if timeout is not None else self.default_timeout
+
         async for attempt in AsyncRetrying(
             **get_httpx_retry_config(
                 total_attempts=self.max_retries,
@@ -193,16 +217,21 @@ class AsyncAudioSegmentsClient:
                     f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
                     json=payload,
                     headers=headers,
-                    timeout=10.0,
+                    timeout=timeout_val,
                 )
                 response.raise_for_status()
 
-    async def add_audio_segment(self, segment: dict) -> None:
+    async def add_audio_segment(
+        self,
+        segment: dict,
+        timeout: float | None = None,  # noqa: ASYNC109
+    ) -> None:
         """
         Saves a single audio segment asynchronously.
 
         Args:
             segment: The audio segment data to add.
+            timeout: Optional request timeout override in seconds.
 
         Raises:
             httpx.HTTPStatusError: If the request fails.
@@ -211,6 +240,8 @@ class AsyncAudioSegmentsClient:
         traceparent = get_current_traceparent()
         if traceparent:
             headers["traceparent"] = traceparent
+
+        timeout_val = timeout if timeout is not None else self.default_timeout
 
         async for attempt in AsyncRetrying(
             **get_httpx_retry_config(
@@ -225,6 +256,6 @@ class AsyncAudioSegmentsClient:
                     f"{self.api_url}/v1/audio_segments",
                     json=segment,
                     headers=headers,
-                    timeout=10.0,
+                    timeout=timeout_val,
                 )
                 response.raise_for_status()

@@ -3,6 +3,7 @@ from typing import Final
 
 import numpy as np
 
+from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
 )
@@ -19,6 +20,8 @@ from backend.pipeline.segmentation.datatypes import (
 )
 from backend.pipeline.segmentation.state.stitcher_state import (
     AudioStitchingStateMachine,
+    ms_to_samples,
+    samples_to_ms,
 )
 
 SAMPLES_PER_MS: Final = 16
@@ -285,6 +288,31 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # Contributing URIs should have both!
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
         self.assertIn("gs://fake/2.flac", self.ctx.contributing_audio_uris)
+
+    def test_end_audio_offset_anchored_to_last_contributing_file(self) -> None:
+        """Verifies end_audio_offset_ms is computed relative to the LAST contributing
+        file's own start time, matching how start_audio_offset_ms is relative to the
+        FIRST contributing file -- rather than as a bare segment duration, which
+        previously left the two offsets in different, incomparable reference frames.
+        """
+        self.ctx.transmission_start_time_ms = 1000
+        self.ctx.buffer_start_time_ms = 1000
+        self.ctx.start_audio_offset_ms = 1000
+        self.ctx.buffer_duration_ms = 17000
+        self.ctx.last_segment_end_time_ms = 18000
+        self.ctx.speech_segments = [TimeRange(start_ms=1000, end_ms=18000)]
+        self.ctx.add_contributing_chunk("gs://fake/1.flac", 0)
+        self.ctx.add_contributing_chunk("gs://fake/2.flac", 15000)
+
+        flush = self.state_machine._flush_current_transmission(
+            reason="test", ctx=self.ctx
+        )
+
+        # Relative to the FIRST contributing file (starts at 0).
+        self.assertEqual(flush.start_audio_offset_ms, 1000)
+        # Relative to the LAST contributing file (starts at 15000), not the
+        # segment's own 17000ms duration and not an offset from the first file.
+        self.assertEqual(flush.end_audio_offset_ms, 3000)
 
     def test_late_chunk_excessive_speech_duration_split(self) -> None:
         """Verifies that an isolated late-arriving chunk containing speech exceeding
@@ -565,3 +593,115 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             and a.reason == "Forced flush due to upstream audio chunk gap"
         ]
         self.assertEqual(len(flush_actions), 1)
+
+    def test_qualifying_silence_gap_survives_padding_and_splits_stitcher(
+        self,
+    ) -> None:
+        """Regression test: verifies that a qualifying 1.024s raw silence gap (>= 800ms)
+        survives VAD segment padding clamping and correctly triggers a dispatch split
+        in AudioStitchingStateMachine (significant_gap_ms = 800).
+        """
+        detector = vad.VoiceActivityDetector(
+            pad_sec=0.3, min_qualifying_gap_sec=0.8
+        )
+        raw_segments = [(1.0, 2.0), (3.024, 4.024)]
+        padded_segments = detector._pad_and_merge_segments(
+            raw_segments, audio_len_sec=10.0
+        )
+
+        config = get_test_stitch_config(significant_gap_ms=800)
+        self.state_machine = AudioStitchingStateMachine(config)
+
+        chunk = mock_audio_chunk(0, 10000, padded_segments)
+        actions = self._process(chunk)
+
+        # Verify that TWO separate SPEECH flushes occur: one after burst 1, and one after burst 2 (due to trailing silence)
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction) and a.audio_classification == 1
+        ]
+        self.assertEqual(len(flush_actions), 2)
+        self.assertEqual(
+            flush_actions[0].speech_time_range.end_ms,
+            int(padded_segments[0][1] * 1000),
+        )
+        self.assertEqual(
+            flush_actions[1].speech_time_range.start_ms,
+            int(padded_segments[1][0] * 1000),
+        )
+
+    def test_silent_chunk_flush_negative_post_roll_clamped(self) -> None:
+        """Verifies that a silent chunk flush with speech ending >500ms prior clamps post-roll to 0."""
+        # Chunk 1: Speech from 0.0s to 1.0s in a 2.0s chunk (ends at 1.0s = 1000ms).
+        # Trailing silence: 1000ms to 2000ms. Speech ended at 1000ms, post-roll target is 1500ms.
+        chunk1 = mock_audio_chunk(0, 2000, [(0.0, 1.0)])
+        self._process(chunk1)
+
+        # Chunk 2: Dead air chunk starting at 10000ms (file_start_ms = 10000).
+        # Target post-roll end = (1000 + 500) - 10000 = -8500ms < 0.
+        # This triggers a silent flush with is_significant_gap = True (10000 - 1000 = 9000ms > 3000ms).
+        chunk2 = mock_audio_chunk(10000, 5000, [])
+        actions2 = self._process(chunk2)
+
+        # Verify speech flush occurred and non-speech segment started at file_start_ms (10000), not negative!
+        self.assertTrue(len(actions2) > 0)
+        self.assertEqual(self.ctx.transmission_start_time_ms, 10000)
+        self.assertEqual(self.ctx.buffer_duration_ms, 5000)
+
+    def test_sample_rate_conversion_helpers(self) -> None:
+        """Verifies exact sample rate conversions for 22050 Hz and 44100 Hz streams."""
+        # 30,000 ms at 22050 Hz: exact samples is 661,500 (not 660,000 from 22 * 30000)
+        self.assertEqual(ms_to_samples(30000, 22050), 661500)
+        self.assertEqual(samples_to_ms(661500, 22050), 30000)
+
+        # 30,000 ms at 44100 Hz: exact samples is 1,323,000 (not 1,320,000 from 44 * 30000)
+        self.assertEqual(ms_to_samples(30000, 44100), 1323000)
+        self.assertEqual(samples_to_ms(1323000, 44100), 30000)
+
+    def test_sub_threshold_silence_and_speech_slices_contiguous_at_22050hz(
+        self,
+    ) -> None:
+        """Verifies the sub-threshold silence append and the following speech
+        slice cover contiguous, non-overlapping sample ranges at 22050 Hz.
+
+        22050 // 1000 == 22 truncates 0.05 samples/ms, so the old
+        samples_per_ms-based slice for the silence gap ended at sample 26400
+        while the (already ms_to_samples-based) speech slice started at
+        sample 26460 -- silently dropping 60 samples at the seam. Using
+        ms_to_samples for both slices closes that gap.
+        """
+        sample_rate = 22050
+        duration_ms = 3000
+        total_samples = ms_to_samples(duration_ms, sample_rate)
+        chunk = AudioChunkData(
+            start_ms=0,
+            audio=np.arange(total_samples, dtype=np.int64),
+            speech_segments=[
+                TimeRange(0, 1000),
+                # 200ms gap: below the default significant_gap_ms=3000
+                # threshold, so it takes the sub-threshold append path.
+                TimeRange(1200, 3000),
+            ],
+            gcs_uri="gs://fake/1.flac",
+            duration_ms=duration_ms,
+            sample_rate=sample_rate,
+        )
+
+        actions = self._process(chunk)
+
+        append_actions = [
+            a for a in actions if isinstance(a, AppendBufferAction)
+        ]
+        self.assertEqual(len(append_actions), 3)
+        silence_buffer = append_actions[1].audio_buffer
+        speech_buffer = append_actions[2].audio_buffer
+        self.assertTrue(len(silence_buffer) > 0)
+        self.assertTrue(len(speech_buffer) > 0)
+
+        # Content is np.arange(total_samples), so each element's value is its
+        # own index into the source array.
+        silence_end_sample_idx = int(silence_buffer[-1]) + 1
+        speech_start_sample_idx = int(speech_buffer[0])
+
+        self.assertEqual(silence_end_sample_idx, speech_start_sample_idx)

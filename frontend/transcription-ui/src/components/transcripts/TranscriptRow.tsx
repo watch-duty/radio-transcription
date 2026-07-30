@@ -1,33 +1,35 @@
 import { useState } from 'react';
 
-import { saveAs } from 'file-saver';
-
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import DonwloadIcon from '@mui/icons-material/Download';
-import LinkIcon from '@mui/icons-material/Link';
+import FlagIcon from '@mui/icons-material/Flag';
+import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  type Annotation,
   AudioClassification,
   type TranscriptAnnotationData,
 } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { useUserInfo } from '../../hooks/useUserInfo';
+import { flagSegment } from '../../service/flagSegment';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
+  findTranscriptFlagAnnotation,
 } from '../../utils/annotationUtils';
-import { getAudioUrl } from '../../utils/audioUtils';
+import { cacheAudioSegment } from '../../utils/cacheUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
-import { SegmentInfoPopover } from './SegmentInfoPopover';
+import { TranscriptSharePopover } from './TranscriptSharePopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -44,7 +46,7 @@ interface TranscriptRowProps {
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
   isTopAudioSegmentRow?: boolean;
-  isMobile?: boolean;
+  isNarrow?: boolean;
 }
 
 export function TranscriptRow({
@@ -62,10 +64,12 @@ export function TranscriptRow({
   redactTranscripts = false,
   onRowClick,
   isTopAudioSegmentRow = false,
-  isMobile = false,
+  isNarrow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
-  const { isAdmin } = useAuth();
+  const { token } = useAuth();
+  const { data: user } = useUserInfo(token);
+  const queryClient = useQueryClient();
 
   const [isHovered, setIsHovered] = useState(false);
 
@@ -77,6 +81,13 @@ export function TranscriptRow({
   const transcriptAnnotation = findTranscriptAnnotationData(
     audioSegment.annotations
   );
+
+  const flagAnnotation = findTranscriptFlagAnnotation(audioSegment.annotations);
+  const flagData = flagAnnotation?.data as
+    | { flaggedByUserIds: string[] }
+    | undefined;
+  const flaggedByUserIds = flagData?.flaggedByUserIds || [];
+  const hasUserFlagged = !!user && flaggedByUserIds.includes(user.email);
 
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
@@ -160,6 +171,42 @@ export function TranscriptRow({
     return theme.palette.primary.light;
   };
 
+  const flagMutation = useMutation({
+    mutationFn: async () => {
+      if (!user || !token) return;
+
+      const newAnnotation = await flagSegment(
+        audioSegment.id,
+        !hasUserFlagged,
+        token
+      );
+      return newAnnotation;
+    },
+    onSuccess: (updatedAnnotation) => {
+      triggerSnackbar(
+        hasUserFlagged ? 'Flag removed' : 'Transcript flagged as incorrect'
+      );
+      if (!updatedAnnotation) return;
+      // Update cache immediately to avoid flashing
+      cacheAudioSegment(queryClient, audioSegment.id, (segment) => {
+        const oldFlagAnnotation = findTranscriptFlagAnnotation(
+          segment.annotations
+        );
+        const newAnnotations = segment.annotations.filter(
+          (a: Annotation) => a !== oldFlagAnnotation
+        );
+        newAnnotations.push(updatedAnnotation);
+        return {
+          ...segment,
+          annotations: newAnnotations,
+        };
+      });
+    },
+    onError: () => {
+      triggerSnackbar('Failed to flag transcript');
+    },
+  });
+
   return (
     <Box
       onMouseEnter={() => setIsHovered(true)}
@@ -209,12 +256,13 @@ export function TranscriptRow({
           gridTemplateAreas: {
             xs: `
               "meta    actions"
-              "text    actions"
+              "text    text"
             `,
             sm: 'unset',
           },
-          alignItems: { xs: 'stretch', sm: 'center' },
-          gap: { xs: 1.5, sm: 2 },
+          alignItems: 'center',
+          columnGap: { xs: 1, sm: 2 },
+          rowGap: { xs: 0.25, sm: 2 },
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
@@ -222,11 +270,11 @@ export function TranscriptRow({
           pt:
             isSilence || isOutage
               ? '0px !important'
-              : { xs: 1.5, sm: undefined },
+              : { xs: 0.75, sm: undefined },
           pb:
             isSilence || isOutage
               ? '0px !important'
-              : { xs: 1.5, sm: undefined },
+              : { xs: 0.75, sm: undefined },
           px: { xs: 1.5, sm: 2 },
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
@@ -269,7 +317,7 @@ export function TranscriptRow({
                     ? audioSegment.id
                     : currentlyPlayingSegmentId
                 }
-                hideButton={isMobile ? false : !isHovered}
+                hideButton={isNarrow ? false : !isHovered}
               />
             )}
           </Box>
@@ -353,7 +401,7 @@ export function TranscriptRow({
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
-            mt: { xs: 0.5, sm: 0 },
+            mt: 0,
           }}
         >
           <Typography
@@ -403,101 +451,43 @@ export function TranscriptRow({
         <Box
           sx={{
             gridArea: { xs: 'actions', sm: 'unset' },
-            display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: 1,
             flexShrink: 0,
-            alignSelf: { xs: 'start', sm: 'center' },
-            mt: { xs: 0.5, sm: 0 },
+            alignSelf: 'center',
+            display: 'flex',
+            alignItems: 'center',
           }}
         >
-          {!isSilence && !isOutage && (
-            <Tooltip title="Copy transcript">
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label="copy transcript"
-                  onClick={(e) => {
-                    if (transcriptAnnotation?.text) {
-                      e.stopPropagation();
-                      navigator.clipboard.writeText(transcriptAnnotation.text);
-                      triggerSnackbar('Transcript copied');
-                    }
-                  }}
-                  sx={{ cursor: 'copy' }}
-                  disabled={!transcriptAnnotation || hasErrors}
-                >
-                  <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          )}
-          <Tooltip title="Copy transcript deep link">
+          {!isOutage && (
             <IconButton
               size="small"
-              aria-label="copy deeplink"
               onClick={(e) => {
                 e.stopPropagation();
-                const url = new URL(
-                  window.location.origin + window.location.pathname
-                );
-                url.searchParams.set('feedId', audioSegment.feedId);
-                url.searchParams.set('segmentId', audioSegment.id);
-                url.searchParams.set(
-                  'timestamp',
-                  new Date(audioSegment.startTimestamp).getTime().toString()
-                );
-                navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Transcript link copied');
+                flagMutation.mutate();
               }}
-              sx={{ cursor: 'copy' }}
+              disabled={flagMutation.isPending}
+              title={
+                hasUserFlagged ? 'Remove flag' : 'Flag transcript as incorrect'
+              }
+              sx={{ mr: 1 }}
             >
-              <LinkIcon fontSize="small" />
+              {flagMutation.isPending ? (
+                <CircularProgress size={20} color="inherit" />
+              ) : hasUserFlagged ? (
+                <FlagIcon fontSize="small" color="error" />
+              ) : (
+                <FlagOutlinedIcon fontSize="small" />
+              )}
             </IconButton>
-          </Tooltip>
-          <Tooltip title="Download audio">
-            <IconButton
-              size="small"
-              aria-label="download audio"
-              disabled={!audioSegment.playbackAudioUri}
-              onClick={async (e) => {
-                e.stopPropagation();
-
-                // Button will be disabled, but need this for type safety.
-                if (!audioSegment.playbackAudioUri) {
-                  return;
-                }
-
-                try {
-                  const url = getAudioUrl(audioSegment.playbackAudioUri);
-                  const response = await fetch(url);
-                  if (!response.ok) {
-                    throw new Error(
-                      `Failed to fetch audio: ${response.statusText}`
-                    );
-                  }
-                  const blob = await response.blob();
-                  const fileName =
-                    audioSegment.playbackAudioUri.split('/').pop() ||
-                    audioSegment.playbackAudioUri;
-                  saveAs(blob, fileName);
-                  triggerSnackbar('Audio downloaded');
-                } catch (err) {
-                  console.error('Failed to download audio:', err);
-                  triggerSnackbar('Failed to download audio');
-                }
-              }}
-            >
-              <DonwloadIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          {isAdmin && (
-            <SegmentInfoPopover
-              audioSegment={audioSegment}
-              degradationReasons={degradationReasons}
-              triggerSnackbar={triggerSnackbar}
-            />
           )}
+          <TranscriptSharePopover
+            audioSegment={audioSegment}
+            transcriptAnnotation={transcriptAnnotation}
+            isSilence={isSilence}
+            isOutage={isOutage}
+            hasErrors={hasErrors}
+            degradationReasons={degradationReasons}
+            triggerSnackbar={triggerSnackbar}
+          />
         </Box>
       </ListItem>
     </Box>

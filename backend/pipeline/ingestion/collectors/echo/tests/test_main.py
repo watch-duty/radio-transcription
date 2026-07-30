@@ -416,6 +416,68 @@ class TestHandle:
         assert chunk.start_timestamp.ToDatetime(UTC) == expected_ts
 
     @pytest.mark.usefixtures("_patch_globals")
+    def test_passes_gcs_time_created_as_receipt_time_to_publisher(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies Echo collector extracts timeCreated as receipt_time and populates receipt_timestamp on chunk."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": FeedStatus.ACTIVE,
+            },
+        )
+
+        event = self._make_event(
+            name="fire-ca/20260531/Middlebury_Regional_EMS_20260531_002818.mp3"
+        )
+        time_created_iso = "2026-05-31T01:03:57.708000+00:00"
+        event.data["timeCreated"] = time_created_iso
+
+        _handle(event)
+
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(publish_args[1])
+
+        expected_receipt = datetime.fromisoformat(time_created_iso)
+        assert chunk.receipt_timestamp.ToDatetime(UTC) == expected_receipt
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_missing_time_created_passes_none_receipt_time_gracefully(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies missing timeCreated in CloudEvent data passes receipt_time=None without crashing."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": FeedStatus.ACTIVE,
+            },
+        )
+
+        event = self._make_event(
+            name="fire-ca/20260531/Middlebury_Regional_EMS_20260531_002818.mp3"
+        )
+        if "timeCreated" in event.data:
+            del event.data["timeCreated"]
+
+        _handle(event)
+
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(publish_args[1])
+        assert not chunk.HasField("receipt_timestamp")
+
+    @pytest.mark.usefixtures("_patch_globals")
     def test_gcs_time_created_fallback_for_unparseable_filename(
         self, mock_store, _patch_globals
     ) -> None:

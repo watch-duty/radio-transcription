@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -176,7 +176,9 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"backend/pipeline/segmentation/scripts/*.py" = ["INP001"]
 "model/**/*.py" = ["E501"]
+"model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
   "ALL",   # Ignore all linting rules for notebooks
 ]
@@ -236,6 +238,9 @@ known-first-party = ["backend", "local_dev"]
 ]
 ".github/scripts/**.py" = [
   "E501",   # Line too long
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
+"model/scripts/sft/oversample_bcfy_calls_production_shaped.py" = [
   "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
 ]
 "scripts/**/*.py" = ["E501"]

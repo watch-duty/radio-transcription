@@ -303,10 +303,19 @@ def _validate_metadata(
                 "split must be a non-empty string",
             )
         elif expected_split is not None and split != expected_split:
+            hint = ""
+            if {split, expected_split} == {"eval", "validation"}:
+                hint = (
+                    " (validation manifests are built by sampling eval and "
+                    'relabeling split to "validation" -- see '
+                    "model/scripts/sft/build_validation_manifest_from_eval.py "
+                    "and docs/runbook.md's 'Build A Validation Manifest' "
+                    "section)"
+                )
             _add_issue(
                 issues,
                 "split_mismatch",
-                f"split {split!r} does not match {expected_split!r}",
+                f"split {split!r} does not match {expected_split!r}{hint}",
                 row_index=row_index,
                 field="split",
             )
