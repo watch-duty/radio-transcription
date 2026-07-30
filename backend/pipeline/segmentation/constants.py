@@ -54,11 +54,17 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"
 )
-# Scaled to 1.5x max download thread pool to provide sufficient HTTP connection
-# pool headroom without triggering urllib3 connection pool eviction.
-GCS_CONNECTION_POOL_MULTIPLIER: Final = 1.5
-GCS_CONNECTION_POOL_SIZE: Final = int(
-    SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER
+# Concurrent requests against the shared GCS client come from two sources:
+#   1. the shared download pool (SHARED_DOWNLOAD_POOL_SIZE threads), and
+#   2. Beam bundle threads issuing synchronous fetches/uploads -- up to the SDK
+#      harness thread count, which Dataflow defaults to 12 per vCPU for Python.
+# Under those defaults total concurrency is ~16x cores, i.e. 4x the download
+# pool. Sized at 4x with a floor so small workers still clear the harness count.
+# NOTE: before the Shared-handle fix each DoFn instance held its own client, so
+# 1.5x sufficed; with one client per process the pool must cover both sources.
+GCS_CONNECTION_POOL_MULTIPLIER: Final = 4.0
+GCS_CONNECTION_POOL_SIZE: Final = max(
+    32, int(SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER)
 )
 GCS_CONNECTION_MAX_RETRIES: Final = 3
 
