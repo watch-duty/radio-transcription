@@ -90,7 +90,6 @@ per-chunk processing or external I/O latency increases significantly in the
 future, this value should be reduced accordingly.
 """
 
-import concurrent.futures
 import logging as std_logging
 import time
 from collections.abc import Iterable, Iterator
@@ -120,11 +119,11 @@ from backend.pipeline.segmentation import datatypes, log_helper
 from backend.pipeline.segmentation.audio.processor import get_vad_engine
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-    SHARED_DOWNLOAD_POOL_SIZE,
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
 from backend.pipeline.segmentation.storage import (
+    acquire_shared_download_executor,
     acquire_shared_gcs_client,
 )
 from backend.pipeline.segmentation.transforms import stitcher_engine
@@ -608,7 +607,6 @@ class OrderedStitchAudioFn(beam.DoFn):
        while reducing intermediate timer queuing delays during catch-up.
     """
 
-    SHARED_THREADPOOL_HANDLE = Shared()
     processed_in_bundle: int
 
     # --- State Specs ---
@@ -706,14 +704,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
 
-        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
-            return concurrent.futures.ThreadPoolExecutor(
-                max_workers=SHARED_DOWNLOAD_POOL_SIZE
-            )
-
-        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
-            _create_executor, tag="shared_download_thread_pool"
-        )
+        self._executor = acquire_shared_download_executor()
         self.engine.executor = self._executor
         self.engine.setup()
 
