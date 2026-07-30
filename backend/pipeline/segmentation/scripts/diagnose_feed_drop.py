@@ -34,11 +34,14 @@ logger = logging.getLogger("diagnose_feed_drop")
 # callers are warned whenever it is applied.
 NOMINAL_CHUNK_DURATION_SEC = 15.0
 
-# Identity impersonated when calling the Audio Segments API. Both environments
-# currently use the prod service account; only the target audience differs.
-# Override with --service-account or DIAGNOSTIC_SERVICE_ACCOUNT.
-DEFAULT_SERVICE_ACCOUNT = (
-    "transcription-sa-prod@automatic-hawk-481415-m9.iam.gserviceaccount.com"
+# Identity impersonated when calling the Audio Segments API. Terraform grants
+# transcription-sa-<env> roles/run.invoker on that environment's audio-segments
+# Cloud Run service (terraform/modules/services/pipeline/transcription/main.tf),
+# so the impersonated identity must match the environment being queried --
+# impersonating the prod account against dev yields a 403. Override the derived
+# value with --service-account or DIAGNOSTIC_SERVICE_ACCOUNT.
+SERVICE_ACCOUNT_TEMPLATE = (
+    "transcription-sa-{env}@{project}.iam.gserviceaccount.com"
 )
 
 # Per-environment GCP configuration. Keyed by the canonical environment name;
@@ -1126,14 +1129,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def _resolve_config(args: argparse.Namespace) -> DiagnosticConfig:
     """Resolves GCP targets from --env presets, flags, and env vars."""
-    env_defaults = ENVIRONMENT_CONFIG[_canonical_env(args.env)]
+    env_key = _canonical_env(args.env)
+    env_defaults = ENVIRONMENT_CONFIG[env_key]
+    project = args.project or env_defaults["project"]
+    # Derive the impersonation target from the same environment as the API URL
+    # so the two can never drift apart.
+    default_service_account = SERVICE_ACCOUNT_TEMPLATE.format(
+        env=env_key, project=env_defaults["project"]
+    )
     return DiagnosticConfig(
         bucket=args.bucket or env_defaults["bucket"],
-        project=args.project or env_defaults["project"],
+        project=project,
         segments_api_url=(
             args.segments_api_url or env_defaults["segments_api_url"]
         ),
-        service_account=args.service_account or DEFAULT_SERVICE_ACCOUNT,
+        service_account=args.service_account or default_service_account,
     )
 
 
