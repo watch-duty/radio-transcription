@@ -33,9 +33,32 @@ import './App.css';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
 
-const CSAT_SURVEY_START_DATE = new Date('2026-07-20T00:00:00');
-const CSAT_SURVEY_END_DATE = new Date('2026-07-29T23:59:59');
-const CSAT_SURVEY_FORM_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
+export interface AnnouncementConfig {
+  startDate: Date | string;
+  endDate: Date | string;
+  title?: string;
+  message: string;
+  linkUrl?: string;
+  linkText?: string;
+}
+
+/**
+ * Active Announcement Banner Configuration.
+ * Set to `null` when no announcement is active.
+ *
+ * Template for future CSAT / Announcement Banners:
+ * ```ts
+ * export const ANNOUNCEMENT_CONFIG: AnnouncementConfig = {
+ *   startDate: '2026-08-01T00:00:00',
+ *   endDate: '2026-08-15T23:59:59',
+ *   title: 'CSAT Survey:',
+ *   message: 'Your feedback will help us improve this transcription tool. Please share your experience!',
+ *   linkUrl: 'https://forms.gle/KocdXk8qWXyw7UCw9',
+ *   linkText: 'https://forms.gle/KocdXk8qWXyw7UCw9 (2 min survey)',
+ * };
+ * ```
+ */
+export const ANNOUNCEMENT_CONFIG: AnnouncementConfig | null = null;
 
 function App() {
   const { token } = useAuth();
@@ -223,15 +246,17 @@ function App() {
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
           />
-          <AnnouncementBanner
-            startDate={CSAT_SURVEY_START_DATE}
-            endDate={CSAT_SURVEY_END_DATE}
-            title="CSAT Survey:"
-            message="Your feedback will help us improve this transcription tool. Please share your experience by Wednesday, July 29th!"
-            linkUrl={CSAT_SURVEY_FORM_URL}
-            linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
-            icon={<RateReviewIcon />}
-          />
+          {ANNOUNCEMENT_CONFIG && (
+            <AnnouncementBanner
+              startDate={ANNOUNCEMENT_CONFIG.startDate}
+              endDate={ANNOUNCEMENT_CONFIG.endDate}
+              title={ANNOUNCEMENT_CONFIG.title}
+              message={ANNOUNCEMENT_CONFIG.message}
+              linkUrl={ANNOUNCEMENT_CONFIG.linkUrl}
+              linkText={ANNOUNCEMENT_CONFIG.linkText}
+              icon={<RateReviewIcon />}
+            />
+          )}
           {alerts.length > 0 && (
             <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
               {alerts.map((alert, index) => (
