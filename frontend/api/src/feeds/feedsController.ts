@@ -34,8 +34,7 @@ import {
   Tags,
 } from 'tsoa';
 
-import { feedMutationActorHeaders } from './actorHeaders.js';
-
+import { mutationActorHeaders } from '../actorHeaders.js';
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import {
@@ -418,7 +417,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -455,7 +454,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -490,7 +489,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -528,7 +527,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
@@ -566,7 +565,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({

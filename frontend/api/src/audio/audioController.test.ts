@@ -301,7 +301,7 @@ describe('listAudioSegments', () => {
   });
 });
 
-describe('flagTranscript', () => {
+describe('flagSegment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -323,7 +323,7 @@ describe('flagTranscript', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
-    const result = await controller.flagTranscript(
+    const result = await controller.flagSegment(
       'segment-1',
       { isFlagged: true },
       mockRequestObj
@@ -364,7 +364,7 @@ describe('flagTranscript', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
-    await controller.flagTranscript(
+    await controller.flagSegment(
       'segment-1',
       { isFlagged: false },
       mockRequestObj
@@ -387,11 +387,7 @@ describe('flagTranscript', () => {
 
     const controller = new AudioController();
     await expect(
-      controller.flagTranscript(
-        'segment-1',
-        { isFlagged: true },
-        mockRequestObj
-      )
+      controller.flagSegment('segment-1', { isFlagged: true }, mockRequestObj)
     ).rejects.toThrow(/User email not found/);
   });
 });

@@ -2064,9 +2064,9 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-  /api/v1/audioSegments/{audioSegmentId}/flagTranscript:
+  /api/v1/audioSegments/{audioSegmentId}/flagSegment:
     post:
-      operationId: FlagTranscript
+      operationId: FlagSegment
       responses:
         "200":
           description: Ok
