@@ -2288,8 +2288,8 @@ class TestIcecastTimelineManager(unittest.TestCase):
                     b"\x00\x00" * 16000 * 10
                 )  # 10 seconds of 16kHz audio
 
-                # Case 1: Above threshold (120s lag) on an established stream -> Warning logged
-                anchor_above = fixed_now - datetime.timedelta(seconds=120)
+                # Case 1: Above threshold (180s lag > 120s threshold) on an established stream -> Warning logged
+                anchor_above = fixed_now - datetime.timedelta(seconds=180)
                 (
                     chunk,
                     _rcpt,
@@ -2314,8 +2314,8 @@ class TestIcecastTimelineManager(unittest.TestCase):
 
                 mock_logger.reset_mock()
 
-                # Case 2: Below threshold (10s lag) -> Warning NOT logged
-                anchor_below = fixed_now - datetime.timedelta(seconds=10)
+                # Case 2: Below threshold (60s lag < 120s threshold, standard stream buffer latency) -> Warning NOT logged
+                anchor_below = fixed_now - datetime.timedelta(seconds=60)
                 tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
                 (
                     chunk_below,

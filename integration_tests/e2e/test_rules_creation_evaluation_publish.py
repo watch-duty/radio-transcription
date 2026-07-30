@@ -10,6 +10,7 @@ import requests
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.test_utils import (
+    DUMMY_JWT,
     get_audio_segments_api_url,
     verify_audio_segments_via_api,
     verify_notification_received,
@@ -23,6 +24,11 @@ TRANSCRIPTION_TOPIC = os.environ.get(
 )
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
+
+_TEST_ACTOR_HEADERS = {
+    "Authorization": f"Bearer {DUMMY_JWT}",
+    "X-WD-Actor-Id": "user:google:e2e-admin@example.com",
+}
 
 
 def create_test_rule(test_keyword: str) -> str:
@@ -41,7 +47,9 @@ def create_test_rule(test_keyword: str) -> str:
     }
 
     url = f"http://{RULES_API_HOST}/v1/rules"
-    response = requests.post(url, json=rule_payload, timeout=10)
+    response = requests.post(
+        url, json=rule_payload, headers=_TEST_ACTOR_HEADERS, timeout=10
+    )
     response.raise_for_status()
 
     rule_id = response.json().get("rule_id", "")

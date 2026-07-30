@@ -248,10 +248,10 @@ export class AudioController extends Controller {
     }
   }
 
-  @Post('{audioSegmentId}/flagTranscript')
+  @Post('{audioSegmentId}/flagSegment')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async flagTranscript(
+  public async flagSegment(
     @Path() audioSegmentId: string,
     @Body() body: { isFlagged: boolean },
     @Request() request: express.Request
@@ -274,10 +274,7 @@ export class AudioController extends Controller {
 
       return convertAnnotationBackend(response.data as AnnotationBackend);
     } catch (error: unknown) {
-      const { status, message } = handleBackendError(
-        error,
-        'flagging transcript'
-      );
+      const { status, message } = handleBackendError(error, 'flagging segment');
       throw new HttpError(status, message);
     }
   }
