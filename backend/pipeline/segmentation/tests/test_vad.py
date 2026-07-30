@@ -5,6 +5,7 @@ against actual ground-truth voice activity segments from the Colab.
 """
 
 import concurrent.futures
+import datetime
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from backend.pipeline.segmentation.constants import (
     VAD_DEFAULT_PRIMING_SEC,
     VAD_TEST_SUBAUDIBLE_RUMBLE_FREQ_HZ,
 )
+from backend.pipeline.segmentation.scripts import diagnose_feed_drop
 
 SAMPLES_PER_MS: Final = 16
 
@@ -197,7 +199,7 @@ class TestVadEngine(unittest.TestCase):
             + 0.25 * np.sin(2 * np.pi * 450 * t)
         ).astype(np.float32) * 0.1
         voice[:100] = 1.0
-        self.assertTrue(self.vad._is_speech_segment(voice, chunk_size=512))
+        self.assertTrue(self.vad.is_speech_segment(voice, chunk_size=512))
 
     def test_is_speech_segment_spiky_static_rejected(self) -> None:
         """Verifies that an unpitched noise burst with high RMS spikiness is rejected by tandem spectral flatness verification."""
@@ -206,7 +208,7 @@ class TestVadEngine(unittest.TestCase):
         static = (
             np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
         ).astype(np.float32) * 0.0005
-        self.assertFalse(self.vad._is_speech_segment(static, chunk_size=512))
+        self.assertFalse(self.vad.is_speech_segment(static, chunk_size=512))
 
     def _run_integration_test(
         self,
@@ -658,7 +660,7 @@ class TestVadEngine(unittest.TestCase):
         )
 
         paging_signal = np.concatenate([tone1, tone2])
-        self.assertTrue(self.vad._is_tone_segment(paging_signal))
+        self.assertTrue(self.vad.is_tone_segment(paging_signal))
         segments, _ = self.vad.detect_speech_segments(
             paging_signal, sample_rate=16000
         )
@@ -671,7 +673,7 @@ class TestVadEngine(unittest.TestCase):
             np.sin(2 * np.pi * TONE_EAS_FREQ1_HZ * t)
             + np.sin(2 * np.pi * TONE_EAS_FREQ2_HZ * t)
         ).astype(np.float32) * 0.25
-        self.assertTrue(self.vad._is_tone_segment(eas_tone))
+        self.assertTrue(self.vad.is_tone_segment(eas_tone))
         segments, _ = self.vad.detect_speech_segments(
             eas_tone, sample_rate=16000
         )
@@ -694,7 +696,7 @@ class TestVadEngine(unittest.TestCase):
         )
         flickering_signal = rumble + ticks
         self.assertFalse(
-            self.vad._is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
+            self.vad.is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
         )
         segments, _ = self.vad.detect_speech_segments(
             flickering_signal, sample_rate=16000
@@ -863,3 +865,111 @@ class TestVadEngine(unittest.TestCase):
             ]
             for future in futures:
                 future.result()
+
+    def test_detect_speech_segments_with_diagnostics(self) -> None:
+        """Verifies detect_speech_segments_with_diagnostics returns candidate rejection reasons."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        # Generate a spiky static slice that fails VAD checks
+        t = np.linspace(0, 1.0, 16000, endpoint=False)
+        rng = np.random.default_rng(42)
+        spiky_static = (
+            np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
+        ).astype(np.float32) * 0.0005
+
+        accepted, _rejected = detector.detect_speech_segments_with_diagnostics(
+            spiky_static, sample_rate=16000
+        )
+        self.assertEqual(accepted, [])
+
+
+class TestFeedDiagnosticRunner(unittest.TestCase):
+    """Unit tests for pure timeframe reconciliation and audit functions in diagnose_feed_drop."""
+
+    def setUp(self) -> None:
+        self.base_time = datetime.datetime(
+            2026, 7, 29, 12, 0, 0, tzinfo=datetime.UTC
+        )
+
+    def test_merge_accepted_intervals(self) -> None:
+        t0 = self.base_time
+        t1 = t0 + datetime.timedelta(seconds=5)
+        t2 = t0 + datetime.timedelta(seconds=10)
+        t3 = t0 + datetime.timedelta(seconds=15)
+        t4 = t0 + datetime.timedelta(seconds=20)
+
+        utterances = [
+            diagnose_feed_drop.DiagnosticUtterance(
+                start_time=t0,
+                end_time=t2,
+                status="Accepted",
+                rejection_reason=None,
+                duration_sec=10.0,
+                chunk_name="c1.flac",
+            ),
+            diagnose_feed_drop.DiagnosticUtterance(
+                start_time=t1,
+                end_time=t3,
+                status="Accepted",
+                rejection_reason=None,
+                duration_sec=10.0,
+                chunk_name="c2.flac",
+            ),
+        ]
+        runner = diagnose_feed_drop.FeedDiagnosticRunner(
+            "test-bucket", "test-feed", "test-project"
+        )
+        merged = runner._merge_accepted_intervals(t0, t4, utterances)
+        self.assertEqual(merged, [(t0, t3)])
+
+    def test_compute_missing_intervals(self) -> None:
+        t0 = self.base_time
+        t1 = t0 + datetime.timedelta(seconds=5)
+        t2 = t0 + datetime.timedelta(seconds=10)
+        t3 = t0 + datetime.timedelta(seconds=20)
+
+        runner = diagnose_feed_drop.FeedDiagnosticRunner(
+            "test-bucket", "test-feed", "test-project"
+        )
+        accepted = [(t1, t2)]
+        missing = runner._compute_missing_intervals(t0, t3, accepted)
+        self.assertEqual(missing, [(t0, t1), (t2, t3)])
+
+    def test_audit_missing_interval_cause_attribution(self) -> None:
+        runner = diagnose_feed_drop.FeedDiagnosticRunner(
+            "test-bucket", "test-feed", "test-project"
+        )
+        t0 = self.base_time
+        t1 = t0 + datetime.timedelta(seconds=5)
+
+        # 1. Post-VAD Rejection
+        rejected_utt = diagnose_feed_drop.DiagnosticUtterance(
+            start_time=t0,
+            end_time=t1,
+            status="Rejected",
+            rejection_reason="Below Minimum RMS Floor",
+            duration_sec=5.0,
+            chunk_name="c1.flac",
+        )
+        report_rej = runner._audit_missing_interval(t0, t1, 5.0, [rejected_utt])
+        self.assertIn(
+            "Post-VAD Rejection Heuristic Failure", report_rej.primary_cause
+        )
+
+        # 2. Genuine Silence
+        silent_probs = [(0.5, 0.00001, 0.01), (1.5, 0.00001, 0.01)]
+        report_silence = runner._audit_missing_interval(
+            t0, t1, 5.0, [], live_probs=silent_probs, target_start=t0
+        )
+        self.assertIn("Genuine Silence", report_silence.primary_cause)
+
+        # 3. Neural Drop
+        drop_probs = [(0.5, 0.05, 0.20), (1.5, 0.05, 0.25)]
+        report_drop = runner._audit_missing_interval(
+            t0, t1, 5.0, [], live_probs=drop_probs, target_start=t0
+        )
+        self.assertIn(
+            "Silero VAD Neural Network Probability Drop",
+            report_drop.primary_cause,
+        )
