@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { type Feed, SourceType } from '@transcription/common';
 
+import { getFeedSearchOptions } from '../../service/getFeedSearchOptions';
 import { listFeeds } from '../../service/listFeeds';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedSearchView from './FeedSearchView';
@@ -11,6 +12,10 @@ import FeedSearchView from './FeedSearchView';
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+}));
+
+vi.mock('../../service/getFeedSearchOptions', () => ({
+  getFeedSearchOptions: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -48,9 +53,10 @@ describe('FeedSearchView Condensed Mode', () => {
       feeds: mockFeeds,
       total: mockFeeds.length,
     });
-    vi.mocked(listFeeds).mockResolvedValue({
-      feeds: mockFeeds,
-      total: mockFeeds.length,
+    vi.mocked(getFeedSearchOptions).mockResolvedValue({
+      sourceTypes: [SourceType.BCFY_FEEDS],
+      statuses: [],
+      tags: [],
     });
   });
 
@@ -86,6 +92,60 @@ describe('FeedSearchView Condensed Mode', () => {
           'Quarantined (System Unexpected Error): unsupported audio format'
         )
       ).toBeInTheDocument();
+    });
+  });
+});
+
+describe('FeedSearchView status filter', () => {
+  const mockOnError = vi.fn();
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(listFeeds).mockResolvedValue({ feeds: [], total: 0 });
+    // Raw backend statuses, as /feeds/search-options returns them.
+    vi.mocked(getFeedSearchOptions).mockResolvedValue({
+      sourceTypes: [SourceType.BCFY_FEEDS],
+      statuses: [
+        'active',
+        'deactivated',
+        'failing',
+        'quarantined',
+        'unclaimed',
+      ],
+      tags: [],
+    });
+  });
+
+  it('offers normalized bucket options and filters by the selection', async () => {
+    renderWithQueryClient(
+      <FeedSearchView title="Feeds" onError={mockOnError} />
+    );
+
+    const statusInput = await screen.findByLabelText('Status');
+    fireEvent.focus(statusInput);
+    fireEvent.keyDown(statusInput, { key: 'ArrowDown' });
+
+    // The dropdown offers the deduplicated presentation buckets, not
+    // the raw backend statuses.
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="active"]')).toBeTruthy();
+    });
+    const optionValues = Array.from(
+      document.querySelectorAll('li[data-value]')
+    ).map((option) => option.getAttribute('data-value'));
+    expect(optionValues).toEqual(['active', 'inactive', 'error']);
+
+    fireEvent.click(
+      document.querySelector('[data-value="inactive"]') as HTMLElement
+    );
+
+    // A non-active selection reaches the list request as a real status
+    // filter (listFeeds expands it to the raw backend statuses).
+    await waitFor(() => {
+      expect(listFeeds).toHaveBeenCalledWith(
+        'fake-jwt-token-xyz',
+        expect.objectContaining({ statuses: ['inactive'] })
+      );
     });
   });
 });
