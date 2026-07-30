@@ -21,6 +21,10 @@ from backend.pipeline.storage.tests import connection_util
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _NOW = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
+# Established cursor older than _NOW: progress/closed-cohort commands may
+# only advance an established cursor, never initialize a NULL one (the
+# admin-reset adoption contract), so committed-write fixtures start here.
+_ESTABLISHED = _NOW - datetime.timedelta(seconds=1)
 
 
 def _grant(
@@ -2057,7 +2061,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             connection = pool.acquired_connection
             connection.fetchrow.return_value = _lease_row()
             connection.fetch.side_effect = [
-                [_child_row(feed_id) for feed_id in reversed(feed_ids)],
+                [
+                    _child_row(feed_id, last_bookmark_time=_ESTABLISHED)
+                    for feed_id in reversed(feed_ids)
+                ],
                 [
                     {
                         "id": feed_id,
@@ -2231,7 +2238,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         connection.fetchrow.return_value = _lease_row()
         connection.fetch.side_effect = [
             [
-                _child_row(valid_id),
+                _child_row(valid_id, last_bookmark_time=_ESTABLISHED),
                 _child_row(quarantined_id, status="quarantined"),
             ],
             [
@@ -2398,7 +2405,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 connection = pool.acquired_connection
                 connection.fetchrow.return_value = _lease_row()
                 connection.fetch.side_effect = [
-                    [_child_row(feed_id)],
+                    [_child_row(feed_id, last_bookmark_time=_ESTABLISHED)],
                     error,
                 ]
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
@@ -3015,7 +3022,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             connection = pool.acquired_connection
             connection.fetchrow.return_value = _lease_row()
             connection.fetch.side_effect = [
-                [_child_row(feed_id) for feed_id in reversed(feed_ids)],
+                [
+                    _child_row(feed_id, last_bookmark_time=_ESTABLISHED)
+                    for feed_id in reversed(feed_ids)
+                ],
                 [
                     _child_row(
                         feed_id,
