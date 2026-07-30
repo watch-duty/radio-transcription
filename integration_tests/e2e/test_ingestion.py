@@ -10,7 +10,7 @@ from integration_tests.feed_utils import (
     create_test_bcfy_feed,  # noqa: F401
     create_test_echo_feed,  # noqa: F401
     create_test_fire_notifications_feed,  # noqa: F401
-    create_test_polling_feed,  # noqa: F401
+    create_test_sid_polling_feed,  # noqa: F401
 )
 from integration_tests.test_utils import (
     verify_audio_segments_via_api,
@@ -28,13 +28,14 @@ def test_ingestion_integration(test_bcfy_feed: tuple[str, str]) -> None:
     )
 
 
-def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
-    """Tests that audio ingestion service picks up a feed from API polling and results in a transcript."""
-    feed_id, _ = test_polling_feed
+def test_ingestion_sid_polling(
+    test_sid_polling_feed: tuple[str, str],
+) -> None:
+    """Test Calls ingestion through a durable parent SID lease."""
+    feed_id, _ = test_sid_polling_feed
 
     # Broadcastify calls should have an external ID representing the full audio URL.
-    # We verify that at least 2 segments are generated, proving that the collector's
-    # single connection_session_id does not cause segment_id collisions.
+    # Two segments prove repeated SID pages do not collide on segment identity.
     verify_multiple_audio_segments_via_api(
         feed_id,
         lambda s: (

@@ -17,7 +17,6 @@ from backend.pipeline.ingestion import (
     failure_policy,
     grant_control,
     grant_supervisor,
-    worker_profiles,
 )
 from backend.pipeline.ingestion import (
     settings as ingestion_settings,
@@ -36,22 +35,16 @@ _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _ACTOR_ID = "service_account:gcp:test"
 
 
-def _settings(
-    mode: worker_profiles.BcfyCallsAuthorityMode = (
-        worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
-    ),
-) -> ingestion_settings.CollectorSettings:
+def _settings() -> ingestion_settings.CollectorSettings:
     """Build complete, deterministic settings for runtime unit tests."""
     caps = {
         feed_store.SourceType.BCFY_FEEDS: 240,
-        feed_store.SourceType.BCFY_CALLS: 600,
         feed_store.SourceType.OPENMHZ: 900,
         feed_store.SourceType.FIRE_NOTIFICATIONS: 600,
     }
     return ingestion_settings.CollectorSettings(
         worker_id=_WORKER_ID,
-        bcfy_calls_authority_mode=mode,
-        caps=caps,
+        feed_claim_caps=caps,
         max_feeds_per_worker=800,
         max_sids_per_worker=32,
         lease_admission_cycle_budget=20,
@@ -112,14 +105,10 @@ async def _empty_capture(
         yield SourceObservation()
 
 
-def _runtime(
-    mode: worker_profiles.BcfyCallsAuthorityMode = (
-        worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
-    ),
-) -> collector_runtime.CollectorRuntime:
+def _runtime() -> collector_runtime.CollectorRuntime:
     runtime = collector_runtime.CollectorRuntime(
         _empty_capture,
-        _settings(mode),
+        _settings(),
         runtime_actor_id=_ACTOR_ID,
     )
     runtime._shutdown = asyncio.Event()
@@ -197,14 +186,13 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
 
     async def _compose(
         self,
-        mode: worker_profiles.BcfyCallsAuthorityMode,
     ) -> tuple[
         collector_runtime.CollectorRuntime,
         mock.AsyncMock,
         mock.MagicMock,
         mock.MagicMock,
     ]:
-        runtime = _runtime(mode)
+        runtime = _runtime()
         runtime._data_pool = mock.MagicMock()
         runtime._heartbeat_pool = mock.MagicMock()
         runtime._http_session = mock.MagicMock()
@@ -250,9 +238,7 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
             pool,
             supervisor_constructor,
             runner_constructor,
-        ) = await self._compose(
-            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
-        )
+        ) = await self._compose()
 
         _profile, registrations = supervisor_constructor.call_args.args
         self.assertEqual(
@@ -313,10 +299,10 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(runtime._work_pool)
 
-    async def test_sid_mode_excludes_calls_from_feed_claim_store(
+    async def test_calls_are_excluded_from_feed_claim_store(
         self,
     ) -> None:
-        runtime = _runtime(worker_profiles.BcfyCallsAuthorityMode.SID_LEASE)
+        runtime = _runtime()
         runtime._data_pool = mock.MagicMock()
         runtime._heartbeat_pool = mock.MagicMock()
         runtime._http_session = mock.MagicMock()
@@ -362,54 +348,6 @@ class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
                 claim_types,
             )
             self.assertIn(feed_store.SourceType.BCFY_FEEDS, claim_types)
-
-    async def test_legacy_mode_keeps_calls_in_feed_claim_store(
-        self,
-    ) -> None:
-        runtime = _runtime(worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED)
-        runtime._data_pool = mock.MagicMock()
-        runtime._heartbeat_pool = mock.MagicMock()
-        runtime._http_session = mock.MagicMock()
-
-        with (
-            mock.patch.object(
-                collector_runtime,
-                "FeedStore",
-                side_effect=(mock.MagicMock(), mock.MagicMock()),
-            ) as feed_store_constructor,
-            mock.patch.object(
-                collector_runtime.bcfy_calls_work_pool,
-                "BcfyCallsWorkPool",
-                return_value=mock.AsyncMock(),
-            ),
-            mock.patch.object(
-                collector_runtime.grant_supervisor,
-                "GrantSupervisor",
-                return_value=mock.MagicMock(),
-            ),
-            mock.patch.object(
-                collector_runtime.bcfy_calls_provider,
-                "CallsProviderClient",
-                return_value=mock.MagicMock(),
-            ),
-            mock.patch.object(
-                collector_runtime.bcfy_calls_pipeline,
-                "BcfyCallsFeedBatchExecutor",
-                return_value=mock.MagicMock(),
-            ),
-            mock.patch.object(
-                collector_runtime.bcfy_calls_sid_runner,
-                "BcfyCallsSidRunner",
-                return_value=mock.MagicMock(),
-            ),
-        ):
-            await runtime._compose_supervisor()
-
-        for call in feed_store_constructor.call_args_list:
-            self.assertIn(
-                feed_store.SourceType.BCFY_CALLS,
-                call.kwargs["claim_types"],
-            )
 
 
 class TestStartupCleanup(unittest.IsolatedAsyncioTestCase):

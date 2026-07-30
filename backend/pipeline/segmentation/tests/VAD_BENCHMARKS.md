@@ -14,21 +14,28 @@ In radio transcription, **we prioritize Recall (capturing all speech) over Preci
 
 All metrics below are evaluated under the official production configuration: **`pad_sec = 0.0`** (for pure accuracy tracking) and **`priming_sec = 6.0`** (matching the default 6.0s lookback priming in streaming mode).
 
+Numbers come from the `BENCHMARK:` lines that `_run_integration_test` writes to stdout, so CI output is the source of truth for this table. Rows predating that line were recorded by hand and are not all trustworthy — the `c1416cf1` row was in fact measured at `pad_sec = 0.3`, not the `0.0` this section claims, which made its Recall read `1.000` when the `0.0` figure is `0.932`. Re-measure a row before relying on it.
+
+**`pad_sec = 0.0` is not the shipped configuration.** It is the right default for this table, because it measures intrinsic boundary accuracy and keeps pad tuning from moving every row at once. But production runs `VAD_DEFAULT_PAD_SEC = 0.3`, and padding routinely absorbs intrinsic edge clipping — on `c1416cf1` it lifts Recall from `0.932` to `1.000`. So a Recall number in this table is a statement about the detector, **not** about whether we clip dispatches in production. When a fixture exists to answer the latter, assert it at production padding as well; `test_integration_hood_river_stream_chunk_production_padding` is the worked example.
+
 | Audio File | F1 | Precision | Recall | Description / Justification |
 | :--- | :---: | :---: | :---: | :--- |
-| **`test_stress.flac`** | **0.932** | `1.000` | `0.873` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
-| **`test_joined.flac`** | **0.912** | `0.861` | `0.968` | Multi-dispatch joined segments. |
-| **`test_bcfy.flac`** | **0.851** | `0.924` | `0.789` | Broadcastify dispatch containing whispers and dropouts. |
-| **`test_dispatch_amador.flac`** | **0.921** | `0.894` | `0.950` | Amador continuous dispatcher stream. |
-| **`test_dispatch_sku.flac`** | **0.892** | `0.821` | `0.976` | SKU dispatch with heavy background static interference. |
-| **`test_middlebury_quiet_segments.mp3`** | **0.889** | `0.982` | `0.812` | Quiet segments from Middlebury dataset. |
-| **`test_middlebury_quiet_spiky.mp3`** | **0.713** | `0.564` | `0.969` | Quiet EMS speech. Low precision due to conservative 3s chunk padding. |
-| **`test_quiet_speech_loud_transient.mp3`** | **0.751** | `0.607` | `0.983` | Quiet speech followed by a loud transient click. |
-| **`test_only_static_middlebury.mp3`** | **1.000** | `1.000` | `1.000` | Pure static noise (100% rejected, no false positives). |
+| **`test_stress.flac`** | **0.841** | `0.725` | `1.000` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
+| **`test_joined.flac`** | **0.777** | `0.636` | `1.000` | Multi-dispatch joined segments. |
+| **`test_bcfy.flac`** | **0.860** | `0.830` | `0.893` | Broadcastify dispatch containing whispers and dropouts. |
+| **`test_dispatch_amador.flac`** | **0.811** | `0.724` | `0.923` | Amador continuous dispatcher stream. |
+| **`test_dispatch_sku.flac`** | **0.858** | `0.751` | `1.000` | SKU dispatch with heavy background static interference. |
+| **`test_middlebury_quiet_segments.mp3`** | **0.824** | `0.705` | `0.990` | Quiet segments from Middlebury dataset. |
+| **`test_middlebury_quiet_spiky.mp3`** | **0.596** | `0.425` | `1.000` | Quiet EMS speech. Low precision due to conservative chunk padding. |
+| **`test_quiet_speech_loud_transient.mp3`** | **0.734** | `0.580` | `1.000` | Quiet speech followed by a loud transient click. |
+| **`test_muffled_mason_co_fire.flac`** | **0.507** | `0.341` | `0.987` | Quiet, muffled dispatch speech (Mason County Fire). |
+| **`test_only_static_middlebury.mp3`** | **1.000** | `1.000` | `1.000` | Pure static noise (100% rejected, zero false positives). |
 | **`test_subaudible_flickering.flac`** | **1.000** | `1.000` | `1.000` | 72Hz electrical flickering interference (100% rejected). |
-| **`test_vad_deafening_dispatcher_ems.flac`** | **0.590** | `1.000` | `0.419` | Loud dispatcher followed by quiet EMS (3s real noise warmup). Captures dispatcher and parts of both EMS segments. |
-| **`test_vad_deafening_static_preamble.flac`** | **0.703** | `0.997` | `0.543` | Quiet speech preceded by 1.4s of static (3s real noise warmup). Captures the majority of the speech. |
-| **`test_cajon_pass_trailing.flac`** | **0.047** | `0.843` | `0.024` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
+| **`test_vad_deafening_dispatcher_ems.flac`** | **0.785** | `0.720` | `0.863` | Loud dispatcher followed by quiet EMS. High recall maintained via state continuity. |
+| **`test_vad_deafening_static_preamble.flac`** | **0.682** | `0.997` | `0.519` | Quiet speech preceded by 1.4s of static noise. |
+| **`test_cajon_pass_trailing.flac`** | **0.190** | `0.713` | `0.110` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
+| **`test_vad_inter_transmission_gap_speech.flac`** | **0.791** | `0.687` | `0.932` | Oregon Hood River (`bcfy_feeds`) 15s stream chunk (`c1416cf1`): inter-transmission gap with short quiet bursts. Production-shaped VAD input. The 0.068 recall gap is edge clipping, not a dropped burst: `0.532-0.832`, `5.696-5.872`, `6.672-6.848`. At production `pad_sec = 0.3` this file scores `0.794` / `0.659` / `1.000`. |
+| **`test_vad_hood_river_segment_payload.flac`** | **0.606** | `0.454` | `0.912` | The `[8.868s, 13.548s]` stitched payload cut from the chunk above. Same audio as the row above, scored on the short payload: over-trigger around each burst costs proportionally more precision (`0.454` vs `0.687`). Its boundaries come from a prior detector run, so it is not an independent sensitivity guard. Its annotation places the second onset at `11.516` in chunk coordinates, 248ms later than the row above; both are hand-supplied and neither is reconciled to the other. |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
 
