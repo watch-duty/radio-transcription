@@ -3,9 +3,10 @@ import { decodeJwt } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 
 import { authSession } from '../service/authSession';
+import { getUserInfo } from '../service/getUserInfo';
 import { useAuth } from './AuthContext';
 import { AuthProvider } from './AuthProvider';
 
@@ -67,7 +68,6 @@ describe('AuthProvider', () => {
     // Should render loading state initially
     expect(screen.getByText(/loading/i)).toBeTruthy();
 
-    // Resolve the promise
     await act(async () => {
       await Promise.resolve();
     });
@@ -185,5 +185,29 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('token-display').textContent).toBe(
       'new-refreshed-jwt-from-focus'
     );
+  });
+
+  it('derives isAdmin from user info query result', async () => {
+    vi.useRealTimers();
+    vi.mocked(getUserInfo).mockResolvedValue({
+      email: 'admin@email.org',
+      isAdmin: true,
+    });
+    vi.mocked(authSession).mockResolvedValueOnce('fake-admin-jwt-456');
+
+    const AdminConsumer = () => {
+      const { isAdmin } = useAuth();
+      return <div data-testid="is-admin">{String(isAdmin)}</div>;
+    };
+
+    renderWithQueryClient(
+      <AuthProvider>
+        <AdminConsumer />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('is-admin').textContent).toBe('true');
+    });
   });
 });
