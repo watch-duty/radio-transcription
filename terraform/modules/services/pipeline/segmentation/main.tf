@@ -53,3 +53,16 @@ resource "google_service_account_iam_member" "terraform_deployer_impersonation" 
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${var.wif_service_account}"
 }
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+module "monitoring" {
+  count  = var.enable_monitoring ? 1 : 0
+  source = "./monitoring"
+
+  environment             = var.environment
+  notification_channel_id = var.notification_channel_id
+}
+
