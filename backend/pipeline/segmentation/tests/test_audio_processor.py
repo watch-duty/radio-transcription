@@ -65,7 +65,7 @@ class AudioProcessorTest(unittest.TestCase):
         """Tests that download_audio_and_detect calculates duration when not provided."""
         mock_vad_instance = MagicMock()
         mock_vad_instance.detect_speech_segments.side_effect = (
-            lambda *args, **kwargs: []
+            lambda *args, **kwargs: ([], None)
         )
         mock_get_vad.return_value = mock_vad_instance
 
@@ -161,7 +161,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_download_audio_and_detect_with_prior_stereo_audio(self) -> None:
         """Tests that prior multi-channel audio is correctly downmixed to mono during streaming detection."""
         mock_vad = MagicMock()
-        mock_vad.detect_speech_segments.return_value = []
+        mock_vad.detect_speech_segments.return_value = ([], None)
         processor = SegmentationAudioProcessor(
             gcs_client_instance=MagicMock(),
             vad_factory=MagicMock(return_value=mock_vad),
