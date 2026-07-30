@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import threading
 import unittest
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -11,8 +12,17 @@ from backend.pipeline.segmentation.datatypes import (
     BufferedChunk,
     OrderRestorerConfig,
 )
+from backend.pipeline.segmentation.storage import (
+    acquire_shared_download_executor,
+)
 from backend.pipeline.segmentation.tests.test_stitcher_state import (
     get_test_stitch_config,
+)
+from backend.pipeline.segmentation.transforms.stateful import (
+    OrderedStitchAudioFn,
+)
+from backend.pipeline.segmentation.transforms.stateless import (
+    UploadRawSegmentFn,
 )
 from backend.pipeline.segmentation.transforms.stitcher_engine import (
     StitcherEngine,
@@ -119,6 +129,43 @@ class GcsPrefetchingTest(unittest.TestCase):
                     tp.startswith("00-4bf92f3577b34da6a3ce929d0e0e4736-"),
                     f"Expected trace ID 4bf92f3577b34da6a3ce929d0e0e4736 to propagate, got: {tp}",
                 )
+
+
+class SharedDownloadExecutorTest(unittest.TestCase):
+    """Verifies both segmentation stages draw from one process-wide download pool."""
+
+    def test_accessor_returns_same_executor_across_calls(self) -> None:
+        """Verifies the Shared handle caches a single executor per process."""
+        self.assertIs(
+            acquire_shared_download_executor(),
+            acquire_shared_download_executor(),
+        )
+
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.acquire_shared_gcs_client"
+    )
+    @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
+    def test_stateless_stage_uses_shared_executor(
+        self, _mock_tracing: MagicMock, _mock_gcs: MagicMock
+    ) -> None:
+        """Verifies the uploader resolves the same pool the stitcher prefetches through."""
+        fn = UploadRawSegmentFn(
+            staging_audio_bucket="test-bucket", project_id="test-project"
+        )
+        fn.setup()
+        self.assertIs(fn._executor, acquire_shared_download_executor())
+
+    def test_stages_declare_no_private_pool_handles(self) -> None:
+        """Per-class Shared handles would silently split the pool in two, doubling
+        download threads per worker and blinding the StitcherEngine prefetch
+        backpressure check to the other stage's queue depth.
+        """
+        self.assertFalse(
+            hasattr(OrderedStitchAudioFn, "SHARED_THREADPOOL_HANDLE")
+        )
+        self.assertFalse(
+            hasattr(UploadRawSegmentFn, "SHARED_THREADPOOL_HANDLE")
+        )
 
 
 if __name__ == "__main__":

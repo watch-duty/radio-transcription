@@ -164,13 +164,12 @@ class SegmentationAudioProcessor:
                 msg = "VAD engine not initialized. Call setup() first."
                 raise RuntimeError(msg)
 
-            speech_segments = self.vad.detect_speech_segments(
+            speech_segments, denoised_arr = self.vad.detect_speech_segments(
                 mono_samples,
                 sample_rate=sr,
                 prior_audio=prior_samples,
                 prior_is_preprocessed=True,
             )
-            denoised_arr = getattr(self.vad, "last_preprocessed_audio", None)
         else:
             denoised_arr = None
 

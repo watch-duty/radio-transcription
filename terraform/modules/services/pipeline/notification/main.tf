@@ -2,11 +2,9 @@
 # NOTIFICATION PIPELINE
 # =============================================================================
 
-data "google_project" "project" {}
-
 locals {
-  project_id              = data.google_project.project.project_id
-  project_number          = data.google_project.project.number
+  project_id              = var.project_id
+  project_number          = var.project_number
   redis_certificate_path  = "/etc/secrets"
   otel_traces_sampler     = var.environment == "dev" ? "parentbased_traceidratio" : "parentbased_always_on"
   otel_traces_sampler_arg = var.environment == "dev" ? "0.05" : "1.0"

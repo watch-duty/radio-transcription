@@ -134,6 +134,11 @@ const DIALOG_CONFIG: Record<
   },
 };
 
+const SID_RESET_DESCRIPTION =
+  'Are you sure you want to reset this feed? This clears the saved ' +
+  'talkgroup position (cursor); the active system owner will re-adopt ' +
+  'the feed at its next page boundary and resume processing from there.';
+
 interface FeedConfigurationEditProps {
   isEditing: boolean;
   feedName: string;
@@ -142,6 +147,10 @@ interface FeedConfigurationEditProps {
   feedTags: TagRow[];
   feedStatus?: FeedStatus;
   feedSubstatus?: BackendFeedStatus;
+  /** Raw child lifecycle; falls back to `feedSubstatus`. */
+  feedChildStatus?: BackendFeedStatus;
+  /** Parent SID; marks the feed as SID-managed. */
+  feedBcfyCallsSid?: string;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
@@ -166,6 +175,8 @@ export function FeedConfigurationEdit({
   feedTags,
   feedStatus,
   feedSubstatus,
+  feedChildStatus,
+  feedBcfyCallsSid,
   setFeedName,
   setFeedSourceType,
   setFeedSourceId,
@@ -426,7 +437,27 @@ export function FeedConfigurationEdit({
     }
   };
 
+  const isSidManaged = Boolean(feedBcfyCallsSid);
+  const rawChildStatus = feedChildStatus ?? feedSubstatus;
+  // SID-managed members support reset even while effectively active.
+  const showResetAction = isSidManaged
+    ? Boolean(onResetFeed)
+    : Boolean(
+        onResetFeed &&
+        feedStatus &&
+        feedStatus !== 'active' &&
+        feedSubstatus &&
+        feedSubstatus !== 'unclaimed'
+      );
+  const showDeactivateAction = Boolean(
+    onDeactivateFeed && rawChildStatus && rawChildStatus !== 'deactivated'
+  );
+
   const dialogConfig = activeDialog ? DIALOG_CONFIG[activeDialog] : null;
+  const dialogDescription =
+    activeDialog === DialogType.Reset && isSidManaged
+      ? SID_RESET_DESCRIPTION
+      : dialogConfig?.description;
   const newTagConfig = tagKeyConfig(newTagKey);
   const newTagValueLabel = newTagConfig?.valueLabel ?? 'Value';
   const tagRows = feedTags.map((tag, index) => {
@@ -827,28 +858,22 @@ export function FeedConfigurationEdit({
                         horizontal: 'right',
                       }}
                     >
-                      {onResetFeed &&
-                        feedStatus &&
-                        feedStatus !== 'active' &&
-                        feedSubstatus &&
-                        feedSubstatus !== 'unclaimed' && (
-                          <MenuItem
-                            onClick={handleResetClick}
-                            disabled={isSubmitting}
-                          >
-                            Reset feed
-                          </MenuItem>
-                        )}
-                      {onDeactivateFeed &&
-                        feedSubstatus &&
-                        feedSubstatus !== 'deactivated' && (
-                          <MenuItem
-                            onClick={handleDeactivateClick}
-                            disabled={isSubmitting}
-                          >
-                            Deactivate feed
-                          </MenuItem>
-                        )}
+                      {showResetAction && (
+                        <MenuItem
+                          onClick={handleResetClick}
+                          disabled={isSubmitting}
+                        >
+                          Reset feed
+                        </MenuItem>
+                      )}
+                      {showDeactivateAction && (
+                        <MenuItem
+                          onClick={handleDeactivateClick}
+                          disabled={isSubmitting}
+                        >
+                          Deactivate feed
+                        </MenuItem>
+                      )}
                       <MenuItem
                         onClick={handleDeleteClick}
                         disabled={isSubmitting}
@@ -869,7 +894,7 @@ export function FeedConfigurationEdit({
         <ConfirmationDialog
           open={activeDialog !== null}
           title={dialogConfig.title}
-          description={dialogConfig.description}
+          description={dialogDescription ?? dialogConfig.description}
           confirmLabel={dialogConfig.confirmLabel}
           confirmColor={dialogConfig.confirmColor}
           showConfirmInput={dialogConfig.showConfirmInput}
