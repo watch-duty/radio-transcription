@@ -74,9 +74,9 @@ VAD_DEFAULT_BLEND_RATIO: Final = 0.80
 VAD_DEFAULT_BOOST_FREQ_HZ: Final = 2500.0
 VAD_DEFAULT_BOOST_GAIN_DB: Final = 10.0
 VAD_DEFAULT_PEAK_FILTER_Q: Final = 1.0
-VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.20
-# Raised to 0.20 to close trailing silent segments faster
-VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.20
+VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.17
+# Set to 0.17 to balance onset sensitivity and trailing noise closure
+VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.17
 VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 150
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750

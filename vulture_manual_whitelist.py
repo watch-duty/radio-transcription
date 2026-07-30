@@ -56,3 +56,9 @@ receive_feed_change_notification
 
 # StitcherDlqPayload TypedDict fields consumed by structure definition and dictionary creation.
 error_message
+
+# VoiceActivityDetector public methods called by unit tests and diagnostic scripts
+from backend.pipeline.segmentation.audio.vad import VoiceActivityDetector
+
+VoiceActivityDetector.is_speech_segment
+
