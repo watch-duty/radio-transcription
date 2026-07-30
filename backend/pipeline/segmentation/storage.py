@@ -1,5 +1,6 @@
 """Storage client abstractions for downloading audio bitstreams from Google Cloud Storage."""
 
+import concurrent.futures
 import io
 import logging
 import urllib.parse
@@ -21,6 +22,7 @@ from backend.pipeline.segmentation.constants import (
     GCS_CONNECTION_MAX_RETRIES,
     GCS_CONNECTION_POOL_SIZE,
     GCS_DOWNLOAD_TIMEOUT_SEC,
+    SHARED_DOWNLOAD_POOL_SIZE,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,38 @@ def acquire_shared_gcs_client(
     return handle.acquire(
         _construct, tag=f"gcs_client_singleton_{project_id or 'default'}"
     )
+
+
+UNIVERSAL_DOWNLOAD_EXECUTOR_SHARED_HANDLE = Shared()
+
+
+def acquire_shared_download_executor(
+    shared_handle: Shared | None = None,
+) -> concurrent.futures.ThreadPoolExecutor:
+    """Acquires the process-wide audio download ThreadPoolExecutor shared by every segmentation stage.
+
+    Both stages draw from this one pool: the stateful stitcher prefetching
+    upcoming chunks, and the stateless uploader downloading the chunks that
+    contribute to a segment. A single pool bounds total download concurrency
+    per worker process rather than per stage, and lets the prefetch
+    backpressure check in StitcherEngine (MAX_PREFETCH_QUEUE_DEPTH) observe
+    the real queue depth instead of one stage's share of it. Because the
+    stateful stage backs off when the queue is deep while the stateless stage
+    always submits, sharing the queue also prioritizes the critical-path
+    downloads over speculative prefetch.
+
+    Nothing submitted here ever blocks on another pool task, so a single pool
+    introduces no deadlock: both stages resolve their futures from the calling
+    bundle thread.
+    """
+    handle = shared_handle or UNIVERSAL_DOWNLOAD_EXECUTOR_SHARED_HANDLE
+
+    def _construct() -> concurrent.futures.ThreadPoolExecutor:
+        return concurrent.futures.ThreadPoolExecutor(
+            max_workers=SHARED_DOWNLOAD_POOL_SIZE
+        )
+
+    return handle.acquire(_construct, tag="shared_download_thread_pool")
 
 
 class GcsAudioFetcher:
