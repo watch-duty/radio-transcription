@@ -22,6 +22,13 @@ _.get_value
 current_worker
 current_fencing_token
 
+# Feed TypedDict and pydantic response-model lease-health fields are read
+# by key / serialized by pydantic; Vulture cannot connect that access to
+# their declarations.
+bcfy_calls_sid
+lease_last_heartbeat
+lease_status_reason
+
 # GrantSupervisor exposes admission state for focused lifecycle tests. Vulture
 # excludes tests from its analysis.
 grant_supervisor.GrantSupervisor.admission_enabled

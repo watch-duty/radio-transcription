@@ -90,7 +90,6 @@ per-chunk processing or external I/O latency increases significantly in the
 future, this value should be reduced accordingly.
 """
 
-import concurrent.futures
 import logging as std_logging
 import time
 from collections.abc import Iterable, Iterator
@@ -117,19 +116,19 @@ from backend.pipeline.common.log_helper import get_logger, get_task_logger
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes, log_helper
-from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.audio.processor import get_vad_engine
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-    SHARED_DOWNLOAD_POOL_SIZE,
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
 from backend.pipeline.segmentation.storage import (
+    acquire_shared_download_executor,
     acquire_shared_gcs_client,
 )
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
-SHARED_RESOURCE_HANDLE = Shared()
+SHARED_VAD_HANDLE = Shared()
 
 # WARNING: Do NOT remove or bypass setup_logging().
 # It explicitly configures structured log propagation for the
@@ -608,7 +607,6 @@ class OrderedStitchAudioFn(beam.DoFn):
        while reducing intermediate timer queuing delays during catch-up.
     """
 
-    SHARED_THREADPOOL_HANDLE = Shared()
     processed_in_bundle: int
 
     # --- State Specs ---
@@ -693,27 +691,20 @@ class OrderedStitchAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         tracing_utils.setup_tracing(service_name="segmentation-pipeline")
-        # Acquire process-level singletons natively via Beam's Shared handle
-        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
-            tag="vad",
+        # Acquire process-level singletons natively via dedicated Beam Shared handles
+        vad_config = self.stitch_config.vad_config
+        shared_vad = SHARED_VAD_HANDLE.acquire(
+            lambda: get_vad_engine(vad_config),
+            tag=f"vad_{vad_config or 'default'}",
         )
 
         shared_gcs = acquire_shared_gcs_client(
             project_id=self.stitch_config.project_id,
-            shared_handle=SHARED_RESOURCE_HANDLE,
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
 
-        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
-            return concurrent.futures.ThreadPoolExecutor(
-                max_workers=SHARED_DOWNLOAD_POOL_SIZE
-            )
-
-        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
-            _create_executor, tag="shared_download_thread_pool"
-        )
+        self._executor = acquire_shared_download_executor()
         self.engine.executor = self._executor
         self.engine.setup()
 
@@ -1531,6 +1522,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                     last_start_ms_state,
                     out_of_order_buffer_state,
                 )
+            else:
+                _write_transmission_context(
+                    transmission_context_state,
+                    curr_context,
+                    last_start_ms_state,
+                    out_of_order_buffer_state,
+                )
 
         yield from self._yield_tagged_outputs(results)
 
@@ -1544,6 +1542,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
         deferred_drain_timer: RuntimeTimer = DEFERRED_DRAIN_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -1640,6 +1640,23 @@ class OrderedStitchAudioFn(beam.DoFn):
                     context_label="Deferred drain clamped",
                     rescheduled_deadline=next_deadline,
                 )
+            elif new_buffer_elements:
+                # Not clamped: the remaining buffered chunks are a genuine
+                # gap (not yet ready to drain), so arm the gap timeout
+                # rather than immediately re-chaining the deferred drain.
+                _reschedule_gap_timeout(
+                    gap_timer_event=gap_timer_event,
+                    gap_timer_proc=gap_timer_proc,
+                    order_config=self.order_config,
+                    timestamp=timestamp,
+                    clamped=False,
+                    is_backfill=_evaluate_is_backfill(
+                        new_buffer_elements[0].timestamp_ms,
+                        self.stitch_config.backfill_lateness_threshold_ms,
+                    ),
+                    new_expected=initial_expected_ts,
+                    new_expected_next_ts=new_expected_next_ts,
+                )
 
             curr_context = replace(
                 curr_context,
@@ -1651,8 +1668,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Assume backfill under backlog
-                is_backfill = True
+                is_backfill = _evaluate_is_backfill(
+                    elements_to_emit[0].timestamp_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
+                )
                 previous_expected_ts = initial_expected_ts
                 last_start_ms = last_start_ms_state.read()
                 (

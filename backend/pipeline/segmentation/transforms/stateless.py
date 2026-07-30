@@ -66,7 +66,6 @@ from backend.pipeline.segmentation import log_helper
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     GCS_DOWNLOAD_TIMEOUT_SEC,
-    SHARED_DOWNLOAD_POOL_SIZE,
 )
 from backend.pipeline.segmentation.datatypes import (
     AudioClassification,
@@ -80,6 +79,7 @@ from backend.pipeline.segmentation.options import (
     SegmentationOptions,  # noqa: F401
 )
 from backend.pipeline.segmentation.storage import (
+    acquire_shared_download_executor,
     acquire_shared_gcs_client,
 )
 
@@ -248,7 +248,7 @@ class ParseAndKeyFn(beam.DoFn):
                     DEAD_LETTER_QUEUE_TAG,
                     {
                         "error": msg,
-                        "attributes": dict(element.attributes),
+                        "attributes": dict(element.attributes or {}),
                     },
                 )
             )
@@ -264,7 +264,6 @@ class UploadRawSegmentFn(beam.DoFn):
     """
 
     SHARED_GCS_HANDLE = Shared()
-    SHARED_THREADPOOL_HANDLE = Shared()
     segmentation_success: Any
     segmentation_error: Any
 
@@ -304,14 +303,7 @@ class UploadRawSegmentFn(beam.DoFn):
             self.__class__, "upload_latency_ms"
         )
 
-        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
-            return concurrent.futures.ThreadPoolExecutor(
-                max_workers=SHARED_DOWNLOAD_POOL_SIZE
-            )
-
-        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
-            _create_executor, tag="shared_download_thread_pool"
-        )
+        self._executor = acquire_shared_download_executor()
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)

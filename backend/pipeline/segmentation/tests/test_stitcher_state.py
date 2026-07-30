@@ -20,6 +20,8 @@ from backend.pipeline.segmentation.datatypes import (
 )
 from backend.pipeline.segmentation.state.stitcher_state import (
     AudioStitchingStateMachine,
+    ms_to_samples,
+    samples_to_ms,
 )
 
 SAMPLES_PER_MS: Final = 16
@@ -628,3 +630,78 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             flush_actions[1].speech_time_range.start_ms,
             int(padded_segments[1][0] * 1000),
         )
+
+    def test_silent_chunk_flush_negative_post_roll_clamped(self) -> None:
+        """Verifies that a silent chunk flush with speech ending >500ms prior clamps post-roll to 0."""
+        # Chunk 1: Speech from 0.0s to 1.0s in a 2.0s chunk (ends at 1.0s = 1000ms).
+        # Trailing silence: 1000ms to 2000ms. Speech ended at 1000ms, post-roll target is 1500ms.
+        chunk1 = mock_audio_chunk(0, 2000, [(0.0, 1.0)])
+        self._process(chunk1)
+
+        # Chunk 2: Dead air chunk starting at 10000ms (file_start_ms = 10000).
+        # Target post-roll end = (1000 + 500) - 10000 = -8500ms < 0.
+        # This triggers a silent flush with is_significant_gap = True (10000 - 1000 = 9000ms > 3000ms).
+        chunk2 = mock_audio_chunk(10000, 5000, [])
+        actions2 = self._process(chunk2)
+
+        # Verify speech flush occurred and non-speech segment started at file_start_ms (10000), not negative!
+        self.assertTrue(len(actions2) > 0)
+        self.assertEqual(self.ctx.transmission_start_time_ms, 10000)
+        self.assertEqual(self.ctx.buffer_duration_ms, 5000)
+
+    def test_sample_rate_conversion_helpers(self) -> None:
+        """Verifies exact sample rate conversions for 22050 Hz and 44100 Hz streams."""
+        # 30,000 ms at 22050 Hz: exact samples is 661,500 (not 660,000 from 22 * 30000)
+        self.assertEqual(ms_to_samples(30000, 22050), 661500)
+        self.assertEqual(samples_to_ms(661500, 22050), 30000)
+
+        # 30,000 ms at 44100 Hz: exact samples is 1,323,000 (not 1,320,000 from 44 * 30000)
+        self.assertEqual(ms_to_samples(30000, 44100), 1323000)
+        self.assertEqual(samples_to_ms(1323000, 44100), 30000)
+
+    def test_sub_threshold_silence_and_speech_slices_contiguous_at_22050hz(
+        self,
+    ) -> None:
+        """Verifies the sub-threshold silence append and the following speech
+        slice cover contiguous, non-overlapping sample ranges at 22050 Hz.
+
+        22050 // 1000 == 22 truncates 0.05 samples/ms, so the old
+        samples_per_ms-based slice for the silence gap ended at sample 26400
+        while the (already ms_to_samples-based) speech slice started at
+        sample 26460 -- silently dropping 60 samples at the seam. Using
+        ms_to_samples for both slices closes that gap.
+        """
+        sample_rate = 22050
+        duration_ms = 3000
+        total_samples = ms_to_samples(duration_ms, sample_rate)
+        chunk = AudioChunkData(
+            start_ms=0,
+            audio=np.arange(total_samples, dtype=np.int64),
+            speech_segments=[
+                TimeRange(0, 1000),
+                # 200ms gap: below the default significant_gap_ms=3000
+                # threshold, so it takes the sub-threshold append path.
+                TimeRange(1200, 3000),
+            ],
+            gcs_uri="gs://fake/1.flac",
+            duration_ms=duration_ms,
+            sample_rate=sample_rate,
+        )
+
+        actions = self._process(chunk)
+
+        append_actions = [
+            a for a in actions if isinstance(a, AppendBufferAction)
+        ]
+        self.assertEqual(len(append_actions), 3)
+        silence_buffer = append_actions[1].audio_buffer
+        speech_buffer = append_actions[2].audio_buffer
+        self.assertTrue(len(silence_buffer) > 0)
+        self.assertTrue(len(speech_buffer) > 0)
+
+        # Content is np.arange(total_samples), so each element's value is its
+        # own index into the source array.
+        silence_end_sample_idx = int(silence_buffer[-1]) + 1
+        speech_start_sample_idx = int(speech_buffer[0])
+
+        self.assertEqual(silence_end_sample_idx, speech_start_sample_idx)
