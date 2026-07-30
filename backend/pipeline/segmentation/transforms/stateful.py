@@ -778,6 +778,73 @@ class OrderedStitchAudioFn(beam.DoFn):
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
+    def _reschedule_after_deferred_drain(
+        self,
+        *,
+        elements_to_emit: list[datatypes.BufferedChunk],
+        new_buffer_elements: list[datatypes.BufferedChunk],
+        initial_expected_ts: int | None,
+        new_expected_next_ts: int | None,
+        timestamp: Timestamp,
+        deferred_drain_timer: RuntimeTimer,
+        gap_timer_event: RuntimeTimer,
+        gap_timer_proc: RuntimeTimer,
+        task_logger: std_logging.LoggerAdapter,
+    ) -> None:
+        """Re-arms the deferred-drain timer or the gap timeout after a drain, depending on whether the drain was clamped."""
+        clamped_by_items = len(elements_to_emit) >= (
+            trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+            - self.processed_in_bundle
+        )
+        clamped_by_time = (
+            time.monotonic() >= self._get_bundle_deadline_monotonic()
+        )
+        clamped = bool(
+            new_buffer_elements and (clamped_by_items or clamped_by_time)
+        )
+        if new_buffer_elements and clamped:
+            # Still clamped, re-arm the deferral timer to self-chain into
+            # another bundle!
+            # Dynamic leap-frog: Align the timer deadline with the start time
+            # of the oldest unprocessed chunk currently waiting in the buffer.
+            # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
+            oldest_chunk_ts_sec = (
+                new_buffer_elements[0].timestamp_ms
+                / common_constants.MS_PER_SECOND
+            )
+            next_deadline = max(
+                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            deferred_drain_timer.set(next_deadline)
+
+            self._record_clamping_diagnostics(
+                task_logger=task_logger,
+                clamped_by_items=clamped_by_items,
+                clamped_by_time=clamped_by_time,
+                elements_to_emit_count=len(elements_to_emit),
+                remaining_buffer_count=len(new_buffer_elements),
+                context_label="Deferred drain clamped",
+                rescheduled_deadline=next_deadline,
+            )
+        elif new_buffer_elements:
+            # Not clamped: the remaining buffered chunks are a genuine
+            # gap (not yet ready to drain), so arm the gap timeout
+            # rather than immediately re-chaining the deferred drain.
+            _reschedule_gap_timeout(
+                gap_timer_event=gap_timer_event,
+                gap_timer_proc=gap_timer_proc,
+                order_config=self.order_config,
+                timestamp=timestamp,
+                clamped=False,
+                is_backfill=_evaluate_is_backfill(
+                    new_buffer_elements[0].timestamp_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
+                ),
+                new_expected=initial_expected_ts,
+                new_expected_next_ts=new_expected_next_ts,
+            )
+
     def _record_deferred_drain_wedge_candidate(
         self,
         *,
@@ -1587,7 +1654,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(results)
 
     @on_timer(DEFERRED_DRAIN_TIMER_SPEC)
-    def handle_deferred_drain(  # noqa: PLR0915
+    def handle_deferred_drain(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
@@ -1669,58 +1736,17 @@ class OrderedStitchAudioFn(beam.DoFn):
                 task_logger=task_logger,
             )
 
-            clamped_by_items = len(elements_to_emit) >= (
-                trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                - self.processed_in_bundle
+            self._reschedule_after_deferred_drain(
+                elements_to_emit=elements_to_emit,
+                new_buffer_elements=new_buffer_elements,
+                initial_expected_ts=initial_expected_ts,
+                new_expected_next_ts=new_expected_next_ts,
+                timestamp=timestamp,
+                deferred_drain_timer=deferred_drain_timer,
+                gap_timer_event=gap_timer_event,
+                gap_timer_proc=gap_timer_proc,
+                task_logger=task_logger,
             )
-            clamped_by_time = (
-                time.monotonic() >= self._get_bundle_deadline_monotonic()
-            )
-            clamped = bool(
-                new_buffer_elements and (clamped_by_items or clamped_by_time)
-            )
-            if new_buffer_elements and clamped:
-                # Still clamped, re-arm the deferral timer to self-chain into
-                # another bundle!
-                # Dynamic leap-frog: Align the timer deadline with the start time
-                # of the oldest unprocessed chunk currently waiting in the buffer.
-                # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
-                oldest_chunk_ts_sec = (
-                    new_buffer_elements[0].timestamp_ms
-                    / common_constants.MS_PER_SECOND
-                )
-                next_deadline = max(
-                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    Timestamp(seconds=oldest_chunk_ts_sec),
-                )
-                deferred_drain_timer.set(next_deadline)
-
-                self._record_clamping_diagnostics(
-                    task_logger=task_logger,
-                    clamped_by_items=clamped_by_items,
-                    clamped_by_time=clamped_by_time,
-                    elements_to_emit_count=len(elements_to_emit),
-                    remaining_buffer_count=len(new_buffer_elements),
-                    context_label="Deferred drain clamped",
-                    rescheduled_deadline=next_deadline,
-                )
-            elif new_buffer_elements:
-                # Not clamped: the remaining buffered chunks are a genuine
-                # gap (not yet ready to drain), so arm the gap timeout
-                # rather than immediately re-chaining the deferred drain.
-                _reschedule_gap_timeout(
-                    gap_timer_event=gap_timer_event,
-                    gap_timer_proc=gap_timer_proc,
-                    order_config=self.order_config,
-                    timestamp=timestamp,
-                    clamped=False,
-                    is_backfill=_evaluate_is_backfill(
-                        new_buffer_elements[0].timestamp_ms,
-                        self.stitch_config.backfill_lateness_threshold_ms,
-                    ),
-                    new_expected=initial_expected_ts,
-                    new_expected_next_ts=new_expected_next_ts,
-                )
 
             curr_context = replace(
                 curr_context,
