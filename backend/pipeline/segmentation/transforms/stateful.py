@@ -130,6 +130,17 @@ from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_VAD_HANDLE = Shared()
 
+# Jitter-buffer depth, recorded wherever the out-of-order BagState is
+# materialized: the main ordering path, the gap-timeout handler, the
+# deferred-drain handler, and the budget-exhausted path. Declared at module
+# scope (string namespace) because process_ordering() is a free function, not
+# an OrderedStitchAudioFn method -- a per-instance Metrics.distribution
+# wouldn't be reachable from there, and splitting the same logical metric
+# across two namespaces would defeat the point of watching it as one series.
+JITTER_BUFFER_DEPTH = Metrics.distribution(
+    "OrderedStitchAudioFn", "jitter_buffer_depth"
+)
+
 # WARNING: Do NOT remove or bypass setup_logging().
 # It explicitly configures structured log propagation for the
 # Dataflow worker harness. Removing this will cause all worker logs
@@ -447,6 +458,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
             out_of_order_buffer_state.clear()
             for c in remaining_elements:
                 out_of_order_buffer_state.add(c)
+            JITTER_BUFFER_DEPTH.update(len(remaining_elements))
             has_buffer_elements = len(remaining_elements) > 0
             clamped = bool(
                 len(drained) >= (max_emit - 1)
@@ -667,6 +679,15 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.bundle_clamped_duration_limit = Metrics.counter(
             self.__class__, "bundle_clamped_duration_limit"
         )
+        self.deferred_drain_invocations = Metrics.counter(
+            self.__class__, "deferred_drain_invocations"
+        )
+        self.deferred_drain_chunks_emitted = Metrics.distribution(
+            self.__class__, "deferred_drain_chunks_emitted"
+        )
+        self.deferred_drain_empty_while_buffered = Metrics.counter(
+            self.__class__, "deferred_drain_empty_while_buffered"
+        )
 
     @property
     def engine(self) -> Any:
@@ -757,6 +778,37 @@ class OrderedStitchAudioFn(beam.DoFn):
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
+    def _record_deferred_drain_wedge_candidate(
+        self,
+        *,
+        elements_to_emit: list[datatypes.BufferedChunk],
+        new_buffer_elements: list[datatypes.BufferedChunk],
+        task_logger: std_logging.LoggerAdapter,
+    ) -> None:
+        """Flags a deferred drain that found nothing ready while chunks remain buffered.
+
+        Not a guaranteed wedge: this invocation was specifically scheduled to
+        check the buffer and found nothing ready to drain -- the oldest chunk
+        is still waiting on a predecessor that hasn't arrived. A single
+        occurrence is normal; the gap-timeout path re-armed by the caller is
+        expected to resolve it within one out_of_order_timeout_ms window,
+        either by the predecessor arriving or by forcibly advancing past it.
+        A *sustained* rate of this counter for the same feed without the
+        buffer ever clearing is the signal that would have caught finding #6
+        (a deferred drain that left a gap unresolved with no timer re-armed
+        to check again).
+        """
+        if elements_to_emit or not new_buffer_elements:
+            return
+        self.deferred_drain_empty_while_buffered.inc()
+        task_logger.warning(
+            "[Deferred Drain] Fired but nothing ready to drain; "
+            "%d chunk(s) still buffered, oldest at %d. Gap timeout "
+            "re-armed by caller to force resolution.",
+            len(new_buffer_elements),
+            new_buffer_elements[0].timestamp_ms,
+        )
+
     def _record_clamping_diagnostics(
         self,
         *,
@@ -843,6 +895,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         buffer_elements = list(out_of_order_buffer_state.read())
         if new_chunk not in buffer_elements:
             buffer_elements.append(new_chunk)
+        JITTER_BUFFER_DEPTH.update(len(buffer_elements))
 
         oldest_chunk_ts_sec = (
             min(c.timestamp_ms for c in buffer_elements)
@@ -1446,6 +1499,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     feed_id=feed_id,
                     active_session_id=active_session_id,
                 )
+                JITTER_BUFFER_DEPTH.update(len(new_buffer_elements))
 
                 first_chunk_ts = sorted_elements[0].timestamp_ms
                 is_backfill = _evaluate_is_backfill(
@@ -1533,7 +1587,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(results)
 
     @on_timer(DEFERRED_DRAIN_TIMER_SPEC)
-    def handle_deferred_drain(
+    def handle_deferred_drain(  # noqa: PLR0915
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
@@ -1582,6 +1636,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         with tracing_utils.with_tracer_context(
             trace_attrs, "deferred_drain", __name__
         ):
+            self.deferred_drain_invocations.inc()
+
             # We do NOT set missing_prior_context=True, keeping the continuous tail!
             seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
             buffer_elements = list(out_of_order_buffer_state.read())
@@ -1600,10 +1656,18 @@ class OrderedStitchAudioFn(beam.DoFn):
                     deadline_monotonic=self._get_bundle_deadline_monotonic(),
                 )
             )
+            self.deferred_drain_chunks_emitted.update(len(elements_to_emit))
 
             out_of_order_buffer_state.clear()
             for c in new_buffer_elements:
                 out_of_order_buffer_state.add(c)
+            JITTER_BUFFER_DEPTH.update(len(new_buffer_elements))
+
+            self._record_deferred_drain_wedge_candidate(
+                elements_to_emit=elements_to_emit,
+                new_buffer_elements=new_buffer_elements,
+                task_logger=task_logger,
+            )
 
             clamped_by_items = len(elements_to_emit) >= (
                 trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
