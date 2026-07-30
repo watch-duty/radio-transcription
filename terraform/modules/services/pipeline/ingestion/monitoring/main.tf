@@ -1,10 +1,10 @@
 data "google_project" "project" {}
 
 locals {
-  project_id                 = data.google_project.project.project_id
-  metric_name_suffix         = "_${var.environment}"
-  resolved_echo_service_name = coalesce(var.echo_service_name, "echo-audio-ingestion-${var.environment}")
-
+  project_id                   = data.google_project.project.project_id
+  metric_name_suffix           = "_${var.environment}"
+  active_feed_count_hash       = substr(sha256("active_feeds-lease_admission_cycle-DISTRIBUTION"), 0, 8)
+  resolved_echo_service_name   = coalesce(var.echo_service_name, "echo-audio-ingestion-${var.environment}")
   download_source_types_one_of = "one_of(${join(", ", [for s in var.download_source_types : "\"${s}\""])})"
 
   # Filter strings are built with join(" AND ", [...]) — not heredocs — so they land as
@@ -701,78 +701,31 @@ resource "google_monitoring_alert_policy" "echo_request_latency" {
 
 resource "google_logging_metric" "active_feed_count" {
   project     = local.project_id
-  name        = "${var.log_metric_name_prefix}_active_feed_count${local.metric_name_suffix}"
-  description = "Active feed leases processed by MIG ingestion workers. Extracted from collector_runtime logs."
+  name        = "${var.log_metric_name_prefix}_active_feed_count_${local.active_feed_count_hash}${local.metric_name_suffix}"
+  description = "Active feed leases processed by MIG ingestion workers. Extracted from lease_admission_cycle telemetry."
 
   filter = <<-EOT
     resource.type="gce_instance"
-    AND labels.python_logger="backend.pipeline.ingestion.collector_runtime"
-    AND jsonPayload.message =~ "active"
+    AND jsonPayload.event_type="lease_admission_cycle"
   EOT
 
   metric_descriptor {
     metric_kind = "DELTA"
-    value_type  = "INT64"
+    value_type  = "DISTRIBUTION"
     unit        = "1"
-    labels {
-      key         = "active_feeds"
-      value_type  = "STRING"
-      description = "The active feeds count extracted from the log payload."
-    }
   }
 
-  label_extractors = {
-    "active_feeds" = "REGEXP_EXTRACT(jsonPayload.message, \"— (\\\\d+)/\\\\d+ active\")"
+  value_extractor = "EXTRACT(jsonPayload.active_feeds)"
+
+  bucket_options {
+    linear_buckets {
+      num_finite_buckets = 100
+      width              = 5
+      offset             = 0
+    }
   }
 
   lifecycle {
     create_before_destroy = true
   }
 }
-
-# Custom metric: quarantine event signal (emitted by collector runtime)
-resource "google_monitoring_metric_descriptor" "quarantine_events" {
-  project      = local.project_id
-  type         = "custom.googleapis.com/feeds/quarantine_events"
-  metric_kind  = "GAUGE"
-  value_type   = "INT64"
-  description  = "Emitted when a feed transitions to quarantined status."
-  display_name = "Feed Quarantine Events"
-
-  labels {
-    key         = "feed_id"
-    value_type  = "STRING"
-    description = "UUID of the quarantined feed."
-  }
-
-  labels {
-    key         = "feed_name"
-    value_type  = "STRING"
-    description = "Human-readable name of the feed."
-  }
-
-  labels {
-    key         = "source_type"
-    value_type  = "STRING"
-    description = "Feed source type slug (e.g. bcfy_feeds)."
-  }
-}
-
-# METRIC-01: Custom metric the Publisher writes every 60s; consumed by the
-# Phase 3 autoscaler as the PRIMARY scaling signal (queue-length, additive,
-# leading indicator). INT64 GAUGE — count of rows is integer by definition;
-# matches the existing quarantine_events descriptor pattern (the only other
-# custom.googleapis.com/feeds/* metric in this codebase). unit "1"
-# (dimensionless count). No labels — fleet-wide signal.
-resource "google_monitoring_metric_descriptor" "unclaimed_count" {
-  project      = local.project_id
-  type         = "custom.googleapis.com/feeds/unclaimed_count"
-  metric_kind  = "GAUGE"
-  value_type   = "INT64"
-  unit         = "1"
-  description  = "Count of feeds in 'unclaimed' status — fleet-wide queue depth. Published by oldest-feed-publisher Cloud Run service every 60s. Drives MIG autoscaler queue-length signal in Phase 3."
-  display_name = "Unclaimed Feed Count"
-}
-
-
-
