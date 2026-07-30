@@ -170,10 +170,7 @@ def _make_process_factory(
             if segments and len(segments) > 1:
                 prev_seg = segment_dir / f"chunk_{len(segments) - 2:06d}.pcm"
                 start = time.monotonic()
-                while (
-                    prev_seg.exists()
-                    and (time.monotonic() - start) < 2.0
-                ):
+                while prev_seg.exists() and (time.monotonic() - start) < 2.0:
                     encode_func = getattr(
                         icecast_collector, "_encode_pcm_segment_to_flac", None
                     )
