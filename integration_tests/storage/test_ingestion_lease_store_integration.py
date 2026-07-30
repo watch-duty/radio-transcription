@@ -871,8 +871,16 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
-    first_member = await _insert_member(ingestion_lease_pool, grant)
-    second_member = await _insert_member(ingestion_lease_pool, grant)
+    first_member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        cursor=_BASE_CURSOR,
+    )
+    second_member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        cursor=_BASE_CURSOR,
+    )
     ordered_members = sorted(
         (first_member, second_member),
         key=lambda member: member.feed_id.int,
@@ -972,12 +980,17 @@ async def test_selective_child_dispositions_commit_valid_siblings(
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
-    progress_member = await _insert_member(ingestion_lease_pool, grant)
+    progress_member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        cursor=_BASE_CURSOR,
+    )
     observation_member = await _insert_member(ingestion_lease_pool, grant)
     deactivated_member = await _insert_member(
         ingestion_lease_pool,
         grant,
         status="deactivated",
+        cursor=_BASE_CURSOR,
     )
     quarantined_member = await _insert_member(
         ingestion_lease_pool,
@@ -1075,7 +1088,11 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
         sid = _unique_digits()
         await _insert_lease(ingestion_lease_pool, sid)
         grant = await _claim_exact(store, sid, uuid.uuid4())
-        member = await _insert_member(ingestion_lease_pool, grant)
+        member = await _insert_member(
+            ingestion_lease_pool,
+            grant,
+            cursor=_BASE_CURSOR,
+        )
         child_task: asyncio.Task[object] | None = None
         admin_task: asyncio.Task[object] | None = None
 
@@ -1298,11 +1315,16 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
 def _expected_cursor(
     current: datetime.datetime | None,
     requested: datetime.datetime | None,
+    *,
+    establish_from_null: bool,
 ) -> datetime.datetime | None:
-    if current is None:
-        return requested
+    """Progress may only advance an established cursor; observation may
+    also initialize a NULL one (page-boundary adoption).
+    """
     if requested is None:
         return current
+    if current is None:
+        return requested if establish_from_null else None
     return max(current, requested)
 
 
@@ -1398,7 +1420,11 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
         ingestion_lease_store.ChildDisposition.COMMITTED
     )
 
-    expected_cursor = _expected_cursor(current, requested)
+    expected_cursor = _expected_cursor(
+        current,
+        requested,
+        establish_from_null=operation == "observation",
+    )
     clean_row = await _fetch_feed(
         ingestion_lease_pool,
         clean_member.feed_id,

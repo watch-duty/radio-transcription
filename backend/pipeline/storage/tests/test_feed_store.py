@@ -23,7 +23,9 @@ from backend.pipeline.common.exceptions import (
 from backend.pipeline.storage import (
     feed_audit_sql,
     feed_queries,
+    feed_sid_admin_queries,
     feed_store,
+    ingestion_lease_queries,
     status_reason_detail,
 )
 from backend.pipeline.storage.feed_store import (
@@ -3342,6 +3344,718 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
             None,
             101,
         )
+
+
+_SID = "7017"
+_SID_SOURCE_FEED_ID = "7017-1001"
+
+
+def _sid_lease_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "source_type": "bcfy_calls",
+        "lease_key": _SID,
+        "status": "active",
+        "worker_id": _WORKER_ID,
+        "fencing_token": 5,
+        "membership_revision": 3,
+        "failure_count": 0,
+        "retry_after": None,
+        "status_reason": None,
+        "status_reason_detail": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _sid_feed_row(**overrides: object) -> dict[str, object]:
+    return _full_feed_row(
+        source_type="bcfy_calls",
+        status="active",
+        source_feed_id=_SID_SOURCE_FEED_ID,
+        **overrides,
+    )
+
+
+class TestSidAdminSqlContracts(unittest.TestCase):
+    """Contract tests for the SID-aware admin mutation SQL."""
+
+    def test_membership_pre_read_targets_maintained_members_only(self) -> None:
+        sql = feed_sid_admin_queries.GET_SID_MEMBERSHIP_KEY_SQL
+
+        self.assertIn("source_type = 'bcfy_calls'", sql)
+        self.assertIn("bcfy_calls_is_trunked IS TRUE", sql)
+        self.assertIn("bcfy_calls_sid IS NOT NULL", sql)
+        self.assertNotIn("FOR UPDATE", sql)
+        self.assertNotIn("FOR NO KEY UPDATE", sql)
+
+    def test_parent_insert_is_unclaimed_with_initial_revision(self) -> None:
+        sql = feed_sid_admin_queries.INSERT_UNCLAIMED_PARENT_LEASE_SQL
+
+        self.assertIn("'unclaimed'::feed_status, 1", sql)
+        self.assertIn(
+            "ON CONFLICT (source_type, lease_key) DO NOTHING",
+            sql,
+        )
+        self.assertNotIn("worker_id", sql)
+        self.assertNotIn("fencing_token", sql)
+
+    def test_existing_parent_bump_reactivates_only_deactivated(self) -> None:
+        sql = feed_sid_admin_queries.REGISTER_MEMBER_ON_EXISTING_LEASE_SQL
+
+        self.assertIn("membership_revision = membership_revision + 1", sql)
+        self.assertIn(
+            "WHEN ingestion_leases.status = 'deactivated'::feed_status",
+            sql,
+        )
+        self.assertIn("THEN 'unclaimed'::feed_status", sql)
+        # Reactivation yields a clean, unowned Lease with a fresh failure
+        # budget; the fence is never rewritten.
+        for column in (
+            "worker_id",
+            "last_heartbeat",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(f"{column} = CASE", sql)
+        self.assertIn("THEN 0", sql)
+        self.assertNotIn("fencing_token", sql)
+        # An active owner's authority and a failing parent's backoff are
+        # preserved exactly via the non-deactivated branch.
+        self.assertIn("ELSE ingestion_leases.worker_id", sql)
+        self.assertIn("ELSE ingestion_leases.retry_after", sql)
+        self.assertIn("ELSE ingestion_leases.failure_count", sql)
+
+    def test_sid_create_inserts_enabled_member_with_null_cursor(self) -> None:
+        sql = feed_sid_admin_queries.CREATE_SID_FEED_SQL
+
+        self.assertIn("'bcfy_calls', 'active'::feed_status", sql)
+        self.assertIn("bcfy_calls_is_trunked", sql)
+        self.assertIn("'feed.created'", sql)
+        self.assertNotIn("last_bookmark_time", sql)
+        self.assertNotIn("worker_id", sql)
+
+    def test_sid_deactivate_locks_only_child_feed_row(self) -> None:
+        sql = feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL
+
+        self.assertIn("FOR NO KEY UPDATE OF f", sql)
+        self.assertIn(
+            "AND before_row.status <> 'deactivated'::feed_status", sql
+        )
+        self.assertIn("'feed.deactivated'", sql)
+
+    def test_sid_deactivate_bumps_revision_only_on_real_change(self) -> None:
+        sql = feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL
+
+        self.assertIn(
+            "membership_revision = ingestion_leases.membership_revision + 1",
+            sql,
+        )
+        self.assertIn("AND updated.id IS NOT NULL", sql)
+
+    def test_sid_deactivate_transitions_parent_only_without_siblings(
+        self,
+    ) -> None:
+        sql = feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL
+
+        self.assertIn("SELECT EXISTS (", sql)
+        self.assertIn("fp.feed_id <> $1", sql)
+        self.assertIn("ELSE 'deactivated'::feed_status", sql)
+        self.assertIn("has_eligible_member", sql)
+        # The parent fence is never rewritten by admin deactivation.
+        self.assertNotIn("fencing_token", sql)
+
+    def test_sid_reset_clears_cursor_path_and_failure_state(self) -> None:
+        sql = feed_sid_admin_queries.RESET_SID_CHILD_SQL
+
+        self.assertIn("SET status = 'active'::feed_status", sql)
+        self.assertIn("last_bookmark_time = NULL", sql)
+        self.assertIn("last_processed_filename = NULL", sql)
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn("'feed.reset'", sql)
+        self.assertIn("AND change.changed", sql)
+
+    def test_sid_reset_parent_branches_preserve_active_authority(self) -> None:
+        sql = feed_sid_admin_queries.RESET_SID_CHILD_SQL
+
+        self.assertIn(
+            "WHEN ingestion_leases.status <> 'active'::feed_status",
+            sql,
+        )
+        self.assertIn("THEN 'unclaimed'::feed_status", sql)
+        self.assertIn("ELSE ingestion_leases.status", sql)
+        self.assertIn("ELSE ingestion_leases.worker_id", sql)
+        self.assertIn("ELSE ingestion_leases.failure_count", sql)
+        self.assertIn("AND updated.id IS NOT NULL", sql)
+        # The fencing token is preserved for both parent branches.
+        self.assertNotIn("fencing_token", sql)
+
+    def test_sid_reset_repairs_inactive_parent_under_clean_child(self) -> None:
+        """A dirty parent alone must trigger the reset (GOO-768 review)."""
+        sql = feed_sid_admin_queries.RESET_SID_CHILD_SQL
+
+        # The parent-dirty probe reads the caller-locked Lease row and
+        # feeds the same change gate as the child's own fields, so a
+        # clean child under an inactive parent still resets the parent,
+        # bumps the revision, and emits the feed.reset audit event.
+        self.assertIn("lease_before AS (", sql)
+        self.assertIn("parent_needs_reset", sql)
+        self.assertIn(
+            "OR COALESCE(lease_before.parent_needs_reset, FALSE)",
+            sql,
+        )
+        # An absent permanent Lease row degrades to child-only reset
+        # instead of erasing the child row from the change probe.
+        self.assertIn("LEFT JOIN lease_before ON TRUE", sql)
+        # The probe fires only when the reactivation rule would change
+        # the row: never for an active parent, never for one already
+        # clean unclaimed (idempotent replay stays a no-op).
+        self.assertIn(
+            "ingestion_leases.status <> 'active'::feed_status\n"
+            "            AND (",
+            sql,
+        )
+        self.assertIn(
+            "ingestion_leases.status IS DISTINCT FROM 'unclaimed'::feed_status",
+            sql,
+        )
+        self.assertIn(
+            "ingestion_leases.failure_count IS DISTINCT FROM 0",
+            sql,
+        )
+
+
+class TestCreateSidFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for the SID-managed Calls create path."""
+
+    async def test_bcfy_calls_create_runs_parent_first_transaction(
+        self,
+    ) -> None:
+        payload = _feed_audit_event("feed.created")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            {"lease_key": _SID},
+            _sid_lease_row(status="unclaimed", worker_id=None),
+            _sid_feed_row(feed_audit_event=payload),
+        ]
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.create_feed(
+                "Calls Feed",
+                "bcfy_calls",
+                _SID_SOURCE_FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        self.assertEqual(result["source_type"], SourceType.BCFY_CALLS)
+        self.assertEqual(result["status"], FeedStatus.ACTIVE)
+        statements = [call.args[0] for call in conn.fetchrow.await_args_list]
+        self.assertEqual(
+            statements,
+            [
+                feed_sid_admin_queries.INSERT_UNCLAIMED_PARENT_LEASE_SQL,
+                ingestion_lease_queries.LOCK_LEASE_SQL,
+                feed_sid_admin_queries.CREATE_SID_FEED_SQL,
+            ],
+        )
+        # A freshly inserted parent already starts at revision 1.
+        conn.execute.assert_not_awaited()
+        pool.transaction_context.__aenter__.assert_awaited_once()
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
+
+    async def test_bcfy_calls_create_bumps_existing_locked_parent(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            None,
+            _sid_lease_row(),
+            _sid_feed_row(),
+        ]
+        store = FeedStore(pool)
+
+        await store.create_feed(
+            "Calls Feed",
+            "bcfy_calls",
+            _SID_SOURCE_FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        conn.execute.assert_awaited_once_with(
+            feed_sid_admin_queries.REGISTER_MEMBER_ON_EXISTING_LEASE_SQL,
+            _SID,
+        )
+
+    async def test_bcfy_calls_create_passes_parsed_sid_and_group(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            {"lease_key": _SID},
+            _sid_lease_row(status="unclaimed", worker_id=None),
+            _sid_feed_row(),
+        ]
+        store = FeedStore(pool)
+
+        await store.create_feed(
+            "Calls Feed",
+            "bcfy_calls",
+            _SID_SOURCE_FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        create_args = conn.fetchrow.await_args_list[2].args
+        self.assertEqual(create_args[2], _SID_SOURCE_FEED_ID)
+        self.assertEqual(create_args[4], _SID)
+        self.assertEqual(create_args[5], "1001")
+        self.assertEqual(create_args[6], _FEEDS_SERVICE_ACTOR_ID)
+
+    async def test_bcfy_calls_create_rejects_malformed_source_feed_id(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        for malformed in ("7017", "7017-", "-1001", "7017-1a", "a-1"):
+            with self.subTest(source_feed_id=malformed):
+                with self.assertRaisesRegex(ValueError, "numeric components"):
+                    await store.create_feed(
+                        "Calls Feed",
+                        "bcfy_calls",
+                        malformed,
+                        actor_id=_FEEDS_SERVICE_ACTOR_ID,
+                    )
+
+        pool.acquire.assert_not_called()
+
+    async def test_bcfy_calls_create_translates_unique_violation(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            {"lease_key": _SID},
+            _sid_lease_row(status="unclaimed", worker_id=None),
+            _unique_violation("idx_feed_properties_source_lookup"),
+        ]
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedAlreadyExistsError):
+            await store.create_feed(
+                "Calls Feed",
+                "bcfy_calls",
+                _SID_SOURCE_FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        # The child insert failed inside the transaction, so the lease
+        # insert/bump rolls back with it via the transaction exit.
+        pool.transaction_context.__aexit__.assert_awaited_once()
+
+
+class TestDeactivateSidFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for SID-aware deactivation routing and lock order."""
+
+    async def test_sid_member_locks_parent_before_child_statement(
+        self,
+    ) -> None:
+        payload = _feed_audit_event("feed.deactivated")
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _sid_lease_row(),
+            {
+                "id": _FEED_ID,
+                "changed": True,
+                "membership_revision": 4,
+                "feed_audit_event": payload,
+            },
+        ]
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.deactivate_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        self.assertTrue(result)
+        pool.fetchrow.assert_awaited_once_with(
+            feed_sid_admin_queries.GET_SID_MEMBERSHIP_KEY_SQL,
+            _FEED_ID,
+        )
+        self.assertEqual(
+            [call.args for call in conn.fetchrow.await_args_list],
+            [
+                (
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    "bcfy_calls",
+                    _SID,
+                ),
+                (
+                    feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL,
+                    _FEED_ID,
+                    _SID,
+                    _FEEDS_SERVICE_ACTOR_ID,
+                ),
+            ],
+        )
+        pool.transaction_context.__aenter__.assert_awaited_once()
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
+
+    async def test_sid_member_missing_child_returns_false(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [_sid_lease_row(), None]
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.deactivate_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        self.assertFalse(result)
+        notifications.emit_feed_change_notification.assert_not_called()
+
+    async def test_legacy_member_keeps_legacy_statement(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = _audit_snapshot_row(status="deactivated")
+        store = FeedStore(pool)
+
+        result = await store.deactivate_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertTrue(result)
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.DEACTIVATE_FEED_SQL,
+            _FEED_ID,
+            _FEEDS_SERVICE_ACTOR_ID,
+        )
+
+
+class TestResetSidFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for SID-aware reset routing."""
+
+    async def test_sid_member_resets_under_parent_lock(self) -> None:
+        payload = _feed_audit_event("feed.reset")
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        reset_row = _sid_feed_row(
+            membership_revision=4,
+            feed_audit_event=payload,
+        )
+        conn.fetchrow.side_effect = [_sid_lease_row(), reset_row]
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.reset_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        assert result is not None
+        self.assertEqual(result["status"], FeedStatus.ACTIVE)
+        self.assertEqual(
+            [call.args for call in conn.fetchrow.await_args_list],
+            [
+                (
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    "bcfy_calls",
+                    _SID,
+                ),
+                (
+                    feed_sid_admin_queries.RESET_SID_CHILD_SQL,
+                    _FEED_ID,
+                    _SID,
+                    _FEEDS_SERVICE_ACTOR_ID,
+                ),
+            ],
+        )
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
+
+    async def test_sid_reset_supports_active_parent_without_conflict(
+        self,
+    ) -> None:
+        """An active SID parent never raises the legacy active conflict."""
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _sid_lease_row(status="active"),
+            _sid_feed_row(),
+        ]
+        store = FeedStore(pool)
+
+        result = await store.reset_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertIsNotNone(result)
+
+    async def test_sid_member_missing_child_returns_none(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [_sid_lease_row(), None]
+        store = FeedStore(pool)
+
+        result = await store.reset_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertIsNone(result)
+
+
+class TestDeleteSidFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for the two-transaction SID delete."""
+
+    async def test_sid_member_detaches_then_hard_deletes(self) -> None:
+        detach_payload = _feed_audit_event("feed.deactivated")
+        delete_payload = _feed_audit_event("feed.deleted")
+        pool = make_mock_pool(transaction=True)
+        pool.fetchrow.return_value = {"sid": _SID}
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _sid_lease_row(),
+            {
+                "id": _FEED_ID,
+                "changed": True,
+                "membership_revision": 4,
+                "feed_audit_event": detach_payload,
+            },
+            {
+                "id": _FEED_ID,
+                "blocked_active": False,
+                "current_status": "deactivated",
+                "deleted": True,
+                "feed_audit_event": delete_payload,
+            },
+        ]
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.delete_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+        self.assertTrue(result)
+        statements = [call.args[0] for call in conn.fetchrow.await_args_list]
+        self.assertEqual(
+            statements,
+            [
+                ingestion_lease_queries.LOCK_LEASE_SQL,
+                feed_sid_admin_queries.DEACTIVATE_SID_CHILD_SQL,
+                feed_queries.DELETE_FEED_SQL,
+            ],
+        )
+        # Only the detach runs inside the lease-locked transaction; the
+        # hard cleanup statement must not hold the parent Lease lock.
+        pool.transaction_context.__aenter__.assert_awaited_once()
+        self.assertEqual(
+            [
+                call.args[0]
+                for call in (
+                    notifications.emit_feed_change_notification.call_args_list
+                )
+            ],
+            [detach_payload, delete_payload],
+        )
+
+    async def test_legacy_member_keeps_single_statement_delete(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = {
+            "id": _FEED_ID,
+            "blocked_active": False,
+            "current_status": "unclaimed",
+            "deleted": True,
+            "feed_audit_event": None,
+        }
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertTrue(result)
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.DELETE_FEED_SQL,
+            _FEED_ID,
+            _FEEDS_SERVICE_ACTOR_ID,
+        )
+        pool.transaction_context.__aenter__.assert_not_awaited()
+
+
+class TestLeaseAwareHealthSqlProjection(unittest.TestCase):
+    """Contract tests for the lease-aware Feed health projection."""
+
+    _READ_QUERIES = (
+        feed_queries.GET_FEED_SQL,
+        feed_queries.LIST_FEEDS_DESC_SQL,
+        feed_queries.LIST_FEEDS_ASC_SQL,
+        feed_queries.COUNT_FEEDS_SQL,
+        feed_queries.GET_FEED_SEARCH_OPTIONS_STATUSES_SQL,
+    )
+
+    def test_read_queries_left_join_parent_lease_by_primary_key(self) -> None:
+        for sql in self._READ_QUERIES:
+            self.assertIn("LEFT JOIN ingestion_leases il", sql)
+            self.assertIn("AND il.lease_key = fp.bcfy_calls_sid", sql)
+
+    def test_read_queries_share_one_effective_expression(self) -> None:
+        for sql in self._READ_QUERIES:
+            self.assertIn(
+                "WHEN il.lease_key IS NULL THEN 'quarantined'::feed_status",
+                sql,
+            )
+
+    def test_missing_lease_projects_configuration_error_reason(self) -> None:
+        for sql in (
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertIn("'system_configuration_invalid'", sql)
+
+    def test_list_and_count_filter_and_display_the_same_status(self) -> None:
+        """List filters and total counts use effective, not raw, status."""
+        for sql in (
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertNotIn("f.status::text = ANY($4)", sql)
+            self.assertIn("::text = ANY($4)", sql)
+        self.assertNotIn(
+            "f.status::text = ANY($2)",
+            feed_queries.COUNT_FEEDS_SQL,
+        )
+        self.assertIn("::text = ANY($2)", feed_queries.COUNT_FEEDS_SQL)
+
+    def test_read_queries_expose_raw_lease_columns(self) -> None:
+        for sql in (
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+        ):
+            self.assertIn("il.status AS lease_status", sql)
+            self.assertIn("il.last_heartbeat AS lease_last_heartbeat", sql)
+            self.assertIn("il.status_reason AS lease_status_reason", sql)
+            self.assertIn("fp.bcfy_calls_sid", sql)
+
+
+class TestLeaseAwareRowMapping(unittest.TestCase):
+    """Tests for decoding effective-health columns into a Feed."""
+
+    def test_effective_columns_decode_when_present(self) -> None:
+        store = FeedStore(make_mock_pool())
+        heartbeat = datetime.datetime(2026, 7, 20, 12, 0, tzinfo=datetime.UTC)
+        row = _full_feed_row(
+            source_type="bcfy_calls",
+            status="active",
+            source_feed_id=_SID_SOURCE_FEED_ID,
+            bcfy_calls_sid=_SID,
+            lease_status="failing",
+            lease_last_heartbeat=heartbeat,
+            lease_status_reason="source_unreachable",
+            effective_status="failing",
+            effective_status_reason="source_unreachable",
+            effective_status_reason_detail="calls API unreachable",
+            effective_last_heartbeat=heartbeat,
+        )
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertIs(result["status"], FeedStatus.ACTIVE)
+        self.assertIs(result["effective_status"], FeedStatus.FAILING)
+        self.assertIs(
+            result["effective_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            result["effective_status_reason_detail"],
+            "calls API unreachable",
+        )
+        self.assertEqual(result["effective_last_heartbeat"], heartbeat)
+        self.assertEqual(result["bcfy_calls_sid"], _SID)
+        self.assertIs(result["lease_status"], FeedStatus.FAILING)
+        self.assertEqual(result["lease_last_heartbeat"], heartbeat)
+        self.assertIs(
+            result["lease_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+    def test_mutation_rows_fall_back_to_child_lifecycle(self) -> None:
+        store = FeedStore(make_mock_pool())
+        heartbeat = datetime.datetime(2026, 7, 20, 12, 0, tzinfo=datetime.UTC)
+        row = _full_feed_row(
+            status="failing",
+            status_reason="source_offline",
+            status_reason_detail="stream offline",
+            last_heartbeat=heartbeat,
+        )
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertIs(result["effective_status"], FeedStatus.FAILING)
+        self.assertIs(
+            result["effective_status_reason"],
+            FeedStatusReason.SOURCE_OFFLINE,
+        )
+        self.assertEqual(
+            result["effective_status_reason_detail"],
+            "stream offline",
+        )
+        self.assertEqual(result["effective_last_heartbeat"], heartbeat)
+        self.assertIsNone(result["bcfy_calls_sid"])
+        self.assertIsNone(result["lease_status"])
+        self.assertIsNone(result["lease_last_heartbeat"])
+        self.assertIsNone(result["lease_status_reason"])
+
+    def test_unknown_effective_status_raises_value_error(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(effective_status="not-a-status")
+
+        with self.assertRaisesRegex(ValueError, "effective status"):
+            store._row_to_feed(cast("asyncpg.Record", row))
+
+    def test_unknown_lease_status_reason_raises_value_error(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(lease_status_reason="free-form raw error")
+
+        with self.assertRaisesRegex(ValueError, "lease status reason"):
+            store._row_to_feed(cast("asyncpg.Record", row))
 
 
 if __name__ == "__main__":
