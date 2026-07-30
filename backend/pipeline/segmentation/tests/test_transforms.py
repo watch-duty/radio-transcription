@@ -50,9 +50,9 @@ from backend.pipeline.segmentation.datatypes import (
     StitchAudioConfig,
     TimeRange,
 )
+from backend.pipeline.segmentation.storage import UNIVERSAL_GCS_SHARED_HANDLE
 from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
-    SHARED_RESOURCE_HANDLE,
     OrderedStitchAudioFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
@@ -112,17 +112,17 @@ class MockBagState:
 
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
-original_acquire = SHARED_RESOURCE_HANDLE.acquire
+original_gcs_acquire = UNIVERSAL_GCS_SHARED_HANDLE.acquire
 
 
-def mock_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
-    if tag == "gcs":
-        return MagicMock()
-    return original_acquire(constructor_fn, tag)
+def mock_gcs_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
+    if isinstance(tag, str) and tag.startswith("gcs"):
+        return original_gcs_acquire(MagicMock, tag)
+    return original_gcs_acquire(constructor_fn, tag)
 
 
 _SHARED_PATCHER = patch.object(
-    SHARED_RESOURCE_HANDLE, "acquire", side_effect=mock_acquire
+    UNIVERSAL_GCS_SHARED_HANDLE, "acquire", side_effect=mock_gcs_acquire
 )
 
 
@@ -4583,6 +4583,68 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)
+
+    def test_setup_uses_dedicated_shared_handles_and_vad_config(self) -> None:
+        """Verifies that OrderedStitchAudioFn setup acquires VAD via SHARED_VAD_HANDLE with vad_config."""
+        custom_vad_json = '{"threshold_onset": 0.75}'
+        stitch_config = StitchAudioConfig(
+            project_id="test-project",
+            vad_config=custom_vad_json,
+            significant_gap_ms=1000,
+            stale_timeout_ms=5000,
+            max_transmission_duration_ms=60000,
+        )
+        order_config = OrderRestorerConfig()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.get_vad_engine"
+        ) as mock_get_vad:
+            mock_vad_instance = MagicMock()
+            mock_get_vad.return_value = mock_vad_instance
+
+            fn.setup()
+
+            mock_get_vad.assert_called_once_with(custom_vad_json)
+            self.assertEqual(fn.engine.processor.vad, mock_vad_instance)
+
+    def test_shared_resource_handles_preserve_singletons_across_multiple_dofns(
+        self,
+    ) -> None:
+        """Verifies that multiple DoFn setup calls preserve VAD and GCS singletons without cache eviction."""
+        stitch_config = StitchAudioConfig(
+            project_id="test-project",
+            vad_config="",
+            significant_gap_ms=1000,
+            stale_timeout_ms=5000,
+            max_transmission_duration_ms=60000,
+        )
+        order_config = OrderRestorerConfig()
+
+        fn1 = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn2 = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.get_vad_engine"
+        ) as mock_get_vad:
+            mock_vad_instance = MagicMock()
+            mock_get_vad.return_value = mock_vad_instance
+
+            fn1.setup()
+            fn2.setup()
+
+            # get_vad_engine should only be called ONCE across multiple DoFn setups due to Shared caching
+            mock_get_vad.assert_called_once_with("")
+            self.assertIs(fn1.engine.processor.vad, fn2.engine.processor.vad)
+            self.assertIs(
+                fn1.engine.processor.gcs_client, fn2.engine.processor.gcs_client
+            )
 
     def test_parse_and_key_fn_null_attributes_dlq(self) -> None:
         """Verifies that ParseAndKeyFn gracefully routes invalid payloads with attributes=None to DLQ."""
