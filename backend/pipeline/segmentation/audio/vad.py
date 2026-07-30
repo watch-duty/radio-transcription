@@ -136,6 +136,7 @@ class VoiceActivityDetector:
         self.spikiness_ratio_threshold = spikiness_ratio_threshold
         self.min_rms_threshold = min_rms_threshold
         self.dither_rms = dither_rms
+        self.last_preprocessed_audio: np.ndarray | None = None
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stft_sequence.onnx"
@@ -272,7 +273,7 @@ class VoiceActivityDetector:
 
         return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
 
-    def _trim_and_shift_segments(
+    def trim_and_shift_segments(
         self,
         raw_segments: list[tuple[float, float]],
         prior_len_sec: float,
@@ -286,6 +287,8 @@ class VoiceActivityDetector:
             end_sec = end - prior_len_sec
             shifted_segments.append((start_sec, end_sec))
         return shifted_segments
+
+    _trim_and_shift_segments = trim_and_shift_segments
 
     def _pad_and_merge_segments(
         self,
@@ -386,14 +389,16 @@ class VoiceActivityDetector:
             padded_segments.append((p_start, p_end))
         return padded_segments
 
-    def _peak_normalize(self, audio_array: np.ndarray) -> np.ndarray:
+    def peak_normalize(self, audio_array: np.ndarray) -> np.ndarray:
         """Applies software peak volume normalization if the signal is not completely silent."""
         peak = np.max(np.abs(audio_array))
         if peak >= self.normalization_min_peak:
             return audio_array / peak * self.normalization_target_peak
         return audio_array
 
-    def _generate_comfort_noise(self, sample_rate: int) -> np.ndarray:
+    _peak_normalize = peak_normalize
+
+    def generate_comfort_noise(self, sample_rate: int) -> np.ndarray:
         """Generates shaped synthetic comfort noise static for Segment 0 priming."""
         priming_samples = int(self.fallback_priming_sec * sample_rate)
         if priming_samples <= 0:
@@ -409,13 +414,19 @@ class VoiceActivityDetector:
         # We use mode='full' and truncate to priming_samples to completely prevent edge wrap artifacts.
         return np.convolve(noise, np.ones(5) / 5, mode="full")[:priming_samples]
 
-    def _is_speech_segment(self, sig: np.ndarray, chunk_size: int) -> bool:
-        """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
-        if len(sig) == 0:
-            # Handle empty slices due to potential rounding edge cases at boundaries
-            return False
+    _generate_comfort_noise = generate_comfort_noise
 
-        # Compute RMS in chunk-sized windows
+    def is_speech_segment_with_reason(
+        self,
+        sig: np.ndarray,
+        chunk_size: int,
+    ) -> tuple[bool, str | None]:
+        """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise,
+        returning (is_valid, rejection_reason).
+        """
+        if len(sig) == 0:
+            return False, "Empty Slice Boundary"
+
         seg_rms = []
         for w_start in range(0, len(sig), chunk_size):
             window = sig[w_start : w_start + chunk_size]
@@ -423,27 +434,44 @@ class VoiceActivityDetector:
                 window = np.pad(window, (0, chunk_size - len(window)))
             seg_rms.append(np.sqrt(np.mean(window**2)))
 
-        seg_rms = np.array(seg_rms)
-        mean_rms = np.mean(seg_rms)
-        median_rms = np.median(seg_rms)
+        seg_rms_arr = np.array(seg_rms)
+        mean_rms = float(np.mean(seg_rms_arr))
+        median_rms = float(np.median(seg_rms_arr))
         rms_ratio = mean_rms / median_rms if median_rms > 1e-5 else 999.0
 
         # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
         if rms_ratio > self.spikiness_ratio_threshold:
-            if self._is_transient_noise_spike(sig):
-                return False
+            if self.is_transient_noise_spike(sig):
+                return (
+                    False,
+                    f"Transient Noise Spike / Click (rms_ratio={rms_ratio:.2f} > threshold={self.spikiness_ratio_threshold:.1f})",
+                )
 
         # 2. Floor check: reject if the segment is extremely quiet
         if mean_rms < self.min_rms_threshold:
-            return False
+            return (
+                False,
+                f"Below Minimum RMS Floor (mean_rms={mean_rms:.6f} < threshold={self.min_rms_threshold:.6f})",
+            )
 
         # 3. Spectral Energy Distribution Check: reject weird flickering / DC / static ticking
-        if self._is_subaudible_flickering(sig):
-            return False
+        if self.is_subaudible_flickering(sig):
+            return False, "Sub-audible Flickering / Static Ticks"
 
-        return True
+        return True, None
 
-    def _is_transient_noise_spike(self, sig: np.ndarray) -> bool:
+    def is_speech_segment(
+        self,
+        sig: np.ndarray,
+        chunk_size: int,
+    ) -> bool:
+        """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
+        is_valid, _ = self.is_speech_segment_with_reason(sig, chunk_size)
+        return is_valid
+
+    _is_speech_segment = is_speech_segment
+
+    def is_transient_noise_spike(self, sig: np.ndarray) -> bool:
         """Computes spectral flatness to confirm if a high-RMS spike is static noise/clicks."""
         spec = np.abs(np.fft.rfft(sig)) ** 2
         spec = np.maximum(spec[1:], 1e-10)
@@ -452,7 +480,12 @@ class VoiceActivityDetector:
         flatness = float(g_mean / a_mean) if a_mean > 1e-10 else 1.0
         return flatness < 0.0005  # Static noise shelf is ~0.0003
 
-    def _is_subaudible_flickering(self, sig: np.ndarray) -> bool:
+    _is_transient_noise_spike = is_transient_noise_spike
+
+    def is_subaudible_flickering(
+        self,
+        sig: np.ndarray,
+    ) -> bool:
         """Analyzes formant-band energy to reject open-squelch ticks and electrical hum."""
         spec = np.abs(np.fft.rfft(sig)) ** 2
         total_energy = float(np.sum(spec))
@@ -464,15 +497,12 @@ class VoiceActivityDetector:
             freqs <= VAD_VOCAL_ENERGY_MAX_FREQ_HZ
         )
         vocal_energy = float(np.sum(spec[vocal_mask]))
-        if (vocal_energy / total_energy) < VAD_VOCAL_ENERGY_MIN_RATIO:
-            logger.debug(
-                "Rejected VAD segment as sub-audible flickering / static ticks."
-            )
-            return True
+        ratio = vocal_energy / total_energy
+        return ratio < VAD_VOCAL_ENERGY_MIN_RATIO
 
-        return False
+    _is_subaudible_flickering = is_subaudible_flickering
 
-    def _is_tone_segment(self, sig: np.ndarray) -> bool:
+    def is_tone_segment(self, sig: np.ndarray) -> bool:
         """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""
         frame_len = TONE_STFT_FRAME_LENGTH
         hop_len = TONE_STFT_HOP_LENGTH
@@ -537,6 +567,40 @@ class VoiceActivityDetector:
             tone_frames / len(active_indices)
         ) >= TONE_SEGMENT_MIN_TONE_FRAME_RATIO
 
+    _is_tone_segment = is_tone_segment
+
+    def _filter_noise_segments_with_diagnostics(
+        self,
+        shifted_segments: list[tuple[float, float]],
+        vad_input: np.ndarray,
+        vad_offset_sec: float,
+        chunk_size: int,
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float, str]]]:
+        """Filters out noise segments and records detailed diagnostic reasons for rejections."""
+        filtered_segments = []
+        rejected_segments = []
+        for start, end in shifted_segments:
+            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            seg_signal = vad_input[start_idx:end_idx]
+
+            is_valid, reason = self.is_speech_segment_with_reason(
+                seg_signal, chunk_size
+            )
+            if is_valid:
+                if self.is_tone_segment(seg_signal):
+                    reason = (
+                        "Alert / Paging Tone Detected (Quik-Call / EAS Check)"
+                    )
+                    rejected_segments.append((start, end, reason))
+                else:
+                    filtered_segments.append((start, end))
+            else:
+                rejected_segments.append(
+                    (start, end, reason or "Post-VAD Rejection")
+                )
+        return filtered_segments, rejected_segments
+
     def _filter_noise_segments(
         self,
         shifted_segments: list[tuple[float, float]],
@@ -545,29 +609,18 @@ class VoiceActivityDetector:
         chunk_size: int,
     ) -> list[tuple[float, float]]:
         """Filters out transient clicks/noise segments from the list of VAD-detected segments."""
-        filtered_segments = []
-        for start, end in shifted_segments:
-            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
-            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
-            seg_signal = vad_input[start_idx:end_idx]
-            if self._is_speech_segment(seg_signal, chunk_size):
-                if self._is_tone_segment(seg_signal):
-                    logger.debug(
-                        "Rejected VAD segment at (%.2f, %.2f) as an alert/paging tone.",
-                        start,
-                        end,
-                    )
-                else:
-                    filtered_segments.append((start, end))
+        filtered_segments, _ = self._filter_noise_segments_with_diagnostics(
+            shifted_segments, vad_input, vad_offset_sec, chunk_size
+        )
         return filtered_segments
 
-    def _extract_vad_frames(
+    def extract_vad_frame_probs(
         self,
         vad_input: np.ndarray,
         chunk_size: int,
         context_size: int,
-    ) -> list[tuple[float, float]]:
-        """Iteratively processes audio chunks through the Silero VAD ONNX inference engine."""
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        """Processes audio through Silero VAD and returns segments alongside frame probabilities."""
         if self.silero_session is None:
             msg = "Silero VAD session not initialized."
             raise RuntimeError(msg)
@@ -592,15 +645,11 @@ class VoiceActivityDetector:
         temp_end = 0
         current_speech: dict[str, int | float] = {}
         raw_segments = []
+        frame_probs = []
 
         def frames_to_sec(frame_idx: float) -> float:
             return (frame_idx * chunk_size) / TARGET_SAMPLE_RATE
 
-        # Thread safety: `state` and `context` are call-local numpy arrays
-        # initialized above. silero_session.run() is thread-safe for the same
-        # reason as ulunas_session — the ONNX graph is immutable; all VAD RNN
-        # state is passed in and returned as tensors rather than stored on the
-        # session.
         for frame_idx, i in enumerate(range(0, len(vad_input), chunk_size)):
             chunk = vad_input[i : i + chunk_size]
             if len(chunk) < chunk_size:
@@ -619,31 +668,31 @@ class VoiceActivityDetector:
             prob = float(np.asarray(outputs[0]).flatten()[0])
             state = outputs[1]
             context = x_with_context[-context_size:]
+            frame_probs.append((frames_to_sec(frame_idx), prob))
 
             if not triggered:
                 if prob >= self.threshold_onset:
                     triggered = True
                     current_speech["start"] = frame_idx
                     temp_end = 0
-            else:  # noqa: PLR5501
-                if prob < self.threshold_offset:
-                    temp_end += 1
-                    if temp_end >= min_silence_frames:
-                        current_speech["end"] = frame_idx - temp_end
-                        if (
-                            current_speech["end"] - current_speech["start"]
-                        ) >= min_speech_frames:
-                            raw_segments.append(
-                                (
-                                    frames_to_sec(current_speech["start"]),
-                                    frames_to_sec(current_speech["end"]),
-                                )
+            elif prob < self.threshold_offset:
+                temp_end += 1
+                if temp_end >= min_silence_frames:
+                    current_speech["end"] = frame_idx - temp_end
+                    if (
+                        current_speech["end"] - current_speech["start"]
+                    ) >= min_speech_frames:
+                        raw_segments.append(
+                            (
+                                frames_to_sec(current_speech["start"]),
+                                frames_to_sec(current_speech["end"]),
                             )
-                        triggered = False
-                        temp_end = 0
-                        current_speech = {}
-                else:
+                        )
+                    triggered = False
                     temp_end = 0
+                    current_speech = {}
+            else:
+                temp_end = 0
 
         if triggered:
             current_speech["end"] = len(vad_input) / chunk_size
@@ -657,7 +706,79 @@ class VoiceActivityDetector:
                     )
                 )
 
+        return raw_segments, frame_probs
+
+    def extract_vad_frames(
+        self,
+        vad_input: np.ndarray,
+        chunk_size: int,
+        context_size: int,
+    ) -> list[tuple[float, float]]:
+        """Public method: Evaluates Silero VAD frame window probabilities."""
+        raw_segments, _ = self.extract_vad_frame_probs(
+            vad_input, chunk_size, context_size
+        )
         return raw_segments
+
+    _extract_vad_frames = extract_vad_frames
+
+    def detect_speech_segments_with_diagnostics(
+        self,
+        audio_array: np.ndarray,
+        sample_rate: int = TARGET_SAMPLE_RATE,
+        chunk_size: int = DEFAULT_SILERO_WINDOW_SIZE,
+        context_size: int = 64,
+        prior_audio: np.ndarray | None = None,
+        *,
+        prior_is_preprocessed: bool = False,
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float, str]]]:
+        """Analyzes a normalized float32 audio array, returning (accepted_segments, rejected_segments_with_reasons)."""
+        if len(audio_array) == 0:
+            return [], []
+
+        if np.issubdtype(audio_array.dtype, np.integer):
+            audio_array = audio_array.astype(np.float32) / 32768.0
+
+        if self._should_skip_vad(audio_array, sample_rate):
+            return [], []
+
+        if prior_audio is not None and np.issubdtype(
+            prior_audio.dtype, np.integer
+        ):
+            prior_audio = prior_audio.astype(np.float32) / 32768.0
+
+        if (
+            prior_is_preprocessed
+            and prior_audio is not None
+            and len(prior_audio) > 0
+        ):
+            vad_input, vad_offset_sec, _ = self._prepare_preprocessed_lookback(
+                audio_array, sample_rate, prior_audio
+            )
+        else:
+            vad_input, vad_offset_sec, _ = self._prepare_raw_lookback(
+                audio_array, sample_rate, prior_audio
+            )
+
+        raw_segments, _ = self.extract_vad_frame_probs(
+            vad_input, chunk_size, context_size
+        )
+
+        shifted_segments = self.trim_and_shift_segments(
+            raw_segments, vad_offset_sec
+        )
+
+        filtered_segments, rejected_segments = (
+            self._filter_noise_segments_with_diagnostics(
+                shifted_segments, vad_input, vad_offset_sec, chunk_size
+            )
+        )
+
+        audio_len_sec = len(audio_array) / float(sample_rate)
+        accepted_segments = self._pad_and_merge_segments(
+            filtered_segments, audio_len_sec
+        )
+        return accepted_segments, rejected_segments
 
     def _slice_vad_input(
         self,
