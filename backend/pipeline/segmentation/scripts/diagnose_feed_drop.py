@@ -452,6 +452,7 @@ class FeedDiagnosticRunner:
         (
             accepted_segments,
             rejected_details,
+            preprocessed,
         ) = self.vad_engine.detect_speech_segments_with_diagnostics(
             samples,
             sample_rate=sr,
@@ -494,7 +495,6 @@ class FeedDiagnosticRunner:
         # 16 kHz, denoised, peak-normalized. Falls back to raw scaling only
         # when VAD was skipped outright (silent/empty chunk), in which case
         # there are no segments to reconcile against anyway.
-        preprocessed = self.vad_engine.last_preprocessed_audio
         if preprocessed is None:
             preprocessed = (
                 samples.astype(np.float32) / 32768.0

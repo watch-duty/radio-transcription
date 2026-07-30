@@ -880,10 +880,48 @@ class TestVadEngine(unittest.TestCase):
             np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
         ).astype(np.float32) * 0.0005
 
-        accepted, _rejected = detector.detect_speech_segments_with_diagnostics(
-            spiky_static, sample_rate=16000
+        accepted, _rejected, _preprocessed = (
+            detector.detect_speech_segments_with_diagnostics(
+                spiky_static, sample_rate=16000
+            )
         )
         self.assertEqual(accepted, [])
+
+    def test_detect_speech_segments_with_diagnostics_returns_preprocessed_audio(
+        self,
+    ) -> None:
+        """Verifies the third return value is the current chunk's preprocessed audio, not None or empty, for non-skipped input.
+
+        Regression guard for #737's diagnose_feed_drop.py, which reads this
+        value from the return tuple to plot VAD probabilities against the
+        exact signal the detector judged. Before this fix, that same value
+        was read off a since-removed last_preprocessed_audio instance
+        attribute -- an unpacking bug here would silently plot against the
+        wrong (or absent) signal rather than raise.
+        """
+        detector = vad.VoiceActivityDetector(
+            models_dir=self.models_dir, pad_sec=0.0
+        )
+        detector.setup()
+
+        t = np.linspace(0, 1.0, 16000, endpoint=False)
+        signal = (np.sin(2 * np.pi * 440 * t) * 0.3).astype(np.float32)
+
+        _, _, preprocessed = detector.detect_speech_segments_with_diagnostics(
+            signal, sample_rate=16000
+        )
+
+        self.assertIsNotNone(preprocessed)
+        assert preprocessed is not None
+        self.assertGreater(len(preprocessed), 0)
+        # Matches the reference computed by the non-diagnostics API for the
+        # identical input -- same underlying preprocessing, different entry
+        # point.
+        _, expected_preprocessed = detector.detect_speech_segments(
+            signal, sample_rate=16000
+        )
+        assert expected_preprocessed is not None
+        np.testing.assert_array_equal(preprocessed, expected_preprocessed)
 
 
 class TestFeedDiagnosticRunner(unittest.TestCase):

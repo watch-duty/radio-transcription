@@ -707,16 +707,30 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray | None = None,
         *,
         prior_is_preprocessed: bool = False,
-    ) -> tuple[list[tuple[float, float]], list[tuple[float, float, str]]]:
-        """Analyzes a normalized float32 audio array, returning (accepted_segments, rejected_segments_with_reasons)."""
+    ) -> tuple[
+        list[tuple[float, float]],
+        list[tuple[float, float, str]],
+        np.ndarray | None,
+    ]:
+        """Analyzes a normalized float32 audio array, returning (accepted_segments, rejected_segments_with_reasons, preprocessed_audio).
+
+        preprocessed_audio is the current chunk's preprocessed audio (post
+        denoiser/EQ, excluding any prior-tail preamble) -- the same signal
+        the detector judged internally -- or None if VAD was skipped or the
+        input was empty. Callers that need to plot or re-inspect the exact
+        signal VAD ran on (e.g. diagnostics) should use this return value
+        rather than caching it on the detector instance: see
+        detect_speech_segments for why that pattern is a cross-thread race
+        once the VAD is a shared singleton.
+        """
         if len(audio_array) == 0:
-            return [], []
+            return [], [], None
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
         if self._should_skip_vad(audio_array, sample_rate):
-            return [], []
+            return [], [], None
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
@@ -728,12 +742,16 @@ class VoiceActivityDetector:
             and prior_audio is not None
             and len(prior_audio) > 0
         ):
-            vad_input, vad_offset_sec, _ = self._prepare_preprocessed_lookback(
-                audio_array, sample_rate, prior_audio
+            vad_input, vad_offset_sec, current_chunk_preprocessed = (
+                self._prepare_preprocessed_lookback(
+                    audio_array, sample_rate, prior_audio
+                )
             )
         else:
-            vad_input, vad_offset_sec, _ = self._prepare_raw_lookback(
-                audio_array, sample_rate, prior_audio
+            vad_input, vad_offset_sec, current_chunk_preprocessed = (
+                self._prepare_raw_lookback(
+                    audio_array, sample_rate, prior_audio
+                )
             )
 
         raw_segments, _ = self.extract_vad_frame_probs(
@@ -754,7 +772,7 @@ class VoiceActivityDetector:
         accepted_segments = self._pad_and_merge_segments(
             filtered_segments, audio_len_sec
         )
-        return accepted_segments, rejected_segments
+        return accepted_segments, rejected_segments, current_chunk_preprocessed
 
     def _slice_vad_input(
         self,
