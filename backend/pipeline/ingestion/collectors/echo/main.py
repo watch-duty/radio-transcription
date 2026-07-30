@@ -99,7 +99,11 @@ _MIRROR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # Lazily initialized on first invocation so importing this module in unit
 # tests does not require GCP credentials. Initialization is guarded by
 # `_init_lock` so that concurrent requests (max_instance_request_concurrency > 1)
-# cannot race to construct the shared clients twice.
+# cannot race to construct the shared clients twice. Note this race is not
+# reachable today: at the current max_instance_request_concurrency=1, Cloud Run
+# serializes requests per instance. The lock exists so raising concurrency
+# later doesn't introduce a latent init race — it is preventive, not a fix for
+# an active bug.
 gcs_client: storage.Client | None = None
 pubsub_client: PubSubClient | None = None
 feed_store: SyncFeedStore | None = None
