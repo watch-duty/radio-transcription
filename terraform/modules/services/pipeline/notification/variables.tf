@@ -88,3 +88,14 @@ variable "rules_api_url" {
   description = "Base URL of the rules management API service; used to attach triggered rules' tags to notifications. The client appends /v1/rules."
   type        = string
 }
+
+variable "project_id" {
+  description = "The GCP project ID."
+  type        = string
+}
+
+variable "project_number" {
+  description = "The GCP project number."
+  type        = string
+}
+
