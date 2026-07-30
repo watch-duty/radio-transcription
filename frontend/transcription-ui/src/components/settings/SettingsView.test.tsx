@@ -33,7 +33,6 @@ function createWrapper(token: string | null = 'mock-token') {
           token,
           setToken: vi.fn(),
           isAdmin: true,
-          setIsAdmin: vi.fn(),
           isLoading: false,
           isError: false,
         }}
