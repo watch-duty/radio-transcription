@@ -2787,6 +2787,171 @@ class OrderedStitchAudioTest(unittest.TestCase):
         self.assertEqual(out_of_order_buffer_state.items, [gap_chunk])
         self.assertIsNotNone(gap_timer_event.deadline)
 
+    def test_handle_deferred_drain_records_invocation_and_depth_metrics(
+        self,
+    ) -> None:
+        """Verifies handle_deferred_drain records one invocation, the drained-chunk count, and the resulting buffer depth on every call, ready or not."""
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.deferred_drain_invocations = MagicMock()
+        fn.deferred_drain_chunks_emitted = MagicMock()
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            expected_next_chunk_start_ms=1000,
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        # Not ready: buffer expects 1000, this chunk is at 5000.
+        gap_chunk = BufferedChunk(
+            timestamp_ms=5000, gcs_uri="gs://test-bucket/gap-chunk.flac"
+        )
+        out_of_order_buffer_state.add(gap_chunk)
+
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.JITTER_BUFFER_DEPTH"
+        ) as mock_depth:
+            list(
+                fn.handle_deferred_drain(
+                    feed_id="test-feed",
+                    transmission_context_state=transmission_context_state,  # type: ignore
+                    last_start_ms_state=last_start_ms_state,  # type: ignore
+                    out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                    timestamp=Timestamp(1.0),
+                    gap_timer_event=MagicMock(),
+                    gap_timer_proc=MagicMock(),
+                    deferred_drain_timer=MagicMock(),
+                )
+            )
+
+        fn.deferred_drain_invocations.inc.assert_called_once()
+        # Nothing was ready to drain (5000 != expected 1000).
+        fn.deferred_drain_chunks_emitted.update.assert_called_once_with(0)
+        # The one buffered chunk remains, unresolved.
+        mock_depth.update.assert_called_once_with(1)
+
+    def test_handle_deferred_drain_flags_wedge_candidate_when_nothing_ready(
+        self,
+    ) -> None:
+        """Verifies the wedge-candidate counter and warning fire when a deferred drain finds nothing ready while chunks remain buffered -- the exact shape of finding #6 pre-fix."""
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.deferred_drain_empty_while_buffered = MagicMock()
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            expected_next_chunk_start_ms=1000,
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        gap_chunk = BufferedChunk(
+            timestamp_ms=5000, gcs_uri="gs://test-bucket/gap-chunk.flac"
+        )
+        out_of_order_buffer_state.add(gap_chunk)
+
+        list(
+            fn.handle_deferred_drain(
+                feed_id="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+                timestamp=Timestamp(1.0),
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                deferred_drain_timer=MagicMock(),
+            )
+        )
+
+        fn.deferred_drain_empty_while_buffered.inc.assert_called_once()
+
+    def test_handle_deferred_drain_no_wedge_candidate_when_buffer_clears(
+        self,
+    ) -> None:
+        """Verifies the wedge-candidate counter does NOT fire when the deferred drain successfully drains the buffer to empty.
+
+        Also asserts deferred_drain_chunks_emitted recorded the successful
+        drain (not just that the wedge counter stayed silent): a full revert
+        of this feature would make the "not called" assertion below trivially
+        true for the wrong reason (the counter wouldn't exist to be called at
+        all), so the test needs a positive assertion that only holds when the
+        metrics wiring is actually present and correct.
+        """
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.deferred_drain_empty_while_buffered = MagicMock()
+        fn.deferred_drain_chunks_emitted = MagicMock()
+        fn.engine = MagicMock()
+        fn.engine.processor = MagicMock()
+        fn.engine.prefetch_audio_futures.return_value = {}
+        chunk_result = MagicMock()
+        chunk_result.outputs = []
+        chunk_result.next_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+        )
+        chunk_result.next_expected_ts = 2000
+        chunk_result.next_last_start_ms = None
+        fn.engine.process_ordering_chunk.return_value = chunk_result
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            expected_next_chunk_start_ms=1000,
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        # Ready: buffer expects 1000, this chunk is exactly at 1000.
+        ready_chunk = BufferedChunk(
+            timestamp_ms=1000, gcs_uri="gs://test-bucket/ready-chunk.flac"
+        )
+        out_of_order_buffer_state.add(ready_chunk)
+
+        list(
+            fn.handle_deferred_drain(
+                feed_id="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+                timestamp=Timestamp(1.0),
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                deferred_drain_timer=MagicMock(),
+            )
+        )
+
+        fn.deferred_drain_empty_while_buffered.inc.assert_not_called()
+        fn.deferred_drain_chunks_emitted.update.assert_called_once_with(1)
+        self.assertEqual(out_of_order_buffer_state.items, [])
+
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(

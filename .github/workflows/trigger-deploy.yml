@@ -24,4 +24,4 @@ jobs:
           GH_TOKEN: ${{ steps.generate_token.outputs.token }}
         run: |
           echo "Triggering deployment..."
-          gh workflow run dev_deploy.yml --repo ${{ secrets.DEPLOYMENT_REPO_TARGET }} -f app_deploy_sha=${{ github.sha }}
+          gh workflow run dev_deploy.yml --repo ${{ secrets.DEPLOYMENT_REPO_TARGET }} --ref main -f app_deploy_sha=${{ github.sha }}
