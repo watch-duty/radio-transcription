@@ -202,6 +202,24 @@ known-first-party = ["backend", "local_dev"]
   "T203",    # pprint allowed in notebooks
   "TRY003",  # Long exception messages
 ]
+# Legacy notebooks predating notebook linting. Ruff unions per-file-ignores
+# across every matching pattern, so a narrower glob cannot re-enable a rule the
+# entry above ignores; these files need their own "ALL" entry instead. Remove a
+# notebook from this list (and fix its findings) when you next edit it.
+"model/colabs/chirp_transcribe_audio.ipynb" = ["ALL"]
+"model/colabs/common/chirp_and_gemini_segment_masked_audio.ipynb" = ["ALL"]
+"model/colabs/evaluate_canary_qwen.ipynb" = ["ALL"]
+"model/colabs/evaluate_gemini_manual_context.ipynb" = ["ALL"]
+"model/colabs/evaluate_gemma_4_E2B_it.ipynb" = ["ALL"]
+"model/colabs/evaluate_granite_speech.ipynb" = ["ALL"]
+"model/colabs/evaluate_ibm_granite.ipynb" = ["ALL"]
+"model/colabs/evaluate_transcriptions.ipynb" = ["ALL"]
+"model/colabs/evaluate_whisper_large_v3.ipynb" = ["ALL"]
+"model/colabs/fine_tune_whisper.ipynb" = ["ALL"]
+"model/colabs/gemini_agent_session/create_inference_manifest_masked_audio.ipynb" = ["ALL"]
+"model/colabs/gemini_agent_session/transcribe_masked_audio.ipynb" = ["ALL"]
+"model/colabs/segmentation/export_ulunas_sequence_onnx.ipynb" = ["ALL"]
+"model/colabs/segmentation/silero_and_ul_unas_wet_dry_VAD_mixture.ipynb" = ["ALL"]
 "local_dev/**/*.py" = [
   "ANN001",
   "ANN201",
