@@ -861,20 +861,22 @@ class OrderedStitchAudioFn(beam.DoFn):
         expected to resolve it within one out_of_order_timeout_ms window,
         either by the predecessor arriving or by forcibly advancing past it.
         A *sustained* rate of this counter for the same feed without the
-        buffer ever clearing is the signal that would have caught finding #6
-        (a deferred drain that left a gap unresolved with no timer re-armed
-        to check again).
+        buffer ever clearing is the signal that indicates a wedge (i.e. finding #6,
+        where a deferred drain execution left an out-of-order gap unresolved
+        without re-arming a timer to check again, causing the buffer to remain
+        stuck indefinitely until a new chunk arrived).
         """
-        if elements_to_emit or not new_buffer_elements:
-            return
-        self.deferred_drain_empty_while_buffered.inc()
-        task_logger.warning(
-            "[Deferred Drain] Fired but nothing ready to drain; "
-            "%d chunk(s) still buffered, oldest at %d. Gap timeout "
-            "re-armed by caller to force resolution.",
-            len(new_buffer_elements),
-            new_buffer_elements[0].timestamp_ms,
-        )
+        # A wedge candidate occurs when nothing was ready to emit (elements_to_emit is empty),
+        # but chunks still remain buffered waiting for predecessors.
+        if not elements_to_emit and new_buffer_elements:
+            self.deferred_drain_empty_while_buffered.inc()
+            task_logger.warning(
+                "[Deferred Drain] Fired but nothing ready to drain; "
+                "%d chunk(s) still buffered, oldest at %d. Gap timeout "
+                "re-armed by caller to force resolution.",
+                len(new_buffer_elements),
+                new_buffer_elements[0].timestamp_ms,
+            )
 
     def _record_clamping_diagnostics(
         self,
