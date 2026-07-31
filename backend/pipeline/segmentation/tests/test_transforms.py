@@ -1481,6 +1481,114 @@ class OrderedStitchAudioTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
+    def test_gap_timer_event_clamped_leapfrog_in_dofn(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that handle_gap_timeout sets gap_timer_event deadline to oldest_chunk_ts_sec under clamping."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda gcs_uri, timestamp_ms, *args, **kwargs: AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.ones(16000, dtype=np.int16),
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session-id",
+            expected_next_chunk_start_ms=100000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(100000)
+
+        out_of_order_buffer_state = MockBagState()
+        # Add 5 chunks with timestamps: 2 emitted (100k, 101k), 3 remaining starting at 108k (108.0s)
+        chunk_timestamps = [100000, 101000, 108000, 109000, 110000]
+        for i, ts in enumerate(chunk_timestamps):
+            out_of_order_buffer_state.add(
+                BufferedChunk(
+                    timestamp_ms=ts,
+                    gcs_uri=f"gs://test-bucket/chunk{i}.flac",
+                )
+            )
+
+        class MockTimer:
+            def __init__(self, name="timer") -> None:
+                self.name = name
+                self.deadline = None
+
+            def set(self, deadline):
+                self.deadline = deadline
+
+            def clear(self):
+                self.deadline = None
+
+        gap_timer_event = MockTimer("gap_event")
+        gap_timer_proc = MockTimer("gap_proc")
+
+        with (
+            patch(
+                "backend.pipeline.segmentation.constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                new=2,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                new=2,
+            ),
+        ):
+            list(
+                fn.handle_gap_timeout_event(
+                    feed_id="test-feed",
+                    transmission_context_state=transmission_context_state,  # type: ignore
+                    last_start_ms_state=last_start_ms_state,  # type: ignore
+                    out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                    gap_timer_event=gap_timer_event,  # type: ignore
+                    gap_timer_proc=gap_timer_proc,  # type: ignore
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                    timestamp=Timestamp(100.0),
+                )
+            )
+
+        # Chunks at 100s and 101s are emitted. The remaining chunks start at 108s (108000 ms).
+        # gap_timer_event.deadline MUST be set to Timestamp(108.0) via oldest_chunk_ts_sec wiring!
+        self.assertEqual(gap_timer_event.deadline, Timestamp(108.0))
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
     def test_backlog_timer_loop_gap_leapfrog(
         self, mock_audio_processor: MagicMock
     ) -> None:
