@@ -2,7 +2,6 @@ data "google_project" "project" {}
 
 locals {
   project_id = data.google_project.project.project_id
-  locals {
   # Sizing model/inputs hash to version the metric name when its schema/labels change.
   # This prevents GCP 400 alerting policy locks during updates by forcing a new metric
   # name, updating the alert policy to point to it, and then safely reaping the old one.
@@ -10,7 +9,7 @@ locals {
     "feed_type"
   ])), 0, 8)
 }
-}
+
 
 resource "google_logging_metric" "pipeline_stage_count" {
   project     = local.project_id
