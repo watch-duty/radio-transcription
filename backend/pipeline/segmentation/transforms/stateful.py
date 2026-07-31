@@ -804,10 +804,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         if new_buffer_elements and clamped:
             # Still clamped, re-arm the deferral timer to self-chain into
-            # another bundle!
+            # another bundle.
             # Dynamic leap-frog: Align the timer deadline with the start time
             # of the oldest unprocessed chunk currently waiting in the buffer.
-            # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
+            # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step.
             oldest_chunk_ts_sec = (
                 new_buffer_elements[0].timestamp_ms
                 / common_constants.MS_PER_SECOND
@@ -852,10 +852,17 @@ class OrderedStitchAudioFn(beam.DoFn):
         new_buffer_elements: list[datatypes.BufferedChunk],
         task_logger: std_logging.LoggerAdapter,
     ) -> None:
-        """Records a metric and warning when a deferred drain finds nothing ready while chunks remain buffered.
+        """Flags a deferred drain that found nothing ready while chunks remain buffered.
 
-        A single occurrence is normal while waiting for missing predecessors to arrive (which the re-armed
-        gap timeout will resolve). A sustained rate for the same feed without clearing indicates a buffer wedge.
+        Not a guaranteed wedge: this invocation was scheduled to check the buffer
+        and found the oldest chunk still waiting on a predecessor that hasn't arrived.
+        A single occurrence is normal; the caller re-arms the gap-timeout path to resolve
+        it within one out_of_order_timeout_ms window, either by the predecessor arriving
+        or by forcibly advancing past the gap.
+
+        A sustained rate of this counter for the same feed without the buffer clearing
+        indicates a potential wedge, such as a deferred drain leaving an out-of-order gap
+        unresolved without a timer re-armed to force resolution.
         """
         if not elements_to_emit and new_buffer_elements:
             self.deferred_drain_empty_while_buffered.inc()
