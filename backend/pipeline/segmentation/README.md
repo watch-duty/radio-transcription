@@ -48,3 +48,38 @@ Execute targeted, local unit validation via:
 ```bash
 uv run pytest backend/pipeline/segmentation/tests/
 ```
+
+---
+
+## 🔍 VAD Diagnostic & Speech Drop Tooling
+
+The segmentation pipeline includes a dedicated diagnostic CLI tool ([`diagnose_feed_drop.py`](scripts/diagnose_feed_drop.py)) for diagnosing dropped speech or timeframe discrepancies on live continuous feeds.
+
+### Usage
+Run the diagnostic script using `uv run`:
+
+```bash
+# Audit by pasting Segment ID copied from UI (Info ⓘ popover) with --feed-id:
+uv run python3 -m backend.pipeline.segmentation.scripts.diagnose_feed_drop \
+  --env prod \
+  --feed-id "2d948330-02b3-4bed-a133-0977b167d2b1" \
+  --segment-id "3453201f-d417-5e29-3b87-187796e4e03c"
+
+# Audit by pasting full transcript URL (Share -> Copy Link):
+uv run python3 -m backend.pipeline.segmentation.scripts.diagnose_feed_drop \
+  --env prod \
+  --url "https://radio.watchduty.org/transcripts?feedId=2d948330-02b3-4bed-a133-0977b167d2b1&segmentId=3453201f-d417-5e29-3b87-187796e4e03c"
+
+# Timeframe interval audit by Segment ID range:
+uv run python3 -m backend.pipeline.segmentation.scripts.diagnose_feed_drop \
+  --env prod \
+  --feed-id "2d948330-02b3-4bed-a133-0977b167d2b1" \
+  --start-segment-id <START_SEGMENT_ID> \
+  --end-segment-id <END_SEGMENT_ID> \
+  --backup-sec 45.0
+```
+
+### Key Capabilities
+- **Tape Backup Warmup**: Pre-rolls preceding feed audio (default: 45s) to warm up UL-UNAS neural denoiser and Silero VAD recurrent state memory.
+- **Granular Metric Auditing**: Tracks dynamic spikiness click rejections, sub-audible RMS floors, and tone interference rejections.
+- **Surgical Timeframe Reconciliation**: Emits a structured `TIMEFRAME RECONCILIATION AUDIT` identifying dropped sub-intervals and providing parameter tuning recommendations (e.g., `VAD_DEFAULT_THRESHOLD_ONSET` or software volume normalization targets).

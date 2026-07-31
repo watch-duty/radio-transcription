@@ -176,14 +176,49 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"backend/pipeline/segmentation/scripts/*.py" = ["INP001"]
 "model/**/*.py" = ["E501"]
 "model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
-  "ALL",   # Ignore all linting rules for notebooks
+  "ANN001",  # Missing type annotations
+  "ANN201",  # Missing return type annotations
+  "B018",    # Interactive output expressions
+  "E402",    # Imports after colab !gcloud shell commands
+  "E501",    # Line length limits
+  "EM102",   # Exception f-strings
+  "F401",    # Unused imports across notebook cells
+  "FBT003",  # Boolean positional arguments in plotting functions
+  "I001",    # Import sorting in notebook cells
+  "PLR0912", # Complex notebook functions
+  "PLR0915", # Complex notebook functions
+  "PLW0602", # Global variables in notebook helper functions
+  "PTH110",  # os.path.exists usage in notebooks
+  "PTH118",  # os.path usage in notebooks
+  "PTH120",  # os.path.dirname usage in notebooks
+  "S101",    # Assert statements in notebooks
+  "S112",    # Try-except-continue in notebooks
+  "T201",    # print statements allowed in notebooks
+  "T203",    # pprint allowed in notebooks
+  "TRY003",  # Long exception messages
 ]
-"model/colabs/**/*.py" = [
-  "ALL",   # Ignore all linting rules for python files in colabs
-]
+# Legacy notebooks predating notebook linting. Ruff unions per-file-ignores
+# across every matching pattern, so a narrower glob cannot re-enable a rule the
+# entry above ignores; these files need their own "ALL" entry instead. Remove a
+# notebook from this list (and fix its findings) when you next edit it.
+"model/colabs/chirp_transcribe_audio.ipynb" = ["ALL"]
+"model/colabs/common/chirp_and_gemini_segment_masked_audio.ipynb" = ["ALL"]
+"model/colabs/evaluate_canary_qwen.ipynb" = ["ALL"]
+"model/colabs/evaluate_gemini_manual_context.ipynb" = ["ALL"]
+"model/colabs/evaluate_gemma_4_E2B_it.ipynb" = ["ALL"]
+"model/colabs/evaluate_granite_speech.ipynb" = ["ALL"]
+"model/colabs/evaluate_ibm_granite.ipynb" = ["ALL"]
+"model/colabs/evaluate_transcriptions.ipynb" = ["ALL"]
+"model/colabs/evaluate_whisper_large_v3.ipynb" = ["ALL"]
+"model/colabs/fine_tune_whisper.ipynb" = ["ALL"]
+"model/colabs/gemini_agent_session/create_inference_manifest_masked_audio.ipynb" = ["ALL"]
+"model/colabs/gemini_agent_session/transcribe_masked_audio.ipynb" = ["ALL"]
+"model/colabs/segmentation/export_ulunas_sequence_onnx.ipynb" = ["ALL"]
+"model/colabs/segmentation/silero_and_ul_unas_wet_dry_VAD_mixture.ipynb" = ["ALL"]
 "local_dev/**/*.py" = [
   "ANN001",
   "ANN201",

@@ -263,6 +263,22 @@ def inject_baggage(baggage_items: dict[str, str]) -> Iterator[None]:
         detach(token)
 
 
+def propagate_context(
+    func: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Wrap *func* so it runs under the caller's OTel context."""
+    ctx = get_current()
+
+    def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        token = attach(ctx)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            detach(token)
+
+    return _wrapper
+
+
 def inject_otel_context(attributes: dict[str, str]) -> None:
     """Injects OpenTelemetry traceparent and baggage into the attributes dict."""
     TraceContextTextMapPropagator().inject(attributes)
