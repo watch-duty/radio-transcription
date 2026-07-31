@@ -68,3 +68,10 @@ variable "enable_monitoring" {
   description = "Whether to enable Cloud Monitoring log-based metrics, SLOs, and alert policies."
   default     = true
 }
+
+variable "notification_channel_id" {
+  type        = string
+  default     = null
+  description = "GCP notification channel resource ID for alerts."
+}
+
