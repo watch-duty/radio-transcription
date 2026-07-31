@@ -54,11 +54,17 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"
 )
-# Scaled to 1.5x max download thread pool to provide sufficient HTTP connection
-# pool headroom without triggering urllib3 connection pool eviction.
-GCS_CONNECTION_POOL_MULTIPLIER: Final = 1.5
-GCS_CONNECTION_POOL_SIZE: Final = int(
-    SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER
+# Concurrent requests against the shared GCS client come from two sources:
+#   1. the shared download pool (SHARED_DOWNLOAD_POOL_SIZE threads), and
+#   2. Beam bundle threads issuing synchronous fetches/uploads -- up to the SDK
+#      harness thread count, which Dataflow defaults to 12 per vCPU for Python.
+# Under those defaults total concurrency is ~16x cores, i.e. 4x the download
+# pool. Sized at 4x with a floor so small workers still clear the harness count.
+# NOTE: before the Shared-handle fix each DoFn instance held its own client, so
+# 1.5x sufficed; with one client per process the pool must cover both sources.
+GCS_CONNECTION_POOL_MULTIPLIER: Final = 4.0
+GCS_CONNECTION_POOL_SIZE: Final = max(
+    32, int(SHARED_DOWNLOAD_POOL_SIZE * GCS_CONNECTION_POOL_MULTIPLIER)
 )
 GCS_CONNECTION_MAX_RETRIES: Final = 3
 
@@ -74,9 +80,9 @@ VAD_DEFAULT_BLEND_RATIO: Final = 0.80
 VAD_DEFAULT_BOOST_FREQ_HZ: Final = 2500.0
 VAD_DEFAULT_BOOST_GAIN_DB: Final = 10.0
 VAD_DEFAULT_PEAK_FILTER_Q: Final = 1.0
-VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.20
-# Raised to 0.20 to close trailing silent segments faster
-VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.20
+VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.17
+# Set to 0.17 to balance onset sensitivity and trailing noise closure
+VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.17
 VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 150
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
