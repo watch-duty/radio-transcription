@@ -3,6 +3,7 @@ import datetime
 import io
 import os
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -166,7 +167,20 @@ def _make_process_factory(
         async def _wait_impl() -> int:
             if wait_exception is not None:
                 raise wait_exception
-            await asyncio.sleep(wait_delay)
+            if segments and len(segments) > 1:
+                prev_seg = segment_dir / f"chunk_{len(segments) - 2:06d}.pcm"
+                start = time.monotonic()
+                while prev_seg.exists() and (time.monotonic() - start) < 2.0:
+                    encode_func = getattr(
+                        icecast_collector, "_encode_pcm_segment_to_flac", None
+                    )
+                    call_count = getattr(encode_func, "call_count", 0)
+                    if call_count >= len(segments) - 1:
+                        break
+                    await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(wait_delay)
             return wait_result
 
         mock_proc.wait = AsyncMock(side_effect=_wait_impl)
@@ -1457,8 +1471,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         clamp_time = fixed_anchor + datetime.timedelta(
             seconds=CHUNK_DURATION_SECONDS - 5
         )
-        # 2nd value feeds the receipt_time stamp (RCPT-02); 3rd feeds min() clamp.
-        mock_now_utc.side_effect = [fixed_anchor, clamp_time, clamp_time]
+        # 2nd value feeds receipt_time stamp; subsequent values feed min() clamp and extra telemetry calls.
+        mock_now_utc.side_effect = [fixed_anchor] + [clamp_time] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import os
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -29,7 +30,11 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
-from backend.pipeline.common.tracing_utils import inject_baggage, setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    inject_baggage,
+    propagate_context,
+    setup_tracing,
+)
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
@@ -77,8 +82,14 @@ _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
 }
+# Each in-flight request submits one dev-mirror copy and blocks on it at scope
+# exit, so the pool needs one worker per concurrent request or the Nth request
+# stalls waiting for a free worker. Default preserves the prior hardcoded size
+# (4); deployment should set ECHO_MIRROR_MAX_WORKERS to match the Cloud Run
+# `max_instance_request_concurrency` when concurrency is raised above 1.
+_MIRROR_MAX_WORKERS = int(os.environ.get("ECHO_MIRROR_MAX_WORKERS", "4"))
 _MIRROR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="echo_dev_mirror"
+    max_workers=_MIRROR_MAX_WORKERS, thread_name_prefix="echo_dev_mirror"
 )
 
 # ---------------------------------------------------------------------------
@@ -86,10 +97,17 @@ _MIRROR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # ---------------------------------------------------------------------------
 
 # Lazily initialized on first invocation so importing this module in unit
-# tests does not require GCP credentials.
+# tests does not require GCP credentials. Initialization is guarded by
+# `_init_lock` so that concurrent requests (max_instance_request_concurrency > 1)
+# cannot race to construct the shared clients twice. Note this race is not
+# reachable today: at the current max_instance_request_concurrency=1, Cloud Run
+# serializes requests per instance. The lock exists so raising concurrency
+# later doesn't introduce a latent init race — it is preventive, not a fix for
+# an active bug.
 gcs_client: storage.Client | None = None
 pubsub_client: PubSubClient | None = None
 feed_store: SyncFeedStore | None = None
+_init_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +116,6 @@ feed_store: SyncFeedStore | None = None
 @functions_framework.cloud_event
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
-    global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
-
     setup_tracing(
         service_name="echo-ingestion",
         is_ingestion=True,
@@ -115,19 +131,32 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
                 "ingest_time_ms": ingest_time_ms,
             }
         ):
-            if gcs_client is None:
-                gcs_client = storage.Client()
-                logger.info(
-                    "Echo ingestion initialized (bucket=%s)", STAGING_BUCKET
-                )
-            if pubsub_client is None:
-                pubsub_client = PubSubClient()
-            if feed_store is None:
-                feed_store = SyncFeedStore(connect_db)
+            _ensure_clients_initialized()
             _handle(
                 cloud_event,
                 actor_id=resolve_runtime_service_actor_id(),
             )
+
+
+def _ensure_clients_initialized() -> None:
+    """Lazily construct the shared clients, guarded by ``_init_lock``"""
+    global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
+    if (
+        gcs_client is not None
+        and pubsub_client is not None
+        and feed_store is not None
+    ):
+        return
+    with _init_lock:
+        if gcs_client is None:
+            gcs_client = storage.Client()
+            logger.info(
+                "Echo ingestion initialized (bucket=%s)", STAGING_BUCKET
+            )
+        if pubsub_client is None:
+            pubsub_client = PubSubClient()
+        if feed_store is None:
+            feed_store = SyncFeedStore(connect_db)
 
 
 def _handle(  # noqa: PLR0911, PLR0912, PLR0915
@@ -137,9 +166,7 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
 ) -> None:
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
-        msg = (
-            "Clients not initialized — handle_notification must be called first"
-        )
+        msg = "Clients not initialized — _ensure_clients_initialized must be called first"
         raise RuntimeError(msg)
 
     data = cloud_event.data
@@ -428,7 +455,9 @@ def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
 @contextmanager
 def _dev_mirror_scope(bucket: str, name: str) -> Generator[None]:
     """Trigger best-effort dev mirroring in background and wait on exit."""
-    future = _MIRROR_EXECUTOR.submit(_mirror_to_dev_best_effort, bucket, name)
+    future = _MIRROR_EXECUTOR.submit(
+        propagate_context(_mirror_to_dev_best_effort), bucket, name
+    )
     try:
         yield
     finally:

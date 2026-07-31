@@ -62,3 +62,16 @@ variable "concurrency" {
   default     = 80
   description = "Max instance request concurrency for the transcription service."
 }
+
+variable "enable_monitoring" {
+  type        = bool
+  description = "Whether to enable Cloud Monitoring log-based metrics, SLOs, and alert policies."
+  default     = true
+}
+
+variable "notification_channel_id" {
+  type        = string
+  default     = null
+  description = "GCP notification channel resource ID for alerts."
+}
+

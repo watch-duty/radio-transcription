@@ -5,10 +5,14 @@ import re
 import unittest
 
 _CLOUD_CONFIG = pathlib.Path(
-    "terraform/modules/container_mig/cloud_config.yaml.tftpl"
+    "terraform/modules/services/pipeline/ingestion/container_mig/cloud_config.yaml.tftpl"
 )
-_MAIN_TF = pathlib.Path("terraform/modules/container_mig/main.tf")
-_VARIABLES_TF = pathlib.Path("terraform/modules/container_mig/variables.tf")
+_MAIN_TF = pathlib.Path(
+    "terraform/modules/services/pipeline/ingestion/container_mig/main.tf"
+)
+_VARIABLES_TF = pathlib.Path(
+    "terraform/modules/services/pipeline/ingestion/container_mig/variables.tf"
+)
 
 
 def _text(path: pathlib.Path) -> str:

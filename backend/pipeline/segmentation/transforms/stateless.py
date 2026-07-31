@@ -248,7 +248,7 @@ class ParseAndKeyFn(beam.DoFn):
                     DEAD_LETTER_QUEUE_TAG,
                     {
                         "error": msg,
-                        "attributes": dict(element.attributes),
+                        "attributes": dict(element.attributes or {}),
                     },
                 )
             )

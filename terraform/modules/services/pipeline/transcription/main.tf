@@ -226,3 +226,15 @@ resource "google_project_iam_member" "pubsub_token_creator" {
   role    = "roles/iam.serviceAccountTokenCreator"
   member  = "serviceAccount:service-${local.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+module "monitoring" {
+  count  = var.enable_monitoring ? 1 : 0
+  source = "./monitoring"
+
+  environment             = var.environment
+  notification_channel_id = var.notification_channel_id
+}
