@@ -25,7 +25,7 @@ hf = [
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
 ]
-vertex = ["google-genai>=2.10,<3"]
+vertex = ["google-genai>=2.10,<3", "google-cloud-aiplatform>=1.158.0,<2"]
 dev = ["pytest>=9.0,<10", "pytest-xdist>=3"]
 # A convenience bundle of every runtime extra.
 all = [
@@ -37,6 +37,7 @@ all = [
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
     "google-genai>=2.10,<3",
+    "google-cloud-aiplatform>=1.158.0,<2",
 ]
 
 [project.scripts]
