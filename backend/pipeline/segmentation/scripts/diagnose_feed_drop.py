@@ -449,14 +449,14 @@ class FeedDiagnosticRunner:
                 logger.warning("Chunk contains zero audio samples.")
             return [], None, np.array([], dtype=np.float32), []
 
-        (
-            accepted_segments,
-            rejected_details,
-        ) = self.vad_engine.detect_speech_segments_with_diagnostics(
+        detection = self.vad_engine.detect_speech_segments_with_diagnostics(
             samples,
             sample_rate=sr,
             prior_audio=prior_samples,
         )
+        accepted_segments = detection.accepted_segments
+        rejected_details = detection.rejected_segments
+        preprocessed = detection.preprocessed_audio
 
         prim_native = int(trans_constants.VAD_DEFAULT_PRIMING_SEC * sr)
         next_prior_tail = samples[-prim_native:] if len(samples) > 0 else None
@@ -494,7 +494,6 @@ class FeedDiagnosticRunner:
         # 16 kHz, denoised, peak-normalized. Falls back to raw scaling only
         # when VAD was skipped outright (silent/empty chunk), in which case
         # there are no segments to reconcile against anyway.
-        preprocessed = self.vad_engine.last_preprocessed_audio
         if preprocessed is None:
             preprocessed = (
                 samples.astype(np.float32) / 32768.0
