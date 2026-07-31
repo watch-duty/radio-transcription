@@ -1,3 +1,4 @@
+import concurrent.futures
 import os
 import unittest
 from unittest.mock import ANY, MagicMock, patch
@@ -14,6 +15,7 @@ from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     get_current_traceparent,
     get_tracer,
+    propagate_context,
     setup_tracing,
     traced_to_thread,
     with_baggage_and_span,
@@ -45,6 +47,32 @@ class TestTracingUtils(unittest.TestCase):
         # Verify context is restored on exit
         span_after = get_current_span()
         self.assertFalse(span_after.get_span_context().is_valid)
+
+    def test_propagate_context_nests_span_in_worker_thread(self) -> None:
+        """A ThreadPoolExecutor task wrapped by propagate_context nests under
+        the submitting thread's span instead of starting a detached root span.
+        """
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+        def worker() -> tuple[bool, int]:
+            span = get_current_span()
+            ctx = span.get_span_context()
+            return ctx.is_valid, ctx.trace_id
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            with with_tracer_context(traceparent, "parent_span", __name__):
+                parent_trace_id = get_current_span().get_span_context().trace_id
+                # Wrapped: context captured here, on the submitting thread.
+                wrapped_valid, wrapped_trace_id = executor.submit(
+                    propagate_context(worker)
+                ).result()
+                # Unwrapped: worker runs with a fresh (root) context.
+                bare_valid, _ = executor.submit(worker).result()
+
+        assert wrapped_valid is True
+        assert wrapped_trace_id == parent_trace_id
+        # Without the wrapper the worker thread inherits no active span.
+        assert bare_valid is False
 
     def test_get_current_traceparent(self) -> None:
         """Verifies that get_current_traceparent returns a valid traceparent."""

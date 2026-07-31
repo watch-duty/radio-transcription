@@ -50,9 +50,9 @@ from backend.pipeline.segmentation.datatypes import (
     StitchAudioConfig,
     TimeRange,
 )
+from backend.pipeline.segmentation.storage import UNIVERSAL_GCS_SHARED_HANDLE
 from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
-    SHARED_RESOURCE_HANDLE,
     OrderedStitchAudioFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
@@ -110,19 +110,31 @@ class MockBagState:
         self.items = []
 
 
+class MockTimer:
+    def __init__(self, name: str = "timer") -> None:
+        self.name = name
+        self.deadline: Any = None
+
+    def set(self, deadline: Any) -> None:
+        self.deadline = deadline
+
+    def clear(self) -> None:
+        self.deadline = None
+
+
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
-original_acquire = SHARED_RESOURCE_HANDLE.acquire
+original_gcs_acquire = UNIVERSAL_GCS_SHARED_HANDLE.acquire
 
 
-def mock_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
-    if tag == "gcs":
-        return MagicMock()
-    return original_acquire(constructor_fn, tag)
+def mock_gcs_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
+    if isinstance(tag, str) and tag.startswith("gcs"):
+        return original_gcs_acquire(MagicMock, tag)
+    return original_gcs_acquire(constructor_fn, tag)
 
 
 _SHARED_PATCHER = patch.object(
-    SHARED_RESOURCE_HANDLE, "acquire", side_effect=mock_acquire
+    UNIVERSAL_GCS_SHARED_HANDLE, "acquire", side_effect=mock_gcs_acquire
 )
 
 
@@ -2578,6 +2590,92 @@ class OrderedStitchAudioTest(unittest.TestCase):
         self.assertEqual(last_start_ms_state.read_count, 1)
         self.assertEqual(last_start_ms_state.write_count, 1)
 
+    def test_handle_gap_timeout_persists_context_when_buffer_empty(
+        self,
+    ) -> None:
+        """Verifies that _handle_gap_timeout_common persists the context (with order_timer_active cleared) even when the out-of-order buffer is empty."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            expected_next_chunk_start_ms=1000,
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+
+        list(
+            fn._handle_gap_timeout_common(
+                key_str="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+                timestamp=Timestamp(5.0),
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                deferred_drain_timer=MagicMock(),
+                timer_type="event",
+            )
+        )
+
+        persisted = transmission_context_state.read()
+        self.assertIsInstance(persisted, ActiveStitchingState)
+        self.assertFalse(persisted.order_timer_active)
+
+    def test_handle_deferred_drain_arms_gap_timer_on_real_gap(self) -> None:
+        """Verifies that handle_deferred_drain arms the gap timeout (instead of leaving it unset) when a genuine gap remains buffered after a non-clamped drain."""
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            expected_next_chunk_start_ms=1000,
+            order_timer_active=True,
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        gap_chunk = BufferedChunk(
+            timestamp_ms=5000, gcs_uri="gs://test-bucket/gap-chunk.flac"
+        )
+        out_of_order_buffer_state.add(gap_chunk)
+
+        gap_timer_event = MockTimer("gap_event")
+        gap_timer_proc = MockTimer("gap_proc")
+
+        outputs = list(
+            fn.handle_deferred_drain(
+                feed_id="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+                timestamp=Timestamp(1.0),
+                gap_timer_event=gap_timer_event,  # type: ignore
+                gap_timer_proc=gap_timer_proc,  # type: ignore
+                deferred_drain_timer=MagicMock(),
+            )
+        )
+
+        self.assertEqual(outputs, [])
+        self.assertEqual(out_of_order_buffer_state.items, [gap_chunk])
+        self.assertIsNotNone(gap_timer_event.deadline)
+
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
@@ -4320,6 +4418,106 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertFalse(processing_timer.set.called)
         self.assertTrue(processing_timer.clear.called)
 
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_handle_deferred_drain_is_backfill_reflects_chunk_lateness(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that handle_deferred_drain evaluates is_backfill per-chunk (instead of always assuming backfill), so the stale processing-time timer is set for recent chunks and cleared for stale ones."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
+            return AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.zeros(16000, dtype=np.int16),
+                speech_segments=[],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+                sample_rate=16000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        # --- Scenario 1: Recent chunk (is_backfill=False) -> processing timer SET ---
+        recent_ts_ms = int(time.time() * 1000) - 10000
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            expected_next_chunk_start_ms=recent_ts_ms,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        out_of_order_buffer_state.add(
+            BufferedChunk(
+                timestamp_ms=recent_ts_ms,
+                gcs_uri="gs://test-bucket/chunk1.flac",
+            )
+        )
+        stale_timer_proc = MockTimer("stale_proc")
+
+        list(
+            fn.handle_deferred_drain(
+                feed_id="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=stale_timer_proc,  # type: ignore
+                timestamp=Timestamp(recent_ts_ms / 1000.0),
+                deferred_drain_timer=MagicMock(),
+            )
+        )
+
+        self.assertIsNotNone(stale_timer_proc.deadline)
+
+        # --- Scenario 2: Old chunk beyond backfill_lateness_threshold_ms (is_backfill=True) -> processing timer CLEARED ---
+        old_ts_ms = int(time.time() * 1000) - (10 * 60 * 1000)
+
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
+            expected_next_chunk_start_ms=old_ts_ms,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+        )
+        transmission_context_state = MockValueState(curr_context)
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+        out_of_order_buffer_state.add(
+            BufferedChunk(
+                timestamp_ms=old_ts_ms,
+                gcs_uri="gs://test-bucket/chunk2.flac",
+            )
+        )
+        stale_timer_proc = MockTimer("stale_proc")
+        stale_timer_proc.set(Timestamp(1))
+
+        list(
+            fn.handle_deferred_drain(
+                feed_id="test-feed",
+                transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=stale_timer_proc,  # type: ignore
+                timestamp=Timestamp(old_ts_ms / 1000.0),
+                deferred_drain_timer=MagicMock(),
+            )
+        )
+
+        self.assertIsNone(stale_timer_proc.deadline)
+
 
 class UploadRawSegmentFnTest(unittest.TestCase):
     @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
@@ -4583,3 +4781,171 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)
+
+    def test_setup_uses_dedicated_shared_handles_and_vad_config(self) -> None:
+        """Verifies that OrderedStitchAudioFn setup acquires VAD via SHARED_VAD_HANDLE with vad_config."""
+        custom_vad_json = '{"threshold_onset": 0.75}'
+        stitch_config = StitchAudioConfig(
+            project_id="test-project",
+            vad_config=custom_vad_json,
+            significant_gap_ms=1000,
+            stale_timeout_ms=5000,
+            max_transmission_duration_ms=60000,
+        )
+        order_config = OrderRestorerConfig()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.get_vad_engine"
+        ) as mock_get_vad:
+            mock_vad_instance = MagicMock()
+            mock_get_vad.return_value = mock_vad_instance
+
+            fn.setup()
+
+            mock_get_vad.assert_called_once_with(custom_vad_json)
+            self.assertEqual(fn.engine.processor.vad, mock_vad_instance)
+
+    def test_shared_resource_handles_preserve_singletons_across_multiple_dofns(
+        self,
+    ) -> None:
+        """Verifies that multiple DoFn setup calls preserve VAD and GCS singletons without cache eviction."""
+        stitch_config = StitchAudioConfig(
+            project_id="test-project",
+            vad_config="",
+            significant_gap_ms=1000,
+            stale_timeout_ms=5000,
+            max_transmission_duration_ms=60000,
+        )
+        order_config = OrderRestorerConfig()
+
+        fn1 = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn2 = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.get_vad_engine"
+        ) as mock_get_vad:
+            mock_vad_instance = MagicMock()
+            mock_get_vad.return_value = mock_vad_instance
+
+            fn1.setup()
+            fn2.setup()
+
+            # get_vad_engine should only be called ONCE across multiple DoFn setups due to Shared caching
+            mock_get_vad.assert_called_once_with("")
+            self.assertIs(fn1.engine.processor.vad, fn2.engine.processor.vad)
+            self.assertIs(
+                fn1.engine.processor.gcs_client, fn2.engine.processor.gcs_client
+            )
+
+    def test_parse_and_key_fn_null_attributes_dlq(self) -> None:
+        """Verifies that ParseAndKeyFn gracefully routes invalid payloads with attributes=None to DLQ."""
+        fn = ParseAndKeyFn()
+        fn.setup()
+
+        # Mock PubsubMessage with attributes = None and invalid data payload
+        mock_msg = MagicMock()
+        mock_msg.data = b"invalid json payload"
+        mock_msg.attributes = None
+
+        outputs = list(fn.process(mock_msg))
+        self.assertEqual(len(outputs), 1)
+
+        dlq_output = outputs[0]
+        self.assertIsInstance(dlq_output, beam.pvalue.TaggedOutput)
+        assert isinstance(dlq_output, beam.pvalue.TaggedOutput)
+        self.assertEqual(dlq_output.tag, DEAD_LETTER_QUEUE_TAG)
+        self.assertIn("error", dlq_output.value)
+        self.assertEqual(dlq_output.value["attributes"], {})
+
+    def test_dlq_fallback_preserves_zero_previous_expected(self) -> None:
+        """Verifies that DLQ fallback preserves previous_expected_ts=0 and does not fall back to ts+1000."""
+        config = get_test_stitch_config()
+        order_config = OrderRestorerConfig()
+        engine = stitcher_engine.StitcherEngine(
+            order_config=order_config, stitch_config=config
+        )
+        engine.processor = MagicMock()
+        engine.processor.download_audio_and_detect.side_effect = RuntimeError(
+            "Failed download"
+        )
+
+        chunk = BufferedChunk(timestamp_ms=0, gcs_uri="gs://bucket/bad.flac")
+        curr_ctx = ActiveStitchingState(
+            session_id="sess1",
+        )
+
+        result = engine._process_single_stitch_chunk(
+            chunk,
+            "feed1",
+            curr_ctx,
+            None,
+            MagicMock(),
+            MagicMock(),
+            0,
+            MagicMock(),
+            is_backfill=False,
+        )
+
+        self.assertEqual(result.next_expected_ts, 0)
+
+    def test_prior_audio_tail_retained_within_tolerance_cleared_beyond(
+        self,
+    ) -> None:
+        """Verifies prior_audio_tail is retained when a chunk arrives within
+        DEFAULT_FLOAT_TOLERANCE_MS of previous_expected_ts, and cleared once
+        the gap exceeds that tolerance.
+        """
+        config = get_test_stitch_config()
+        order_config = OrderRestorerConfig()
+        chunk_data = AudioChunkData(
+            start_ms=0,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://bucket/chunk.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        previous_expected_ts = 10000
+        prior_tail = b"prior-tail-bytes"
+
+        state_machine = MagicMock()
+        state_machine.process_chunk.return_value = []
+
+        for offset, expected_prior_audio in ((100, prior_tail), (600, None)):
+            engine = stitcher_engine.StitcherEngine(
+                order_config=order_config, stitch_config=config
+            )
+            engine.processor = MagicMock()
+            engine.processor.download_audio_and_detect.return_value = chunk_data
+
+            curr_ctx = ActiveStitchingState(
+                session_id="sess1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                prior_audio_tail=prior_tail,
+            )
+            chunk = BufferedChunk(
+                timestamp_ms=previous_expected_ts + offset,
+                gcs_uri="gs://bucket/chunk.flac",
+            )
+
+            engine._process_single_stitch_chunk(
+                chunk,
+                "feed1",
+                curr_ctx,
+                None,
+                MagicMock(),
+                state_machine,
+                previous_expected_ts,
+                MagicMock(),
+                is_backfill=False,
+            )
+
+            _, kwargs = engine.processor.download_audio_and_detect.call_args
+            self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
