@@ -235,6 +235,6 @@ module "monitoring" {
   count  = var.enable_monitoring ? 1 : 0
   source = "./monitoring"
 
-  environment             = var.environment
+  environment = var.environment
 }
 
