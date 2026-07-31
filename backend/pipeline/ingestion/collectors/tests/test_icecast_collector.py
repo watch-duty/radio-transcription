@@ -1471,8 +1471,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         clamp_time = fixed_anchor + datetime.timedelta(
             seconds=CHUNK_DURATION_SECONDS - 5
         )
-        # 2nd value feeds the receipt_time stamp (RCPT-02); 3rd feeds min() clamp.
-        mock_now_utc.side_effect = [fixed_anchor, clamp_time, clamp_time]
+        # 2nd value feeds receipt_time stamp; subsequent values feed min() clamp and extra telemetry calls.
+        mock_now_utc.side_effect = [fixed_anchor] + [clamp_time] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
