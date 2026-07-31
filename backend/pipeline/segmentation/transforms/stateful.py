@@ -300,6 +300,19 @@ def _handle_session_transition(
     return curr_context, False
 
 
+def _set_gap_timer_proc(
+    gap_timer_proc: RuntimeTimer,
+    deadline_proc: float,
+    *,
+    is_backfill: bool,
+) -> None:
+    """Sets or clears the processing-time gap timer depending on backfill mode."""
+    if is_backfill:
+        gap_timer_proc.clear()
+    else:
+        gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+
+
 def _manage_out_of_order_timers(
     gap_timer_event: RuntimeTimer,
     gap_timer_proc: RuntimeTimer,
@@ -312,6 +325,7 @@ def _manage_out_of_order_timers(
     is_backfill: bool,
     old_expected_ts: int | None,
     new_expected_next_ts: int | None,
+    oldest_chunk_ts_sec: float | None = None,
 ) -> bool:
     """Manages scheduling and clearing of out-of-order restoration timers.
 
@@ -335,44 +349,57 @@ def _manage_out_of_order_timers(
 
     Returns the new state of order_timer_active.
     """
-    if has_buffer_elements:
-        if clamped:
-            # Loop control: Always advance by the minimum 1ms safety epsilon
-            # to satisfy the Runner V2 gate without triggering artificial
-            # watermark delays or Pub/Sub source gridlocks.
-            gap_timer_event.set(timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                gap_timer_proc.set(
-                    Timestamp(
-                        seconds=time.time() + WINDMILL_TIMER_MIN_ADVANCE_SECS
-                    )
-                )
-            return True
-
-        if not order_timer_active:
-            deadline_watermark = timestamp + (
-                order_config.out_of_order_timeout_ms
-                / float(common_constants.MS_PER_SECOND)
-            )
-            gap_timer_event.set(deadline_watermark)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                deadline_proc = time.time() + (
-                    order_config.out_of_order_timeout_ms
-                    / float(common_constants.MS_PER_SECOND)
-                )
-                gap_timer_proc.set(Timestamp(seconds=deadline_proc))
-            return True
-
-        return order_timer_active
-
-    if order_timer_active:
-        gap_timer_event.clear()
-        gap_timer_proc.clear()
+    if not has_buffer_elements:
+        if order_timer_active:
+            gap_timer_event.clear()
+            gap_timer_proc.clear()
         return False
+
+    if clamped:
+        if oldest_chunk_ts_sec is not None:
+            deadline_watermark = max(
+                timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                oldest_chunk_ts_sec - float(timestamp),
+            )
+            deadline_proc = time.time() + advance_sec
+        else:
+            emitted_duration_ms = (
+                (new_expected_next_ts - old_expected_ts)
+                if (
+                    old_expected_ts is not None
+                    and new_expected_next_ts is not None
+                )
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            deadline_watermark = timestamp + advance_sec
+            deadline_proc = time.time() + advance_sec
+
+        gap_timer_event.set(deadline_watermark)
+        _set_gap_timer_proc(
+            gap_timer_proc, deadline_proc, is_backfill=is_backfill
+        )
+        return True
+
+    if not order_timer_active:
+        timeout_sec = order_config.out_of_order_timeout_ms / float(
+            common_constants.MS_PER_SECOND
+        )
+        gap_timer_event.set(timestamp + timeout_sec)
+        _set_gap_timer_proc(
+            gap_timer_proc,
+            time.time() + timeout_sec,
+            is_backfill=is_backfill,
+        )
+        return True
 
     return order_timer_active
 
@@ -417,6 +444,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
     difference = current_ts_ms - expected_next_ts
 
     to_emit = []
+    remaining_elements: list[datatypes.BufferedChunk] = []
     was_late = False
     was_buffered = False
 
@@ -515,6 +543,12 @@ def process_ordering(  # noqa: PLR0912, PLR0915
 
     # Update context
     old_expected_ts = curr_context.expected_next_chunk_start_ms
+    oldest_chunk_ts_sec = (
+        float(remaining_elements[0].timestamp_ms)
+        / float(common_constants.MS_PER_SECOND)
+        if remaining_elements
+        else None
+    )
 
     new_timer_active = _manage_out_of_order_timers(
         gap_timer_event=gap_timer_event,
@@ -527,6 +561,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
         is_backfill=is_backfill,
         old_expected_ts=old_expected_ts,
         new_expected_next_ts=expected_next_ts,
+        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
     )
 
     curr_context = replace(
@@ -568,20 +603,36 @@ def _reschedule_gap_timeout(
     is_backfill: bool,
     new_expected: int | None,
     new_expected_next_ts: int | None,
+    oldest_chunk_ts_sec: float | None = None,
 ) -> bool:
     """Reschedules out-of-order restoration timers after a timeout drain."""
     if clamped:
-        emitted_duration_ms = (
-            (new_expected_next_ts - new_expected)
-            if (new_expected is not None and new_expected_next_ts is not None)
-            else 0
-        )
-        advance_sec = max(
-            WINDMILL_TIMER_MIN_ADVANCE_SECS,
-            float(emitted_duration_ms) / float(common_constants.MS_PER_SECOND),
-        )
-        deadline_watermark = timestamp + advance_sec
-        deadline_proc = time.time() + advance_sec
+        if oldest_chunk_ts_sec is not None:
+            deadline_watermark = max(
+                timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                oldest_chunk_ts_sec - float(timestamp),
+            )
+            deadline_proc = time.time() + advance_sec
+        else:
+            emitted_duration_ms = (
+                (new_expected_next_ts - new_expected)
+                if (
+                    new_expected is not None
+                    and new_expected_next_ts is not None
+                )
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            deadline_watermark = timestamp + advance_sec
+            deadline_proc = time.time() + advance_sec
     else:
         timeout_sec = order_config.out_of_order_timeout_ms / float(
             common_constants.MS_PER_SECOND
@@ -1300,11 +1351,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                     out_of_order_buffer_state.add(remaining_chunk)
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
+                oldest_chunk_ts_sec = float(chunk.timestamp_ms) / float(
+                    common_constants.MS_PER_SECOND
+                )
                 next_deadline: Timestamp | None = None
                 if deferred_drain_timer is not None and timestamp is not None:
-                    oldest_chunk_ts_sec = (
-                        chunk.timestamp_ms / common_constants.MS_PER_SECOND
-                    )
                     next_deadline = max(
                         timestamp
                         + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
@@ -1361,6 +1412,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         is_backfill=is_backfill,
                         new_expected=original_expected_ts,
                         new_expected_next_ts=previous_expected_ts,
+                        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
                     )
                 _write_transmission_context(
                     transmission_context_state,
@@ -1586,6 +1638,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
                 if new_buffer_elements:
+                    oldest_chunk_ts_sec = float(
+                        new_buffer_elements[0].timestamp_ms
+                    ) / float(common_constants.MS_PER_SECOND)
                     timer_active = _reschedule_gap_timeout(
                         gap_timer_event=gap_timer_event,
                         gap_timer_proc=gap_timer_proc,
@@ -1595,6 +1650,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         is_backfill=is_backfill,
                         new_expected=new_expected,
                         new_expected_next_ts=new_expected_next_ts,
+                        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
                     )
                     curr_context = replace(
                         curr_context, order_timer_active=timer_active
