@@ -60,6 +60,7 @@ class RulesStore:
             conditions_json,
             tags_json,
             created_by,
+            actor_id,
         )
         return Rule.model_validate(self._prepare_row(row))
 
@@ -130,11 +131,30 @@ class RulesStore:
         if not set_clauses:
             return await self.get_rule(rule_id)
 
+        values.append(actor_id)
+        actor_idx = arg_idx
+
         query_parts = [
-            "UPDATE rules SET ",
+            "WITH updated_rule AS (\n",
+            "  UPDATE rules SET ",
             ", ".join(set_clauses),
-            ", updated_at = NOW() WHERE id = $1 ",
-            rules_queries.RULE_RETURNING_SQL,
+            "  , audit_revision = audit_revision + 1",
+            "  , updated_at = NOW() WHERE id = $1\n",
+            "  RETURNING *\n",
+            "), audit_event AS (\n",
+            "  INSERT INTO rule_audit_events (\n",
+            "    rule_id, action, actor_id, rule_revision, before_values,\n",
+            "    after_values\n",
+            "  )\n",
+            "  SELECT u.id, 'rule.updated', $"
+            + str(actor_idx)
+            + ", u.audit_revision,\n",
+            "  row_to_json(r.*)::jsonb, row_to_json(u.*)::jsonb\n",
+            "  FROM updated_rule u JOIN rules r ON r.id = u.id\n",
+            ")\n",
+            "SELECT\n",
+            rules_queries.RULE_COLUMNS_SQL,
+            "FROM updated_rule\n",
         ]
         query = "".join(query_parts)
 
@@ -151,5 +171,7 @@ class RulesStore:
         except ValueError:
             return False
 
-        result = await self._pool.execute(rules_queries.DELETE_RULE_SQL, uid)
-        return result == "DELETE 1"
+        row = await self._pool.fetchrow(
+            rules_queries.DELETE_RULE_SQL, uid, actor_id
+        )
+        return row is not None
