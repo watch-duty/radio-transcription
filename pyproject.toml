@@ -180,10 +180,27 @@ known-first-party = ["backend", "local_dev"]
 "model/**/*.py" = ["E501"]
 "model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
-  "ALL",   # Ignore all linting rules for notebooks
-]
-"model/colabs/**/*.py" = [
-  "ALL",   # Ignore all linting rules for python files in colabs
+  "ANN001",  # Missing type annotations
+  "ANN201",  # Missing return type annotations
+  "B018",    # Interactive output expressions
+  "E402",    # Imports after colab !gcloud shell commands
+  "E501",    # Line length limits
+  "EM102",   # Exception f-strings
+  "F401",    # Unused imports across notebook cells
+  "FBT003",  # Boolean positional arguments in plotting functions
+  "I001",    # Import sorting in notebook cells
+  "PLR0912", # Complex notebook functions
+  "PLR0915", # Complex notebook functions
+  "PLW0602", # Global variables in notebook helper functions
+  "PTH110",  # os.path.exists usage in notebooks
+  "PTH118",  # os.path usage in notebooks
+  "PTH120",  # os.path.dirname usage in notebooks
+  "S101",    # Assert statements in notebooks
+  "S112",    # Try-except-continue in notebooks
+  "SLF001",  # Private member access (e.g. VAPO _api_client)
+  "T201",    # print statements allowed in notebooks
+  "T203",    # pprint allowed in notebooks
+  "TRY003",  # Long exception messages
 ]
 "local_dev/**/*.py" = [
   "ANN001",
