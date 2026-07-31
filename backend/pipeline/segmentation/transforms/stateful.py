@@ -791,7 +791,19 @@ class OrderedStitchAudioFn(beam.DoFn):
         gap_timer_proc: RuntimeTimer,
         task_logger: std_logging.LoggerAdapter,
     ) -> None:
-        """Re-arms the deferred-drain timer or the gap timeout after a drain, depending on whether the drain was clamped."""
+        """Re-arms the deferred-drain timer or the gap timeout after a drain, depending on whether the drain was clamped.
+
+        Args:
+            elements_to_emit: Chunks emitted during the current deferred drain invocation.
+            new_buffer_elements: Remaining out-of-order chunks left in state buffer after drain.
+            initial_expected_ts: Expected next sequence start timestamp before this drain.
+            new_expected_next_ts: Expected next sequence start timestamp after emitting ready chunks.
+            timestamp: Current Beam element watermark timestamp.
+            deferred_drain_timer: Runtime timer used to self-chain deferred drains across bundle boundaries.
+            gap_timer_event: Event-time runtime timer for out-of-order gap timeouts.
+            gap_timer_proc: Processing-time runtime timer for out-of-order gap timeouts.
+            task_logger: Logger for diagnostic output.
+        """
         clamped_by_items = len(elements_to_emit) >= (
             trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
             - self.processed_in_bundle
@@ -863,6 +875,11 @@ class OrderedStitchAudioFn(beam.DoFn):
         A sustained rate of this counter for the same feed without the buffer clearing
         indicates a potential wedge, such as a deferred drain leaving an out-of-order gap
         unresolved without a timer re-armed to force resolution.
+
+        Args:
+            elements_to_emit: Chunks ready to be emitted during this drain step.
+            new_buffer_elements: Remaining chunks waiting in out-of-order buffer state.
+            task_logger: Logger for structured warning output.
         """
         if not elements_to_emit and new_buffer_elements:
             self.deferred_drain_empty_while_buffered.inc()
