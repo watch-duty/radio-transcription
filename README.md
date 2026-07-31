@@ -40,8 +40,8 @@ radio-transcription/
 
 ## Onboarding
 
-* **[Getting Started Guide](./documentation/GETTING_STARTED.md)** — Setup and quick start instructions.
-* **[Contributing Guide](./documentation/CONTRIBUTING.md)** — Pre-requisites, development workflows, pre-commit setup, and coding standards.
+* **[Getting Started Guide](./docs/GETTING_STARTED.md)** — Setup and quick start instructions.
+* **[Contributing Guide](./docs/CONTRIBUTING.md)** — Pre-requisites, development workflows, pre-commit setup, and coding standards.
 * **[AI Agent Instructions](./AGENTS.md)** — Guidelines for automated coding agents.
 
 ---
@@ -55,13 +55,12 @@ radio-transcription/
 * [Audio Segmentation Module Overview](./backend/pipeline/segmentation/README.md)
 * [VAD Benchmarks](./backend/pipeline/segmentation/tests/VAD_BENCHMARKS.md)
 * [Broadcastify Credential Rotation](./backend/pipeline/ingestion/broadcastify_credential_rotation/README.md)
-* [Feed Change Webhook Relay](./documentation/feed-change-webhook-relay.md)
-* [Protobuf Schema Validation Guide](./documentation/PROTO_VALIDATION.md)
-* [Gemini Retry & Error Handling Guidelines](./documentation/gemini_retry_guidelines.md)
-* [Feed Change Webhook Relay](./documentation/feed-change-webhook-relay.md)
+* [Feed Change Webhook Relay](./docs/feed-change-webhook-relay.md)
+* [Protobuf Schema Validation Guide](./docs/PROTO_VALIDATION.md)
+* [Gemini Retry & Error Handling Guidelines](./docs/gemini_retry_guidelines.md)
 
 ### ASR Model & Evaluation Infrastructure
-* [ASR Evaluation & Notebook Guide](./documentation/ASR_CONTRIBUTING.md)
+* [ASR Evaluation & Notebook Guide](./docs/ASR_CONTRIBUTING.md)
 * [Data Artifacts & Source Layout](./model/data/README.md)
 * [Canonical Data Manifest Contract](./model/data/manifests/README.md)
 * [Inference Manifest Specification](./model/data/inference_manifests/README.md)
@@ -88,6 +87,6 @@ radio-transcription/
 <!-- TODO: Add in documentation for infrastructure when migration is complete. -->
 
 ### Local Development & Testing
-* [Local Mock Audio Server](./documentation/local-dev-mock-audio.md) — Mocking incoming audio streams for local testing.
-* [Component & API Integration Tests](./documentation/CONTRIBUTING.md#integration-and-e2e-tests)
-* [E2E Pipeline Regression Test Suite](./documentation/REGRESSION_TESTS.md)
+* [Local Mock Audio Server](./docs/local-dev-mock-audio.md) — Mocking incoming audio streams for local testing.
+* [Component & API Integration Tests](./docs/CONTRIBUTING.md#integration-and-e2e-tests)
+* [E2E Pipeline Regression Test Suite](./docs/REGRESSION_TESTS.md)
