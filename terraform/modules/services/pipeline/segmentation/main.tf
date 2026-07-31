@@ -53,3 +53,22 @@ resource "google_service_account_iam_member" "terraform_deployer_impersonation" 
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${var.wif_service_account}"
 }
+
+# Grant the Dataflow Service Agent objectAdmin on the staging bucket.
+# The service agent writes the operation_result file during template launch.
+# It has auto-access to the default GCP staging bucket but NOT to custom buckets.
+resource "google_storage_bucket_iam_member" "dataflow_service_agent_staging_admin" {
+  bucket = module.storage.dataflow_staging_bucket_name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:service-${data.google_project.project.number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
+}
+
+# Grant the Dataflow Service Agent the standard project-level role that GCP assigns
+# automatically when the Dataflow API is enabled. This covers compute.instances.create,
+# networking, iam.serviceAccounts.actAs, and all other permissions needed to launch
+# and manage Dataflow worker VMs. Explicitly managed here to ensure it is always present.
+resource "google_project_iam_member" "dataflow_service_agent_role" {
+  project = local.project_id
+  role    = "roles/dataflow.serviceAgent"
+  member  = "serviceAccount:service-${local.project_number}@dataflow-service-producer-prod.iam.gserviceaccount.com"
+}
