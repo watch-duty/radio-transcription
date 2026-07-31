@@ -3,21 +3,20 @@
 import builtins
 import importlib.util
 import json
+import pathlib
+import typing
 import unittest
 import unittest.mock
-from pathlib import Path
 
-import common.gemini.vertex as vmod
-from common.gemini.vertex import (
-    _ADAPTER_ENUM,
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-    build_request,
-    parse_batch_output,
-    poll_tuning_job,
-    submit_batch_inference,
-    submit_tuning_job,
-)
+from common.gemini import context, request_identity, vertex
+
+
+class TestPublicRequestAnnotations(unittest.TestCase):
+    def test_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(vertex.build_request)
+
+        self.assertIn("history", hints)
+        self.assertIn("return", hints)
 
 
 def _make_mock_client(
@@ -44,11 +43,11 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_defaults_to_gemini_31_flash_lite(self, mock_genai) -> None:
-        """submit_tuning_job defaults to the current supervised-tuning model."""
+        """Verify the default is the current supervised-tuning model."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -60,10 +59,10 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_job_name_not_endpoint(self, mock_genai) -> None:
-        """submit_tuning_job returns job.name (str), not endpoint."""
+        """vertex.submit_tuning_job returns job.name (str), not endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = submit_tuning_job(
+        result = vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -77,7 +76,7 @@ class TestSubmitTuningJob(unittest.TestCase):
     def test_submit_returns_string(self, mock_genai) -> None:
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = submit_tuning_job(
+        result = vertex.submit_tuning_job(
             train_uri="gs://bucket/train.jsonl",
             display_name="test-display",
             project="test-project",
@@ -87,10 +86,10 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_submit_does_not_poll(self, mock_genai) -> None:
-        """submit_tuning_job must NOT call tunings.get (no polling)."""
+        """vertex.submit_tuning_job must NOT call tunings.get (no polling)."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -109,7 +108,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         mock_types.TuningValidationDataset.return_value = "val-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -137,7 +136,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         mock_types.TuningDataset.return_value = "train-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -156,10 +155,10 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_returns_endpoint(self, mock_genai) -> None:
-        """poll_tuning_job polls and returns endpoint."""
+        """vertex.poll_tuning_job polls and returns endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = poll_tuning_job(
+        result = vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -173,7 +172,7 @@ class TestPollTuningJob(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/1",
                 project="p",
                 location="us-central1",
@@ -186,7 +185,7 @@ class TestPollTuningJob(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/1",
                 project="p",
                 location="us-central1",
@@ -194,11 +193,11 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_calls_tunings_get(self, mock_genai) -> None:
-        """poll_tuning_job must call tunings.get to re-fetch by name."""
+        """vertex.poll_tuning_job must call tunings.get to re-fetch by name."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
 
-        poll_tuning_job(
+        vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -207,15 +206,38 @@ class TestPollTuningJob(unittest.TestCase):
             name="projects/p/locations/l/tuningJobs/123"
         )
 
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_client = unittest.mock.MagicMock()
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.tuned_model.endpoint = "projects/p/locations/l/endpoints/e"
+        mock_client.tunings.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = vertex.poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertIn("endpoints", result)
+        mock_sleep.assert_called_once_with(300)
+
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai) -> None:
-        """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
+        """Raise TimeoutError when no state is terminal before the timeout."""
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_RUNNING"
         )
 
         with self.assertRaises(TimeoutError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/123",
                 project="p",
                 location="us-central1",
@@ -228,7 +250,7 @@ class TestPollTuningJob(unittest.TestCase):
     def test_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
-        """poll_tuning_job retries a transient tunings.get failure."""
+        """vertex.poll_tuning_job retries a transient tunings.get failure."""
         mock_client = _make_mock_client()
         success = mock_client.tunings.get.return_value
         mock_client.tunings.get.side_effect = [
@@ -237,7 +259,7 @@ class TestPollTuningJob(unittest.TestCase):
         ]
         mock_genai.Client.return_value = mock_client
 
-        result = poll_tuning_job(
+        result = vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -259,7 +281,7 @@ class TestPollTuningJob(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "succeeded but returned no tuned_model.endpoint"
         ):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/123",
                 project="p",
                 location="us-central1",
@@ -267,17 +289,19 @@ class TestPollTuningJob(unittest.TestCase):
 
 
 class TestAdapterEnum(unittest.TestCase):
-    """Guard against silent miskeys in _ADAPTER_ENUM."""
+    """Guard against silent miskeys in vertex._ADAPTER_ENUM."""
 
     def test_enum_contains_required_sizes(self) -> None:
         for key in ("ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"):
-            self.assertIn(key, _ADAPTER_ENUM, f"Missing adapter size: {key}")
+            self.assertIn(
+                key, vertex._ADAPTER_ENUM, f"Missing adapter size: {key}"
+            )
 
     def test_enum_maps_two(self) -> None:
-        self.assertEqual(_ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
+        self.assertEqual(vertex._ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
 
     def test_enum_values_have_adapter_size_prefix(self) -> None:
-        for val in _ADAPTER_ENUM.values():
+        for val in vertex._ADAPTER_ENUM.values():
             self.assertTrue(val.startswith("ADAPTER_SIZE_"), val)
 
 
@@ -286,7 +310,7 @@ class TestImportGuard(unittest.TestCase):
 
     def test_patch_targets_exist_when_vertex_extra_missing(self) -> None:
         vertex_path = (
-            Path(__file__).resolve().parents[3]
+            pathlib.Path(__file__).resolve().parents[3]
             / "src"
             / "common"
             / "gemini"
@@ -320,25 +344,25 @@ class TestImportGuard(unittest.TestCase):
         self.assertIsNone(module.types)
 
     def test_require_vertex_raises_when_missing(self) -> None:
-        orig = vmod._VERTEX_MISSING
+        orig = vertex._VERTEX_MISSING
         try:
-            vmod._VERTEX_MISSING = ImportError("test")
+            vertex._VERTEX_MISSING = ImportError("test")
             with self.assertRaises(ImportError):
-                vmod._require_vertex()
+                vertex._require_vertex()
         finally:
-            vmod._VERTEX_MISSING = orig
+            vertex._VERTEX_MISSING = orig
 
 
 class TestBuildRequest(unittest.TestCase):
-    """Tests for common.gemini.vertex.build_request — no GCP calls, pure dict construction."""
+    """Tests for provenance-safe evaluation request construction."""
 
     def setUp(self) -> None:
-        self.build_request = build_request
-        self.default_gen_config = GEMINI_GENERATION_CONFIG
-        self.default_safety = GEMINI_SAFETY_SETTINGS
+        self.build_request = vertex.build_request
+        self.default_gen_config = vertex.GEMINI_GENERATION_CONFIG
+        self.default_safety = vertex.GEMINI_SAFETY_SETTINGS
 
     def test_return_shape(self) -> None:
-        """build_request returns the canonical nested dict shape."""
+        """vertex.build_request returns the canonical nested dict shape."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="System.",
@@ -346,14 +370,14 @@ class TestBuildRequest(unittest.TestCase):
         )
         req = result["request"]
         self.assertIn("contents", req)
-        self.assertIn("system_instruction", req)
-        self.assertIn("generation_config", req)
-        self.assertIn("safety_settings", req)
-        part = req["contents"][0]["parts"][0]
-        self.assertEqual(
-            part["file_data"]["file_uri"], "gs://bucket/audio.flac"
+        self.assertIn("systemInstruction", req)
+        self.assertIn("generationConfig", req)
+        self.assertIn("safetySettings", req)
+        part = next(
+            part for part in req["contents"][0]["parts"] if "fileData" in part
         )
-        self.assertEqual(part["file_data"]["mime_type"], "audio/flac")
+        self.assertEqual(part["fileData"]["fileUri"], "gs://bucket/audio.flac")
+        self.assertEqual(part["fileData"]["mimeType"], "audio/flac")
 
     def test_default_generation_config(self) -> None:
         """Default generation_config has temperature 0.0 and max_output_tokens 512."""
@@ -362,43 +386,54 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        gen_cfg = result["request"]["generation_config"]
+        gen_cfg = result["request"]["generationConfig"]
         self.assertEqual(gen_cfg["temperature"], 0.0)
         self.assertEqual(gen_cfg["max_output_tokens"], 512)
 
     def test_generation_config_is_copied(self) -> None:
-        """generation_config.copy() is used — mutating the result leaves the default intact."""
+        """Mutating request generation config leaves defaults intact."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["generation_config"]["extra_key"] = (
+        result["request"]["generationConfig"]["extra_key"] = (
             "should_not_propagate"
         )
         self.assertNotIn("extra_key", self.default_gen_config)
 
-    def test_default_safety_settings_four_block_none(self) -> None:
-        """Default safety_settings has 4 BLOCK_NONE entries."""
+    def test_default_safety_settings_match_production_categories(self) -> None:
+        """Default safety settings disable every production harm filter."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
-        safety = result["request"]["safety_settings"]
-        self.assertEqual(len(safety), 4)
+        safety = result["request"]["safetySettings"]
+        self.assertEqual(
+            {entry["category"] for entry in safety},
+            {
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_CIVIC_INTEGRITY",
+            },
+        )
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
 
     def test_safety_settings_is_copied(self) -> None:
-        """safety_settings is shallow-copied — mutating the result leaves the default intact."""
+        """Mutating request safety settings leaves defaults intact."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["safety_settings"].pop()
-        self.assertEqual(len(self.default_safety), 4)
+        result["request"]["safetySettings"].pop()
+        result["request"]["safetySettings"][0]["threshold"] = "CHANGED"
+        self.assertEqual(len(self.default_safety), 5)
+        self.assertEqual(self.default_safety[0]["threshold"], "BLOCK_NONE")
 
     def test_system_prompt_preserved_exactly(self) -> None:
         """system_prompt is embedded without normalization."""
@@ -407,7 +442,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="  Leading space.  ",
             user_prompt="U",
         )
-        parts = result["request"]["system_instruction"]["parts"]
+        parts = result["request"]["systemInstruction"]["parts"]
         self.assertEqual(parts[0]["text"], "  Leading space.  ")
 
     def test_custom_generation_config_override(self) -> None:
@@ -420,8 +455,240 @@ class TestBuildRequest(unittest.TestCase):
             generation_config=custom_cfg,
         )
         self.assertEqual(
-            result["request"]["generation_config"]["temperature"], 0.5
+            result["request"]["generationConfig"]["temperature"], 0.5
         )
+
+    def test_history_defaults_to_text_turns_before_current_request(
+        self,
+    ) -> None:
+        user_prompt = "U"
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt=user_prompt,
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
+            ],
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        audio_parts = []
+        for turn in contents:
+            audio_parts.extend(
+                part for part in turn["parts"] if "fileData" in part
+            )
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+        self.assertEqual(
+            contents[4]["parts"][1]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+
+    def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
+            ],
+            history_mode="transcript",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "fileData" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertIn(
+            "Prior same-source transcripts",
+            contents[0]["parts"][0]["text"],
+        )
+
+    def test_guarded_transcript_block_history_mode_uses_exact_template(
+        self,
+    ) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="IMPORTANT: current prompt",
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", " first   transcript "
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second transcript"
+                ),
+            ],
+            history_mode="guarded_transcript_block",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "fileData" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["text"],
+            (
+                "The following prior same-source transcripts are for "
+                "situational awareness only.\n"
+                "Do not re-transcribe them. Do not continue them.\n"
+                "Transcribe exclusively the current audio clip.\n"
+                "\n"
+                "Prior transcripts, oldest to newest:\n"
+                "1. first transcript\n"
+                "2. second transcript\n"
+                "\n"
+                "IMPORTANT: current prompt"
+            ),
+        )
+
+    def test_text_turn_history_mode_uses_prior_user_model_turns_with_one_audio(
+        self,
+    ) -> None:
+        user_prompt = "U"
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt=user_prompt,
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-1.flac", "first"
+                ),
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prev-2.flac", "second"
+                ),
+            ],
+            history_mode="text_turns",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        audio_parts = []
+        for turn in contents:
+            audio_parts.extend(
+                part for part in turn["parts"] if "fileData" in part
+            )
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+
+    def test_provider_boundary_rejects_training_reference(self) -> None:
+        history = [context.TrainingReferenceTurn("REFERENCE_SECRET")]
+
+        with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
+            vertex.build_request(
+                "gs://bucket/current.flac",
+                system_prompt="S",
+                user_prompt="U",
+                history=history,
+            )
+
+    def test_request_bytes_use_prediction_not_reference(self) -> None:
+        request = vertex.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prior.flac", "PREDICTION_SECRET"
+                )
+            ],
+        )
+
+        payload = json.dumps(request, sort_keys=True)
+        self.assertIn("PREDICTION_SECRET", payload)
+        self.assertNotIn("REFERENCE_SECRET", payload)
+        self.assertEqual(payload.count("gs://bucket/current.flac"), 1)
+
+
+class TestEvaluationRequestIdentity(unittest.TestCase):
+    def build_identity(
+        self,
+        *,
+        count: int,
+        histories: list[list[context.PredictedHistoryTurn]],
+    ) -> dict[str, typing.Any]:
+        return request_identity.build_gemini_eval_request_identity(
+            target_label="target",
+            model="gemini-3.1-flash-lite",
+            eval_manifest_uri="gs://bucket/eval.jsonl",
+            audio_uris=["gs://bucket/current.flac"],
+            system_prompt="S",
+            user_prompt="U",
+            prior_context_count=count,
+            prior_context_mode="text_turns",
+            histories=histories,
+        )
+
+    def test_rejects_training_turn_and_window_mismatch(self) -> None:
+        with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
+            request_identity.build_gemini_eval_request_identity(
+                target_label="target",
+                model="gemini-3.1-flash-lite",
+                eval_manifest_uri="gs://bucket/eval.jsonl",
+                audio_uris=["gs://bucket/current.flac"],
+                system_prompt="S",
+                user_prompt="U",
+                prior_context_count=1,
+                prior_context_mode="text_turns",
+                histories=[[context.TrainingReferenceTurn("REFERENCE_SECRET")]],
+            )
+
+        with self.assertRaisesRegex(ValueError, "prior_context_count"):
+            self.build_identity(
+                count=0,
+                histories=[
+                    [
+                        context.PredictedHistoryTurn(
+                            "gs://bucket/prior.flac", "prediction"
+                        )
+                    ]
+                ],
+            )
 
 
 class TestParseBatchOutput(unittest.TestCase):
@@ -446,19 +713,19 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output(__import__("json").dumps(output)),
+            vertex.parse_batch_output([json.dumps(output)]),
             {"gs://bucket/a.flac": "engine 41"},
         )
 
-    def test_parses_snake_case_request_echo(self) -> None:
+    def test_rejects_duplicate_audio_uri_within_one_iterable(self) -> None:
         output = {
             "request": {
                 "contents": [
                     {
                         "parts": [
                             {
-                                "file_data": {
-                                    "file_uri": "gs://bucket/a.flac",
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
                                 }
                             }
                         ]
@@ -470,10 +737,11 @@ class TestParseBatchOutput(unittest.TestCase):
             },
         }
 
-        self.assertEqual(
-            parse_batch_output(json.dumps(output)),
-            {"gs://bucket/a.flac": "engine 41"},
-        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate audio URI in batch output: gs://bucket/a.flac",
+        ):
+            vertex.parse_batch_output([json.dumps(output), json.dumps(output)])
 
     def test_skips_status_and_malformed_rows(self) -> None:
         lines = [
@@ -482,15 +750,192 @@ class TestParseBatchOutput(unittest.TestCase):
             json.dumps({"request": {}, "response": {}}),
         ]
 
-        self.assertEqual(parse_batch_output("\n".join(lines)), {})
+        self.assertEqual(vertex.parse_batch_output(lines), {})
+
+    def test_skips_request_echo_without_response(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        self.assertEqual(vertex.parse_batch_output([json.dumps(output)]), {})
+
+    def test_preserves_explicit_empty_prediction_text(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": ""}]}}]
+            },
+        }
+
+        self.assertEqual(
+            vertex.parse_batch_output([json.dumps(output)]),
+            {"gs://bucket/a.flac": ""},
+        )
+
+    def test_rejects_single_string_to_avoid_character_iteration(self) -> None:
+        with self.assertRaisesRegex(TypeError, "iterable of JSONL lines"):
+            vertex.parse_batch_output("{}")
+
+    def test_accepts_line_iterators_without_full_file_read(self) -> None:
+        rows = (
+            json.dumps(
+                {
+                    "request": {
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "fileData": {
+                                            "fileUri": "gs://bucket/a.flac"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "copy"}]}}
+                        ]
+                    },
+                }
+            )
+            for _ in range(1)
+        )
+
+        self.assertEqual(
+            vertex.parse_batch_output(rows),
+            {"gs://bucket/a.flac": "copy"},
+        )
 
 
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     """Batch inference returns the destination GCS URI."""
 
     @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_notifies_submitted_job_before_polling(self, mock_genai) -> None:
+        job_name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = job_name
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest.gcs_uri = "gs://bucket/output/"
+        events: list[str] = []
+
+        def get_job(*, name: str) -> object:
+            self.assertEqual(name, job_name)
+            events.append("poll")
+            return mock_cur
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = get_job
+        mock_genai.Client.return_value = mock_client
+
+        result = vertex.submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+            on_submitted=lambda name: events.append(f"submitted:{name}"),
+        )
+
+        self.assertEqual(result, "gs://bucket/output/")
+        self.assertEqual(events, [f"submitted:{job_name}", "poll"])
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(
+                    enterprise=True,
+                    project="p",
+                    location="us-central1",
+                ),
+                unittest.mock.call(
+                    enterprise=True,
+                    project="p",
+                    location="us",
+                ),
+            ],
+        )
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_rejects_missing_durable_job_name_before_polling(
+        self, mock_genai
+    ) -> None:
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = None
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_genai.Client.return_value = mock_client
+        on_submitted = unittest.mock.MagicMock()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Batch inference job returned no durable job name",
+        ):
+            vertex.submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/output/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+                on_submitted=on_submitted,
+            )
+
+        on_submitted.assert_not_called()
+        mock_client.batches.get.assert_not_called()
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_submission_api_error_is_normalized(self, mock_genai) -> None:
+        class FakeAPIError(Exception):
+            pass
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.side_effect = FakeAPIError("denied")
+        mock_genai.Client.return_value = mock_client
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Batch inference submission failed",
+        ) as raised:
+            vertex.submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/output/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+            )
+
+        self.assertIsInstance(raised.exception.__cause__, FakeAPIError)
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai) -> None:
-        """submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
+        """Return cur.dest.gcs_uri rather than BatchJobDestination."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -503,7 +948,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        result = submit_batch_inference(
+        result = vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
@@ -517,7 +962,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     def test_falls_back_to_output_uri_when_dest_is_none(
         self, mock_genai
     ) -> None:
-        """submit_batch_inference uses output_uri fallback when cur.dest is None."""
+        """Use the output_uri fallback when cur.dest is None."""
         mock_batch_job = unittest.mock.MagicMock()
         mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
         mock_cur = unittest.mock.MagicMock()
@@ -529,7 +974,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_genai.Client.return_value = mock_client
 
         with self.assertLogs("common.gemini.vertex", level="WARNING") as logs:
-            result = submit_batch_inference(
+            result = vertex.submit_batch_inference(
                 input_uri="gs://bucket/input.jsonl",
                 output_uri="gs://bucket/fallback/",
                 model="gemini-2.5-flash",
@@ -544,10 +989,40 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.time.sleep")
     @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = vertex.submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertEqual(result, "gs://bucket/output/")
+        mock_sleep.assert_called_once_with(300)
+
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
-        """submit_batch_inference retries a transient batches.get failure."""
+        """Retry a transient batches.get failure."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -563,7 +1038,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         ]
         mock_genai.Client.return_value = mock_client
 
-        result = submit_batch_inference(
+        result = vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
@@ -590,7 +1065,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        submit_batch_inference(
+        vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="projects/p/locations/us/endpoints/123",
@@ -598,8 +1073,43 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             location="us-central1",
         )
 
-        mock_genai.Client.assert_called_once_with(
-            vertexai=True, project="p", location="us"
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+            ],
+        )
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_uses_us_location_for_31_flash_lite(self, mock_genai) -> None:
+        """Serve Gemini 3.1 Flash-Lite batch jobs from location us."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        vertex.submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-3.1-flash-lite",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+            ],
         )
 
 

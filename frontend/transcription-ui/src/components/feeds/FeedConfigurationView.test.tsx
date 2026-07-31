@@ -21,6 +21,7 @@ import { SourceType } from '@transcription/common';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
+import { getFeedSearchOptions } from '../../service/getFeedSearchOptions';
 import { listFeeds } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
@@ -63,6 +64,10 @@ vi.mock('../../service/deactivateFeed', () => ({
 
 vi.mock('../../service/resetFeed', () => ({
   resetFeed: vi.fn(),
+}));
+
+vi.mock('../../service/getFeedSearchOptions', () => ({
+  getFeedSearchOptions: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -112,6 +117,14 @@ describe('FeedConfigurationView', () => {
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
     vi.mocked(resetFeed).mockResolvedValue({} as Feed);
+    vi.mocked(getFeedSearchOptions).mockResolvedValue({
+      sourceTypes: [],
+      statuses: [],
+      tags: [
+        { key: 'county', value: 'Marin' },
+        { key: 'county', value: 'Sonoma' },
+      ],
+    });
 
     // Mock window.scrollTo since JSDOM does not implement it
     window.scrollTo = vi.fn();
@@ -937,6 +950,92 @@ describe('FeedConfigurationView', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('should show Reset feed with cursor copy for an active SID-managed Calls feed', async () => {
+    const sidFeed: Feed = {
+      id: 'feed-sid-1',
+      name: 'Ventura County Calls',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '7017-1001',
+      status: 'active',
+      substatus: 'active',
+      childStatus: 'active',
+      bcfyCallsSid: '7017',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [...mockFeeds, sidFeed],
+      total: mockFeeds.length + 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Ventura County Calls')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Ventura County Calls',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    const resetMenuItem = screen.getByRole('menuitem', {
+      name: /Reset feed/i,
+    });
+    fireEvent.click(resetMenuItem);
+
+    expect(screen.getByText('Verify Feed Reset')).toBeInTheDocument();
+    expect(
+      screen.getByText(/clears the saved talkgroup position/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/next page boundary/i)).toBeInTheDocument();
+  });
+
+  it('should use the raw child status for Deactivate visibility on SID-managed feeds', async () => {
+    // Deactivated parent lease, but the child itself is still active.
+    const sidFeed: Feed = {
+      id: 'feed-sid-2',
+      name: 'Kern County Calls',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '7017-2002',
+      status: 'inactive',
+      substatus: 'deactivated',
+      childStatus: 'active',
+      bcfyCallsSid: '7017',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [...mockFeeds, sidFeed],
+      total: mockFeeds.length + 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Kern County Calls')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Kern County Calls',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    expect(
+      screen.getByRole('menuitem', { name: /Deactivate feed/i })
+    ).toBeInTheDocument();
+  });
+
   it('handles timezone tag selection using dropdown', async () => {
     renderView();
 
@@ -1144,5 +1243,207 @@ describe('FeedConfigurationView', () => {
         'fake-jwt-token-xyz'
       );
     });
+  });
+
+  it('does not display the timezone update warning when registering a new feed even if system/timezone is entered', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // The alert should not be in the document since we are in register mode (not editing)
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when editing a feed that already has a timezone tag', async () => {
+    // Add system/timezone to mock feeds
+    const timezoneFeed: Feed = {
+      id: 'feed-3',
+      name: 'Timezone Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      status: 'active',
+      substatus: 'active',
+      tags: [{ key: 'system/timezone', value: 'America/Los_Angeles' }],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [timezoneFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Timezone Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Timezone Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // The alert should be in the document immediately
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when typing or editing a tag key to system/timezone while editing a feed', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const tagKeyInput = screen.getAllByLabelText('Key')[0];
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // Warning is displayed immediately upon typing
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+
+    // Now test editing an existing row key
+    // Reset key input
+    fireEvent.change(tagKeyInput, { target: { value: '' } });
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+
+    // The first row key input is index 1 (index 0 is the new tag key input field)
+    const existingRowKeyInput = screen.getAllByLabelText('Key')[1];
+    fireEvent.change(existingRowKeyInput, {
+      target: { value: 'system/timezone' },
+    });
+
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('should show timezone tag information alert only when Source Type is Fire Notifications', async () => {
+    renderView();
+
+    // Default source type is Broadcastify Feeds. Verify the timezone info alert is not displayed.
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
+
+    // Select Source Type "Fire Notifications" in the dropdown
+    const formCard = screen.getByTestId('feed-config-card');
+    const selectDropdown = within(formCard).getByRole('combobox', {
+      name: /Source Type/i,
+    });
+    fireEvent.mouseDown(selectDropdown);
+
+    const listbox = await screen.findByRole('listbox');
+    const fireNotificationsOption =
+      await within(listbox).findByText('Fire Notifications');
+    fireEvent.click(fireNotificationsOption);
+
+    // Verify the alert is now displayed with both lines of text
+    expect(
+      screen.getByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'It is highly recommended to add the "system/timezone" tag; defaulting to UTC timestamps can cause alignment issues if the source feed actually uses a local timezone.'
+      )
+    ).toBeInTheDocument();
+
+    // Switch back to Broadcastify Feeds and verify alert disappears
+    fireEvent.mouseDown(selectDropdown);
+    const listbox2 = await screen.findByRole('listbox');
+    const bcfyFeedsOption =
+      await within(listbox2).findByText('Broadcastify Feeds');
+    fireEvent.click(bcfyFeedsOption);
+
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone info alert in edit mode for a Fire Notifications feed', async () => {
+    // Add a mock Fire Notifications feed
+    const fireFeed: Feed = {
+      id: 'feed-4',
+      name: 'Test Fire Feed',
+      sourceType: SourceType.FIRE_NOTIFICATIONS,
+      sourceFeedId: 'fire-123',
+      status: 'active',
+      substatus: 'active',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [fireFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Fire Feed')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Test Fire Feed',
+    });
+    fireEvent.click(editBtn);
+
+    // Verify the info alert is displayed immediately in edit mode since it is a Fire Notifications feed
+    expect(
+      screen.getByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('does not display the timezone info alert in edit mode for a non-Fire Notifications feed', async () => {
+    // marin feed in mockFeeds is SourceType.BCFY_FEEDS
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // Verify the info alert is not displayed since it is BCFY_FEEDS
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
   });
 });

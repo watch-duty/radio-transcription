@@ -87,6 +87,7 @@ export interface TranscriptDisplayProps {
   highlightedSegmentId: string | null;
   redactTranscripts: boolean;
   onRowClick: (segmentId: string) => void;
+  isNarrow?: boolean;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -112,6 +113,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   highlightedSegmentId,
   redactTranscripts,
   onRowClick,
+  isNarrow = false,
 }) => {
   return (
     <Paper
@@ -211,6 +213,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
               isTopAudioSegmentRow={position === 0 && !hasNewerAudioSegments}
+              isNarrow={isNarrow}
             />
           );
         }}

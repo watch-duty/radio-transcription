@@ -22,10 +22,9 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import type { Feed, Rule, RuleConditions } from '@transcription/common';
 
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 import { RuleRow } from './RuleRow';
 
@@ -87,15 +86,23 @@ VirtuosoTable.displayName = 'VirtuosoTable';
 function VirtuosoTableRow(
   props: ComponentProps<typeof TableRow> & {
     item?: Rule;
-    context?: { editingRuleId?: string; allowEdit?: boolean };
+    context?: {
+      editingRuleId?: string;
+      allowEdit?: boolean;
+      isNarrow?: boolean;
+    };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingRuleId === item.ruleId);
   const allowEdit = context?.allowEdit ?? false;
-  const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 2fr 0.8fr 60px'
-    : '1.5fr 1fr 2fr 0.8fr';
+  const isNarrow = context?.isNarrow ?? false;
+
+  const gridTemplateColumns = isNarrow
+    ? '1fr auto'
+    : allowEdit
+      ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+      : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   return (
     <TableRow
@@ -106,6 +113,15 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
+        gridTemplateRows: isNarrow ? 'auto auto auto auto' : 'unset',
+        gridTemplateAreas: isNarrow
+          ? `
+            "name-desc  actions"
+            "scope      status"
+            "conditions conditions"
+            "tags       tags"
+          `
+          : 'unset',
         width: '100%',
         alignItems: 'center',
         borderBottom: '1px solid',
@@ -140,8 +156,7 @@ export function RuleTable({
   onEditRule,
   isSubmitting = false,
 }: RuleTableProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
@@ -243,13 +258,14 @@ export function RuleTable({
   ]);
 
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 2fr 0.8fr 60px'
-    : '1.5fr 1fr 2fr 0.8fr';
+    ? '1.5fr 1fr 1.7fr 1fr 0.8fr 60px'
+    : '1.5fr 1fr 1.7fr 1fr 0.8fr';
 
   const columns = [
     { key: 'name', display: 'Rule Name' },
     { key: 'scope', display: 'Scope' },
     { key: 'conditions', display: 'Conditions' },
+    { key: 'tags', display: 'Tags' },
     { key: 'status', display: 'Status' },
   ];
 
@@ -272,7 +288,7 @@ export function RuleTable({
             bgcolor: 'background.paper',
           }}
         >
-          {key === 'conditions' ? (
+          {key === 'conditions' || key === 'tags' ? (
             display
           ) : (
             <TableSortLabel
@@ -475,21 +491,18 @@ export function RuleTable({
               : 'Create rules on the left to start processing.'}
           </Typography>
         </Box>
-      ) : isMobile ? (
+      ) : isNarrow ? (
         <TableContainer
           component="div"
           sx={{ flexGrow: 1, overflowY: 'visible' }}
         >
           <Table component="div" sx={{ display: 'block', width: '100%' }}>
-            <TableHead component="div" sx={{ display: 'block' }}>
-              {tableHeader}
-            </TableHead>
             <TableBody component="div" sx={{ display: 'block' }}>
               {filteredAndSortedRules.map((rule) => (
                 <VirtuosoTableRow
                   key={rule.ruleId}
                   item={rule}
-                  context={{ editingRuleId, allowEdit }}
+                  context={{ editingRuleId, allowEdit, isNarrow: true }}
                 >
                   <RuleRow
                     rule={rule}
@@ -499,6 +512,7 @@ export function RuleTable({
                     allowEdit={allowEdit}
                     onEditRule={onEditRule}
                     isSubmitting={isSubmitting}
+                    isNarrow={true}
                   />
                 </VirtuosoTableRow>
               ))}
@@ -508,7 +522,7 @@ export function RuleTable({
       ) : (
         <TableVirtuoso
           data={filteredAndSortedRules}
-          context={{ editingRuleId, allowEdit }}
+          context={{ editingRuleId, allowEdit, isNarrow: false }}
           computeItemKey={(_index, rule) => rule.ruleId}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
@@ -522,6 +536,7 @@ export function RuleTable({
               allowEdit={allowEdit}
               onEditRule={onEditRule}
               isSubmitting={isSubmitting}
+              isNarrow={false}
             />
           )}
         />

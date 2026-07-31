@@ -1,7 +1,7 @@
 """Mock transcriber implementation for offline/local testing."""
 
 from backend.pipeline.common.utils import ConfigBase
-from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers import base
 
 
 class MockConfig(ConfigBase):
@@ -13,7 +13,7 @@ class MockConfig(ConfigBase):
     transcripts: list[str] | None = None
 
 
-class MockTranscriber(Transcriber):
+class MockTranscriber(base.Transcriber):
     """A mock transcriber for offline/local testing that does not call external APIs."""
 
     def __init__(self, config: MockConfig) -> None:
@@ -31,6 +31,7 @@ class MockTranscriber(Transcriber):
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
+        context: base.TranscriptionContext | None = None,
     ) -> str | None:
         """Mock transcription implementation returns static or rotating mock transcripts."""
         # If a sequence of transcripts is provided, return them in rotation

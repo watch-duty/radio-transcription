@@ -66,7 +66,6 @@ from backend.pipeline.segmentation import log_helper
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     GCS_DOWNLOAD_TIMEOUT_SEC,
-    SHARED_DOWNLOAD_POOL_SIZE,
 )
 from backend.pipeline.segmentation.datatypes import (
     AudioClassification,
@@ -80,6 +79,7 @@ from backend.pipeline.segmentation.options import (
     SegmentationOptions,  # noqa: F401
 )
 from backend.pipeline.segmentation.storage import (
+    acquire_shared_download_executor,
     acquire_shared_gcs_client,
 )
 
@@ -92,6 +92,25 @@ log_helper.setup_logging()
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transforms"}
 )
+
+
+def _parse_receipt_ms(
+    chunk_proto: ContinuousAudio, element: PubsubMessage
+) -> int | None:
+    if (
+        chunk_proto.HasField("receipt_timestamp")
+        and chunk_proto.receipt_timestamp.seconds > 0
+    ):
+        return (
+            chunk_proto.receipt_timestamp.seconds * MS_PER_SECOND
+            + chunk_proto.receipt_timestamp.nanos // NANOS_PER_MS
+        )
+    if element.attributes and "timestamp_ms" in element.attributes:
+        try:
+            return int(element.attributes["timestamp_ms"])
+        except (ValueError, TypeError):
+            return None
+    return None
 
 
 @beam.typehints.with_input_types(PubsubMessage)
@@ -116,6 +135,9 @@ class ParseAndKeyFn(beam.DoFn):
         )
         self.segmentation_error = Metrics.counter(
             self.__class__, "segmentation_error"
+        )
+        self.data_freshness_ms = Metrics.distribution(
+            self.__class__, "data_freshness_ms"
         )
 
     @override
@@ -186,6 +208,16 @@ class ParseAndKeyFn(beam.DoFn):
                     and chunk_proto.start_timestamp.seconds > 0
                     else None
                 )
+                receipt_ms = _parse_receipt_ms(chunk_proto, element)
+                freshness_reference_ms = (
+                    receipt_ms if receipt_ms is not None else start_ms
+                )
+
+                if freshness_reference_ms is not None:
+                    freshness_ms = (
+                        int(time.time() * 1000) - freshness_reference_ms
+                    )
+                    self.data_freshness_ms.update(freshness_ms)
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
                     session_id=chunk_proto.session_id,
@@ -197,6 +229,7 @@ class ParseAndKeyFn(beam.DoFn):
                     traceparent=traceparent,
                     baggage=baggage,
                     timestamp_ms=start_ms,
+                    receipt_time_ms=receipt_ms,
                 )
                 logger.debug(
                     "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",
@@ -215,7 +248,7 @@ class ParseAndKeyFn(beam.DoFn):
                     DEAD_LETTER_QUEUE_TAG,
                     {
                         "error": msg,
-                        "attributes": dict(element.attributes),
+                        "attributes": dict(element.attributes or {}),
                     },
                 )
             )
@@ -231,7 +264,6 @@ class UploadRawSegmentFn(beam.DoFn):
     """
 
     SHARED_GCS_HANDLE = Shared()
-    SHARED_THREADPOOL_HANDLE = Shared()
     segmentation_success: Any
     segmentation_error: Any
 
@@ -271,14 +303,7 @@ class UploadRawSegmentFn(beam.DoFn):
             self.__class__, "upload_latency_ms"
         )
 
-        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
-            return concurrent.futures.ThreadPoolExecutor(
-                max_workers=SHARED_DOWNLOAD_POOL_SIZE
-            )
-
-        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
-            _create_executor, tag="shared_download_thread_pool"
-        )
+        self._executor = acquire_shared_download_executor()
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)

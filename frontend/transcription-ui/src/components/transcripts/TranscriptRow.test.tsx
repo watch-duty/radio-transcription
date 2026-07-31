@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
   AnnotationType,
@@ -11,7 +12,6 @@ import {
 } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
-import { createMockRenderableAudioSegment } from '../../test/mockDataUtils';
 import TranscriptRow from './TranscriptRow';
 
 // Mocking TranscriptPlayControl to verify it's being called with the correct props.
@@ -29,6 +29,11 @@ vi.mock('../audio/TranscriptPlayControl', () => ({
 }));
 
 let mockIsAdmin = false;
+const mockSaveAs = vi.fn();
+
+vi.mock('file-saver', () => ({
+  saveAs: (...args: unknown[]) => mockSaveAs(...args),
+}));
 
 vi.mock('../../context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
@@ -75,6 +80,7 @@ describe('TranscriptRow', () => {
   const mockOnRowClick = vi.fn();
   const mockTriggerSnackbar = vi.fn();
   const ruleIdToNameMap = new Map([['rule-1', 'Danger Rule']]);
+  const queryClient = new QueryClient();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -92,140 +98,29 @@ describe('TranscriptRow', () => {
 
   it('renders transcript detail accurately without Day Header when showHeader is false', () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('This is a test transcription')).toBeTruthy();
     expect(screen.getByText('5 sec')).toBeTruthy();
     // The date should NOT be rendered
     expect(screen.queryByText(/Monday/i)).toBeNull();
-  });
-
-  it('renders warning icon when missingPriorContext is true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-prior-warning',
-      missingPriorContext: true,
-      missingPostContext: false,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
-  });
-
-  it('renders warning icon when missingPostContext is true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-post-warning',
-      missingPriorContext: false,
-      missingPostContext: true,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
-  });
-
-  it('does not render warning icon when both context flags are false', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-no-warning',
-      missingPriorContext: false,
-      missingPostContext: false,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
-  });
-
-  it('does not render warning icon on outage segments even if flags are true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'outage-warning',
-      isOutageBundle: true,
-      missingPriorContext: true,
-      missingPostContext: true,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
   });
 
   it('highlights matched spans from the evaluation annotation', () => {
@@ -256,21 +151,23 @@ describe('TranscriptRow', () => {
     };
 
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={highlightedSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={highlightedSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     // The matched substring renders in its own highlighted element.
@@ -279,46 +176,53 @@ describe('TranscriptRow', () => {
 
   it('renders Day Header accurately when showHeader is true', () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={true}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={true}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText(/Wednesday/i)).toBeTruthy();
   });
 
-  it('triggers copy transcript clipboard action successfully', () => {
+  it('triggers copy transcript clipboard action successfully', async () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
-    const copyButton = screen.getAllByLabelText('copy transcript')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('menuitem', {
+      name: /copy transcript/i,
+    });
     fireEvent.click(copyButton);
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -327,26 +231,31 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('triggers copy deeplink action successfully', () => {
+  it('triggers copy deeplink action successfully', async () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
-    const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const deepLinkButton = await screen.findByRole('menuitem', {
+      name: /copy link/i,
+    });
     fireEvent.click(deepLinkButton);
 
     const startMs = new Date(mockAudioSegment.startTimestamp).getTime();
@@ -365,21 +274,23 @@ describe('TranscriptRow', () => {
 
   it('passes playbackAudioUri to AudioPlayer as audioUri prop', () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     const audioPlayer = screen.getByTestId(
@@ -391,24 +302,74 @@ describe('TranscriptRow', () => {
     );
   });
 
-  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
+  it('triggers download audio action successfully when download button is clicked', async () => {
+    const mockBlob = new Blob(['mock audio data'], { type: 'audio/m4a' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+    } as Response);
+
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-          redactTranscripts={true}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={{
+              ...mockAudioSegment,
+              playbackAudioUri:
+                'gs://ingestion-canonical-bucket-dev/playback/test-audio.m4a',
+            }}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    fireEvent.click(screen.getByLabelText('Share'));
+    const downloadButton = await screen.findByRole('menuitem', {
+      name: /download audio/i,
+    });
+    fireEvent.click(downloadButton);
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/gcs/ingestion-canonical-bucket-dev/playback/test-audio.m4a'
+      );
+      expect(mockSaveAs).toHaveBeenCalledWith(mockBlob, 'test-audio.m4a');
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith('Audio downloaded');
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+            redactTranscripts={true}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     const transcriptText = screen.getByText('This is a test transcription');
@@ -418,9 +379,14 @@ describe('TranscriptRow', () => {
     expect(styles.opacity).toBe('0.6');
     expect(styles.userSelect).not.toBe('none');
 
-    const copyButton = screen.getAllByLabelText('copy transcript')[0];
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('menuitem', {
+      name: /copy transcript/i,
+    });
     expect(copyButton).toBeTruthy();
-    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (copyButton as HTMLElement).getAttribute('aria-disabled')
+    ).toBeNull();
 
     fireEvent.click(copyButton);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
@@ -429,7 +395,7 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('renders silence bundle correctly with placeholder text and disabled copy', () => {
+  it('renders silence bundle correctly with placeholder text and disabled copy', async () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
@@ -447,29 +413,36 @@ describe('TranscriptRow', () => {
     };
 
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockSilenceBundle}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockSilenceBundle}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.getByText('10 sec')).toBeTruthy();
-    expect(screen.queryByLabelText('copy transcript')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Share'));
+    await screen.findByRole('menuitem', { name: /copy link/i });
+    expect(
+      screen.queryByRole('menuitem', { name: /copy transcript/i })
+    ).toBeNull();
   });
 
-  it('hides duration when silence row is at the live edge (ongoing silence)', () => {
+  it('shows coarse elapsed time without seconds when silence row is at the live edge (ongoing silence)', () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
@@ -487,78 +460,85 @@ describe('TranscriptRow', () => {
     };
 
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockSilenceBundle}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-          isTopAudioSegmentRow={true}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockSilenceBundle}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+            isTopAudioSegmentRow={true}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.queryByText('10 sec')).toBeNull();
-    expect(screen.queryByText(/16:00/)).toBeNull();
+    expect(screen.getByText('<1 min')).toBeTruthy();
   });
 
-  it('does not render segment info button for non-admins', () => {
+  it('does not render segment details in the share popover for non-admins', async () => {
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
-    expect(
-      screen.queryByLabelText('view segment info')
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Share'));
+    await screen.findByRole('menuitem', { name: /copy link/i });
+    expect(screen.queryByText('Segment ID')).not.toBeInTheDocument();
   });
 
-  it('renders segment info button for admins', () => {
+  it('renders segment details in the share popover for admins', async () => {
     mockIsAdmin = true;
 
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockAudioSegment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockAudioSegment}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
-    expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Segment info'));
+    expect(await screen.findByText('Segment ID')).toBeInTheDocument();
   });
 
-  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
+  it('renders transcription failure correctly with placeholder text and disabled copy', async () => {
     const mockFailedTranscript: AudioSegment = {
       ...mockAudioSegment,
       annotations: [
@@ -574,26 +554,82 @@ describe('TranscriptRow', () => {
     };
 
     render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={mockFailedTranscript}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockFailedTranscript}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     expect(screen.getByText('[Transcription failed]')).toBeTruthy();
 
-    const copyButton = screen.getByLabelText('copy transcript');
-    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('menuitem', {
+      name: /copy transcript/i,
+    });
+    expect((copyButton as HTMLElement).getAttribute('aria-disabled')).toBe(
+      'true'
+    );
+  });
+
+  it('renders partial transcription with text and incomplete prefix, and copy button enabled', async () => {
+    const mockPartialTranscript: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            text: 'This is a partial transcript text',
+            errors: ['Partial transcription (max_tokens)'],
+          },
+        },
+      ],
+    };
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <TranscriptRow
+            audioSegment={mockPartialTranscript}
+            index={0}
+            totalAudioSegments={1}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={false}
+            onToggleAudio={mockOnToggleAudio}
+            isAudioPlaying={false}
+            onRowClick={mockOnRowClick}
+            currentlyPlayingSegmentId={null}
+            triggerSnackbar={mockTriggerSnackbar}
+            showHeader={false}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    // Should render the text itself, NOT [Transcription failed]
+    expect(screen.getByText('This is a partial transcript text')).toBeTruthy();
+    expect(screen.getByText('[Transcript may be incomplete]')).toBeTruthy();
+    expect(screen.queryByText('[Transcription failed]')).toBeNull();
+    // Copy button should be enabled
+    fireEvent.click(screen.getByLabelText('Share'));
+    const copyButton = await screen.findByRole('menuitem', {
+      name: /copy transcript/i,
+    });
+    expect(
+      (copyButton as HTMLElement).getAttribute('aria-disabled')
+    ).toBeNull();
   });
 });

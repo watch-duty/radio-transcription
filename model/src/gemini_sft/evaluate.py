@@ -1,71 +1,77 @@
-"""Evaluate base and tuned Gemini models for a config-driven SFT run."""
+"""Evaluate one Gemini model for a config-driven SFT run."""
 
 from __future__ import annotations
 
+import asyncio
+import datetime
 import logging
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+import typing
 
-from common.gcs_utils import (
-    download_json_text,
-    download_jsonl_manifest,
-    gcs_uri_exists,
-)
-from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
-from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
-from common.gemini.vertex import submit_batch_inference
-from common.inference_manifest import (
-    model_family_slug_from_model_id,
-    upload_inference_manifest,
-)
-from common.scoring import (
-    bootstrap_paired,
-    build_normalizer,
-    compute_cer,
-    compute_wer,
-    duration_bucket_wer,
-    hallucination_rate,
-    keyword_metrics,
-)
+from common import gcs_utils, inference_manifest, scoring
+from common.gemini import batch as gemini_batch
+from common.gemini import context as gemini_context
+from common.gemini import eval_artifacts, prompts, vertex
+from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
 
-from gemini_sft.artifacts import (
-    DEFAULT_RESULTS_DIR,
-    canonical_rows_from_entries,
-    write_and_upload_config,
-)
-from gemini_sft.config import (
-    RunConfig,
-    RunConfigError,
-    load_eval_run_config,
-    require_config_int,
-    require_config_str,
-)
-from gemini_sft.records import append_ledger, write_wer_summary
+from gemini_sft import artifacts as artifacts_lib
+from gemini_sft import config as config_lib
+from gemini_sft import records, reporting, target_execution
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import argparse
 
 logger = logging.getLogger(__name__)
-RESULTS_DIR = DEFAULT_RESULTS_DIR
+RESULTS_DIR = artifacts_lib.DEFAULT_RESULTS_DIR
+_LOCAL_DURABLE_EVAL_FIELDS = (
+    "round_id",
+    "run_gcs_prefix",
+    "canonical_eval_uri",
+    "inference_dataset_slug",
+    "eval_manifest_uri",
+    "gcp_project",
+    "gcs_bucket",
+    "location",
+    "base_model",
+    "prior_context_count",
+    "prior_context_mode",
+    "system_prompt",
+    "user_prompt",
+)
 
 
 def evaluate(args: argparse.Namespace) -> int:
-    """CLI handler for ``gemini-sft eval``."""
+    """Validate durable state and run ``gemini-sft eval``.
+
+    Args:
+        args: Parsed CLI namespace containing the local config path.
+
+    Returns:
+        Zero after evaluation succeeds; one after a handled configuration,
+        provider, storage, or local I/O failure.
+    """
     try:
-        run_cfg = load_eval_run_config(args.config)
+        run_cfg = config_lib.load_eval_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
-        if not gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
+        if not gcs_utils.gcs_uri_exists(
+            storage_client,
+            run_cfg.paths.config_uri,
+        ):
             logger.error(
                 "No GCS config.json found for round %s.", run_cfg.round_id
             )
             return 1
-        config = download_json_text(storage_client, run_cfg.paths.config_uri)
-        return evaluate_run(args, run_cfg, storage_client, config)
+        config = gcs_utils.download_json_text(
+            storage_client,
+            run_cfg.paths.config_uri,
+        )
+        _validate_local_eval_config_matches_durable(run_cfg, config)
+        return evaluate_run(run_cfg, storage_client, config)
     except (
         ImportError,
         OSError,
-        RunConfigError,
+        google_exceptions.GoogleAPIError,
+        config_lib.RunConfigError,
         TypeError,
         ValueError,
         RuntimeError,
@@ -74,144 +80,238 @@ def evaluate(args: argparse.Namespace) -> int:
         return _log_cli_error(exc)
 
 
-def evaluate_run(
-    args: argparse.Namespace,
-    run_cfg: RunConfig,
+def _eval_model_family_id(
+    target: config_lib.EvalModelTarget,
+    base_model: str,
+) -> str:
+    """Return the publisher family represented by one eval target.
+
+    Args:
+        target: Durable evaluated model or endpoint target.
+        base_model: Publisher model used to create endpoint targets.
+
+    Returns:
+        The target model for publisher targets, or ``base_model`` for
+        endpoints.
+    """
+    if target.is_endpoint:
+        return base_model
+    return target.model
+
+
+def evaluate_run(  # noqa: PLR0915
+    run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
-    config: dict[str, Any],
+    config: dict[str, typing.Any],
 ) -> int:
-    """Run batch inference and score one config-driven run."""
-    system_prompt = require_config_str(config, "system_prompt")
-    user_prompt = require_config_str(config, "user_prompt")
-    base_model = require_config_str(config, "base_model")
-    eval_manifest_uri = require_config_str(config, "canonical_eval_uri")
-    gcp_project = require_config_str(config, "gcp_project")
-    location = require_config_str(config, "location")
-    run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
-    dataset = require_config_str(config, "dataset")
-    inference_dataset_slug = require_config_str(
+    """Run the configured eval model and score one config-driven run.
+
+    Args:
+        run_cfg: Validated local configuration for the eval run.
+        storage_client: Client used to read and write GCS artifacts.
+        config: Durable run configuration loaded from GCS ``config.json``.
+
+    Returns:
+        Zero after evaluation and report publication complete, or one when
+        inference produces no successful predictions.
+
+    Raises:
+        ImportError: If a required provider or scoring dependency is missing.
+        OSError: If a local evaluation artifact cannot be read or written.
+        TypeError: If the durable configuration has an invalid field type.
+        ValueError: If configuration, manifest, or backend validation fails.
+        RuntimeError: If a provider operation reaches a failed state.
+        TimeoutError: If a provider operation exceeds its timeout.
+    """
+    system_prompt = config_lib.require_config_str(config, "system_prompt")
+    user_prompt = config_lib.require_config_str(config, "user_prompt")
+    base_model = config_lib.require_config_str(config, "base_model")
+    eval_manifest_uri = config_lib.require_config_str(
+        config,
+        "canonical_eval_uri",
+    )
+    gcp_project = config_lib.require_config_str(config, "gcp_project")
+    location = config_lib.require_config_str(config, "location")
+    run_gcs_prefix = config_lib.require_config_str(config, "run_gcs_prefix")
+    inference_dataset_slug = config_lib.require_config_str(
         config, "inference_dataset_slug"
     )
-    gcs_bucket = require_config_str(config, "gcs_bucket")
-    epoch_count = require_config_int(config, "epoch_count")
-    tuned_endpoint = config.get("endpoint")
-    base_only = bool(getattr(args, "base_only", False))
-    if not base_only and not tuned_endpoint:
-        # Base-only eval is useful before tune and after a failed tune, but it
-        # must be visible in logs so a missing endpoint is not mistaken for a
-        # tuned-model comparison.
-        logger.warning(
-            "No tuned endpoint in config.json; running base-only eval."
-        )
-        base_only = True
+    gcs_bucket = config_lib.require_config_str(config, "gcs_bucket")
+    prior_context_count = _require_config_nonnegative_int(
+        config,
+        "prior_context_count",
+    )
+    prior_context_mode = config_lib.require_config_prior_context_mode(
+        config, "prior_context_mode"
+    )
+    prior_context_mode = gemini_context.validate_evaluation_context_contract(
+        prior_context_count,
+        prior_context_mode,
+    )
+    target = config_lib.require_config_eval_model(config)
+    durable_eval_execution = config_lib.require_config_eval_execution(config)
+    eval_execution = _effective_eval_execution(
+        durable_eval_execution,
+        run_cfg.eval_execution,
+    )
+    logger.info(
+        "Validated eval model target %s from config.json.",
+        target.label,
+    )
 
-    eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
-    source_rows, eval_rows = canonical_rows_from_entries(
+    eval_entries = gcs_utils.download_jsonl_manifest_strict(
+        storage_client,
+        eval_manifest_uri,
+    )
+    eval_data = artifacts_lib.eval_rows_for_inference_from_entries(
         eval_entries,
-        split="eval",
         source=eval_manifest_uri,
+        limit=eval_execution.limit,
+        prior_context_count=prior_context_count,
     )
-    model_family_slug = model_family_slug_from_model_id(base_model)
+    source_rows = eval_data.source_rows
+    eval_rows = eval_data.eval_rows
+    segments = eval_data.segments
+    model_family_slug = inference_manifest.model_family_slug_from_model_id(
+        _eval_model_family_id(target, base_model)
+    )
+    normalizer = scoring.build_normalizer()
+    backend = target_execution.resolve_target_backend(
+        target,
+        eval_execution,
+        prior_context_count=prior_context_count,
+    )
+    rolling_history_index_uri = None
+    rolling_history_audit_uri = None
+    if backend == "batch":
+        preds = batch_infer(
+            storage_client=storage_client,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project=gcp_project,
+            location=location,
+            model_id=target.model,
+            label=target.label,
+            segments=segments,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            prior_context_mode=prior_context_mode,
+            eval_manifest_uri=eval_manifest_uri,
+        )
+        if preds is None:
+            return 1
+        raw_output_uri = preds.output_uri
+        online_predictions_uri = None
+        metadata: dict[str, typing.Any] = {"backend": "batch"}
+    elif backend == "online":
+        preds = asyncio.run(
+            target_execution.run_online_target_inference(
+                storage_client=storage_client,
+                run_gcs_prefix=run_gcs_prefix,
+                project=gcp_project,
+                target_label=target.label,
+                target_model=target.model,
+                segments=segments,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                prior_context_count=prior_context_count,
+                prior_context_mode=prior_context_mode,
+                eval_manifest_uri=eval_manifest_uri,
+                local_dir=RESULTS_DIR / run_cfg.round_id / "online",
+                concurrency=eval_execution.concurrency,
+                max_retries=eval_execution.max_retries,
+            )
+        )
+        if not preds:
+            logger.error(
+                "Online inference produced no successful predictions for "
+                "target %s; unresolved errors=%s.",
+                target.label,
+                preds.error_count,
+            )
+            return 1
+        raw_output_uri = None
+        online_predictions_uri = preds.online_predictions_uri
+        rolling_history_index_uri = preds.rolling_history_index_uri
+        rolling_history_audit_uri = preds.rolling_history_audit_uri
+        metadata = {
+            "backend": "online",
+            "online_error_count": preds.error_count,
+            "request_identity_hash": preds.request_identity_hash,
+        }
+    else:
+        msg = f"unsupported eval backend: {backend}"
+        raise ValueError(msg)
 
-    base_preds = batch_infer(
-        storage_client=storage_client,
-        run_gcs_prefix=run_gcs_prefix,
-        gcp_project=gcp_project,
-        location=location,
-        model_id=base_model,
-        label="base",
-        eval_rows=eval_rows,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
-    if base_preds is None:
-        return 1
-
-    refs = [row.text for row in eval_rows]
-    durations = [row.duration for row in eval_rows]
-    # Empty-string fallback is intentional: skipped/missing Vertex outputs
-    # score as deletions instead of disappearing from the denominator.
-    base_hyps = [base_preds.get(row.audio_filepath, "") for row in eval_rows]
-    normalizer = build_normalizer()
-    metrics = build_metrics(
-        round_id=run_cfg.round_id,
-        base_model=base_model,
-        refs=refs,
-        durations=durations,
-        base_hyps=base_hyps,
-        normalizer=normalizer,
-        n_eval_examples=len(eval_rows),
-    )
-    # Store raw batch output locations alongside metrics so future reviewers can
-    # recalculate WER from Vertex responses without rerunning inference.
-    metrics["base_batch_output_uri"] = base_preds.output_uri
-    metrics["base_inference_manifest_uri"] = upload_inference_manifest(
+    inference_manifest_uri = inference_manifest.upload_inference_manifest(
         storage_client,
         bucket_name=gcs_bucket,
         inference_dataset_slug=inference_dataset_slug,
         model_family_slug=model_family_slug,
         run_id=run_cfg.round_id,
-        artifact_label="base",
+        artifact_label=target.label,
         source_rows=source_rows,
-        predictions_by_audio_uri=base_preds,
+        predictions_by_audio_uri=preds,
+    )
+    summary_json_uri, summary_markdown_uri = (
+        eval_artifacts.wer_summary_gcs_uris(run_gcs_prefix)
+    )
+    artifacts = reporting.ReportArtifacts(
+        raw_output_uri=raw_output_uri,
+        online_predictions_uri=online_predictions_uri,
+        rolling_history_index_uri=rolling_history_index_uri,
+        rolling_history_audit_uri=rolling_history_audit_uri,
+        normalized_manifest_uri=inference_manifest_uri,
+        summary_json_uri=summary_json_uri,
+        summary_markdown_uri=summary_markdown_uri,
+    )
+    # References remain isolated in scoring rows while provider requests and
+    # rolling-history artifacts are built, then pair with finalized predictions.
+    refs = [row.text for row in eval_rows]
+    # Empty-string fallback is intentional: skipped/missing provider outputs
+    # score as deletions instead of disappearing from the denominator.
+    hyps = [preds.get(row.audio_filepath, "") for row in eval_rows]
+    missing_prediction_count = sum(
+        1 for row in eval_rows if row.audio_filepath not in preds
+    )
+    target_metrics = reporting.build_target_metrics(
+        label=target.label,
+        model=target.model,
+        refs=refs,
+        hyps=hyps,
+        normalizer=normalizer,
+        keywords=prompts.GEMINI_TRANSCRIBE_KEYWORDS,
+        missing_prediction_count=missing_prediction_count,
+        artifacts=artifacts,
+        metadata=metadata,
     )
 
-    if not base_only and tuned_endpoint:
-        tuned_preds = batch_infer(
-            storage_client=storage_client,
-            run_gcs_prefix=run_gcs_prefix,
-            gcp_project=gcp_project,
-            location=location,
-            model_id=str(tuned_endpoint),
-            label="tuned",
-            eval_rows=eval_rows,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
-        if tuned_preds is None:
-            return 1
-        tuned_hyps = [
-            tuned_preds.get(row.audio_filepath, "") for row in eval_rows
-        ]
-        add_tuned_metrics(
-            metrics, refs, durations, base_hyps, tuned_hyps, normalizer
-        )
-        metrics["tuned_batch_output_uri"] = tuned_preds.output_uri
-        metrics["tuned_inference_manifest_uri"] = upload_inference_manifest(
-            storage_client,
-            bucket_name=gcs_bucket,
-            inference_dataset_slug=inference_dataset_slug,
-            model_family_slug=model_family_slug,
-            run_id=run_cfg.round_id,
-            artifact_label="tuned",
-            source_rows=source_rows,
-            predictions_by_audio_uri=tuned_preds,
-        )
-
-    write_wer_summary(RESULTS_DIR, run_cfg.round_id, metrics)
-    config.update(
-        {
-            "base_model": base_model,
-            "base_wer": metrics.get("base_wer"),
-            "tuned_wer": metrics.get("tuned_wer"),
-            "last_eval_at": datetime.now(UTC).isoformat(),
-        }
+    report = reporting.EvalReport(
+        round_id=run_cfg.round_id,
+        generated_at=datetime.datetime.now(datetime.UTC).isoformat(),
+        target=target_metrics,
+        metadata={
+            "eval_manifest_uri": eval_manifest_uri,
+            "n_eval_examples": len(eval_rows),
+        },
     )
-    config = write_and_upload_config(
+    summary_json_path, summary_markdown_path = records.write_wer_summary(
+        RESULTS_DIR, run_cfg.round_id, report
+    )
+    gcs_utils.upload_local_file(
+        storage_client,
+        summary_json_path,
+        summary_json_uri,
+    )
+    gcs_utils.upload_local_file(
+        storage_client, summary_markdown_path, summary_markdown_uri
+    )
+    logger.info("\n%s", reporting.render_console_report(report))
+    config["last_eval_at"] = datetime.datetime.now(datetime.UTC).isoformat()
+    config = artifacts_lib.write_and_upload_config(
         results_dir=RESULTS_DIR,
         run_cfg=run_cfg,
         storage_client=storage_client,
         config=config,
-    )
-    append_ledger(
-        RESULTS_DIR,
-        {
-            **metrics,
-            "datasets": [dataset],
-            "epochs": epoch_count,
-            "git_sha": config.get("git_sha", "—"),
-            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d"),
-        },
     )
     logger.info(
         "Eval complete. WER summary: %s",
@@ -220,7 +320,108 @@ def evaluate_run(
     return 0
 
 
-PredictionMap = BatchPredictionMap
+def _validate_local_eval_config_matches_durable(
+    run_cfg: config_lib.RunConfig,
+    config: dict[str, typing.Any],
+) -> None:
+    """Fail when a local eval TOML disagrees with durable GCS state.
+
+    Args:
+        run_cfg: Validated local evaluation configuration.
+        config: Durable run configuration loaded from GCS.
+
+    Raises:
+        TypeError: If a durable field has an invalid type.
+        ValueError: If local metric identity differs from durable state.
+    """
+    local_record = run_cfg.to_record_dict()
+    durable_record = dict(config)
+    durable_record["prior_context_count"] = _require_config_nonnegative_int(
+        config, "prior_context_count"
+    )
+    durable_record["prior_context_mode"] = (
+        config_lib.require_config_prior_context_mode(
+            config,
+            "prior_context_mode",
+        )
+    )
+    mismatches = [
+        key
+        for key in _LOCAL_DURABLE_EVAL_FIELDS
+        if local_record.get(key) != durable_record.get(key)
+    ]
+
+    if run_cfg.eval_model is None:
+        msg = "local eval config missing required [eval.model]"
+        raise ValueError(msg)
+    local_target = run_cfg.eval_model.to_record_dict()
+    durable_target = config_lib.require_config_eval_model(
+        config
+    ).to_record_dict()
+    if local_target != durable_target:
+        mismatches.append("eval_model")
+
+    local_execution = run_cfg.eval_execution
+    durable_execution = config_lib.require_config_eval_execution(config)
+    if _metric_affecting_eval_execution(local_execution) != (
+        _metric_affecting_eval_execution(durable_execution)
+    ):
+        mismatches.append("eval_execution")
+
+    if not mismatches:
+        return
+    fields = ", ".join(mismatches)
+    msg = (
+        "local eval config does not match durable GCS config.json for "
+        f"round {run_cfg.round_id}; GCS config.json is the eval source of "
+        "truth. Use the matching prepared config or create a separate prepared "
+        f"round_id for this eval target. Mismatched field(s): {fields}"
+    )
+    raise ValueError(msg)
+
+
+def _metric_affecting_eval_execution(
+    execution: config_lib.EvalExecutionConfig,
+) -> dict[str, int | str]:
+    """Return eval execution fields that can change reported metrics."""
+    record: dict[str, int | str] = {}
+    if execution.backend is not None:
+        record["backend"] = execution.backend
+    if execution.limit is not None:
+        record["limit"] = execution.limit
+    return record
+
+
+def _effective_eval_execution(
+    durable: config_lib.EvalExecutionConfig,
+    local: config_lib.EvalExecutionConfig,
+) -> config_lib.EvalExecutionConfig:
+    """Combine durable metric identity with local runtime controls.
+
+    Args:
+        durable: Prepared evaluation settings that determine metric identity.
+        local: Current operator settings that may override runtime controls.
+
+    Returns:
+        Execution settings with durable backend/limit and local concurrency and
+        retry controls.
+    """
+    if (
+        local.concurrency != durable.concurrency
+        or local.max_retries != durable.max_retries
+    ):
+        logger.info(
+            "Using local eval execution overrides: concurrency=%s, "
+            "max_retries=%s.",
+            local.concurrency,
+            local.max_retries,
+        )
+    return config_lib.EvalExecutionConfig(
+        backend=durable.backend,
+        limit=durable.limit,
+        concurrency=local.concurrency,
+        max_retries=local.max_retries,
+    )
 
 
 def batch_infer(
@@ -231,22 +432,50 @@ def batch_infer(
     location: str,
     model_id: str,
     label: str,
-    eval_rows: list[Any],
+    segments: typing.Sequence[gemini_context.EvaluationSegment],
     system_prompt: str,
     user_prompt: str,
-) -> PredictionMap | None:
-    """Build batch input JSONL, submit, download outputs, and parse predictions."""
-    return run_batch_audio_inference(
+    prior_context_mode: str,
+    eval_manifest_uri: str,
+) -> gemini_batch.BatchPredictionMap | None:
+    """Build, submit, download, and parse one batch inference target.
+
+    Args:
+        storage_client: Client used to read and write GCS artifacts.
+        run_gcs_prefix: Durable GCS prefix for the prepared run.
+        gcp_project: GCP project used to submit batch inference.
+        location: Preferred Vertex location for batch inference.
+        model_id: Publisher model ID or full model resource name.
+        label: Stable target label used in artifact paths and logs.
+        segments: Transcript-free provider rows containing current audio URIs.
+        system_prompt: System instruction included in every request.
+        user_prompt: User instruction included in every current audio turn.
+        prior_context_mode: Context encoding mode used for requests.
+        eval_manifest_uri: Canonical eval manifest URI recorded in identity.
+
+    Returns:
+        Parsed predictions with their raw output URI, or ``None`` when batch
+        submission or output loading fails.
+
+    Raises:
+        ImportError: If the optional Vertex dependency is unavailable.
+        OSError: If a temporary batch artifact cannot be read or written.
+        TypeError: If reusable request metadata has an invalid shape.
+        ValueError: If request inputs or reusable metadata are inconsistent.
+    """
+    return gemini_batch.run_batch_audio_inference(
         storage_client=storage_client,
         run_gcs_prefix=run_gcs_prefix,
         gcp_project=gcp_project,
         location=location,
         model_id=model_id,
         label=label,
-        audio_uris=[str(row.audio_filepath) for row in eval_rows],
+        audio_uris=[segment.audio_uri for segment in segments],
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        submit_fn=submit_batch_inference,
+        prior_context_mode=prior_context_mode,
+        eval_manifest_uri=eval_manifest_uri,
+        submit_fn=vertex.submit_batch_inference,
     )
 
 
@@ -255,122 +484,12 @@ def _log_cli_error(exc: Exception) -> int:
     return 1
 
 
-def build_metrics(
-    *,
-    round_id: str,
-    base_model: str,
-    refs: list[str],
-    durations: list[float],
-    base_hyps: list[str],
-    normalizer: Any,
-    n_eval_examples: int,
-) -> dict[str, Any]:
-    """Build the base-model scoring panel."""
-    base_wer_result = compute_wer(refs, base_hyps, normalizer=normalizer)
-    base_cer_result = compute_cer(refs, base_hyps, normalizer=normalizer)
-    metrics: dict[str, Any] = {
-        "round_id": round_id,
-        "base_model": base_model,
-        "base_wer": base_wer_result["wer"],
-        "base_cer": base_cer_result["cer"],
-        "n_eval_examples": n_eval_examples,
-    }
-    add_error_breakdown(metrics, "base", base_wer_result)
-    # Historical reports called this "empty rate"; the scorer flags both empty
-    # strings and the explicit [UNINTELLIGIBLE] token emitted for unusable audio.
-    metrics["base_empty_rate"] = hallucination_rate(base_hyps)
-    base_keyword_rows = keyword_metrics(
-        refs, base_hyps, GEMINI_TRANSCRIBE_KEYWORDS
-    )
-    metrics["base_keyword_metrics"] = base_keyword_rows
-    metrics["base_keyword_accuracy"] = overall_keyword_accuracy(
-        base_keyword_rows
-    )
-    try:
-        metrics["duration_buckets"] = [
-            {"bucket": row["bucket"], "base_wer": row["wer"]}
-            for row in duration_bucket_wer(
-                refs, base_hyps, durations, normalizer=normalizer
-            )
-        ]
-    except Exception as exc:
-        logger.warning("Could not compute duration bucket WER: %s", exc)
-    return metrics
-
-
-def add_tuned_metrics(
-    metrics: dict[str, Any],
-    refs: list[str],
-    durations: list[float],
-    base_hyps: list[str],
-    tuned_hyps: list[str],
-    normalizer: Any,
-) -> None:
-    """Add tuned-model metrics to an existing base metrics dictionary."""
-    tuned_wer_result = compute_wer(refs, tuned_hyps, normalizer=normalizer)
-    tuned_cer_result = compute_cer(refs, tuned_hyps, normalizer=normalizer)
-    metrics["tuned_wer"] = tuned_wer_result["wer"]
-    metrics["tuned_cer"] = tuned_cer_result["cer"]
-    metrics["tuned_empty_rate"] = hallucination_rate(tuned_hyps)
-    add_error_breakdown(metrics, "tuned", tuned_wer_result)
-    tuned_keyword_rows = keyword_metrics(
-        refs, tuned_hyps, GEMINI_TRANSCRIBE_KEYWORDS
-    )
-    metrics["tuned_keyword_metrics"] = tuned_keyword_rows
-    metrics["tuned_keyword_accuracy"] = overall_keyword_accuracy(
-        tuned_keyword_rows
-    )
-    try:
-        bootstrap = bootstrap_paired(
-            refs, base_hyps, tuned_hyps, normalizer=normalizer
-        )
-        metrics["bootstrap_p_value"] = bootstrap.get("p_value_one_sided")
-        metrics["bootstrap_ci_low"] = bootstrap.get("ci_low")
-        metrics["bootstrap_ci_high"] = bootstrap.get("ci_high")
-        metrics["bootstrap_delta"] = bootstrap.get("delta")
-    except Exception as exc:
-        logger.warning("bootstrap_paired failed: %s", exc)
-    try:
-        tuned_by_bucket = {
-            row["bucket"]: row["wer"]
-            for row in duration_bucket_wer(
-                refs, tuned_hyps, durations, normalizer=normalizer
-            )
-        }
-        for entry in metrics.get("duration_buckets", []):
-            entry["tuned_wer"] = tuned_by_bucket.get(entry["bucket"])
-    except Exception as exc:
-        logger.warning("Could not compute tuned duration bucket WER: %s", exc)
-
-
-def add_error_breakdown(
-    metrics: dict[str, Any],
-    prefix: str,
-    wer_result: dict[str, Any],
-) -> None:
-    """Add insertion/deletion/substitution rates to a metrics dictionary."""
-    total_ref_words = (
-        int(wer_result["hits"])
-        + int(wer_result["substitutions"])
-        + int(wer_result["deletions"])
-    )
-    if total_ref_words <= 0:
-        return
-    metrics[f"{prefix}_insertions"] = (
-        wer_result["insertions"] / total_ref_words * 100
-    )
-    metrics[f"{prefix}_deletions"] = (
-        wer_result["deletions"] / total_ref_words * 100
-    )
-    metrics[f"{prefix}_substitutions"] = (
-        wer_result["substitutions"] / total_ref_words * 100
-    )
-
-
-def overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
-    """Return occurrence-weighted keyword accuracy."""
-    total_occurrences = sum(row["occurrences"] for row in rows)
-    if total_occurrences == 0:
-        return None
-    total_correct = sum(row["correctly_identified"] for row in rows)
-    return total_correct / total_occurrences * 100
+def _require_config_nonnegative_int(
+    config: dict[str, typing.Any],
+    key: str,
+) -> int:
+    value = config_lib.require_config_int(config, key)
+    if value < 0:
+        msg = f"config.json field must be a non-negative integer: {key}"
+        raise ValueError(msg)
+    return value

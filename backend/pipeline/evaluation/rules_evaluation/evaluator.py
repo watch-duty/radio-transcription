@@ -5,10 +5,12 @@ from abc import ABC, abstractmethod
 from typing import TypedDict
 
 import cachetools
+import httpx
+from tenacity import Retrying
 
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.clients.session_helper import (
-    create_resilient_session,
+    get_httpx_retry_config,
 )
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.evaluation.annotations import (
@@ -187,7 +189,7 @@ class BaseTextEvaluator(ABC):
             + organized_rules.feed_specific_rules.get(feed_id, [])
         )
 
-    def _evaluate_ruleset(
+    def evaluate_ruleset(
         self, rules: list[models.Rule], text: str, feed_id: str
     ) -> EvaluationResult:
         if not text:
@@ -248,7 +250,7 @@ class StaticTextEvaluator(BaseTextEvaluator):
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
         """
-        return self._evaluate_ruleset(self._RULES, text, feed_id)
+        return self.evaluate_ruleset(self._RULES, text, feed_id)
 
 
 class RemoteTextEvaluator(BaseTextEvaluator):
@@ -271,18 +273,17 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             raise ValueError(msg)
 
         self.api_url = api_url.rstrip("/")
-        self.session = create_resilient_session(
-            max_retries=3,
-            backoff_factor=1.0,
-            status_forcelist=[429, 500, 502, 503, 504],
-            raise_on_status=True,
-        )
+        self.client = httpx.Client()
 
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache = cachetools.TTLCache(
             maxsize=1,
             ttl=cache_ttl_seconds,
         )
+
+    def close(self) -> None:
+        """Closes the underlying HTTP client session connection pool."""
+        self.client.close()
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
@@ -313,7 +314,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
                 "errors": [EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
             }
 
-        return self._evaluate_ruleset(rules, text, feed_id)
+        return self.evaluate_ruleset(rules, text, feed_id)
 
     def _fetch_rules(self) -> list[models.Rule]:
         """
@@ -333,15 +334,23 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         # When running on Cloud Run, use the metadata server to get an ID token
         if is_gcp_env():
             token = get_id_token(self.api_url)
-            self.session.headers.update({"Authorization": f"Bearer {token}"})
+            self.client.headers.update({"Authorization": f"Bearer {token}"})
 
-        response = self.session.get(
-            f"{self.api_url}/v1/rules",
-            headers=headers,
-            timeout=10,
-        )
-
-        response.raise_for_status()
+        for attempt in Retrying(
+            **get_httpx_retry_config(
+                total_attempts=4,
+                multiplier=1.0,
+                min_seconds=1.0,
+                max_seconds=10.0,
+            )
+        ):
+            with attempt:
+                response = self.client.get(
+                    f"{self.api_url}/v1/rules",
+                    headers=headers,
+                    timeout=10,
+                )
+                response.raise_for_status()
 
         rules_data = response.json()
         rules = [models.Rule.model_validate(rule) for rule in rules_data]

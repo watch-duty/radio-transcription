@@ -7,6 +7,7 @@ import enum
 import os
 from types import MappingProxyType
 
+from backend.pipeline.ingestion import constants
 from backend.pipeline.storage import feed_store
 
 
@@ -24,8 +25,8 @@ class SourceRuntimeSpec:
     Attributes:
         source_type: Source type slug used by feed rows and source-type seeds.
         topic_kind: Pub/Sub topic family used after capture.
-        claimable: Whether VM ingestion workers should lease this source type.
-        default_cap: Default per-worker lease cap for VM-claimable types.
+        feed_claimable: Whether Feed grants own this source type.
+        default_feed_cap: Default per-worker Feed lease cap.
         url_base_env: Optional env var that overrides the collector URL base.
         url_base_default: Default collector URL base when no env override
             exists.
@@ -33,8 +34,8 @@ class SourceRuntimeSpec:
 
     source_type: feed_store.SourceType
     topic_kind: TopicKind
-    claimable: bool
-    default_cap: int | None = None
+    feed_claimable: bool
+    default_feed_cap: int | None = None
     url_base_env: str | None = None
     url_base_default: str = ""
 
@@ -44,36 +45,41 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
         feed_store.SourceType.BCFY_FEEDS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.BCFY_FEEDS,
             topic_kind=TopicKind.CONTINUOUS,
-            claimable=True,
-            default_cap=240,
+            feed_claimable=True,
+            default_feed_cap=240,
             url_base_env="BCFY_FEEDS_URL_BASE",
-            url_base_default="https://partner.broadcastify.com/",
+            url_base_default=constants.BCFY_FEEDS_PARTNER_URL_BASE,
         ),
         feed_store.SourceType.BCFY_CALLS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.BCFY_CALLS,
             topic_kind=TopicKind.SEGMENTED,
-            claimable=True,
-            default_cap=600,
+            feed_claimable=False,
             url_base_env="BCFY_CALLS_URL_BASE",
-            url_base_default="https://api.bcfy.io/calls/v1/live/",
+            url_base_default=constants.BCFY_CALLS_URL_BASE,
         ),
         feed_store.SourceType.ECHO: SourceRuntimeSpec(
             source_type=feed_store.SourceType.ECHO,
             topic_kind=TopicKind.SEGMENTED,
-            claimable=False,
+            feed_claimable=False,
         ),
         feed_store.SourceType.OPENMHZ: SourceRuntimeSpec(
             source_type=feed_store.SourceType.OPENMHZ,
             topic_kind=TopicKind.SEGMENTED,
-            claimable=True,
-            default_cap=900,
-            url_base_default="https://api.openmhz.com/",
+            feed_claimable=True,
+            default_feed_cap=900,
+            url_base_default=constants.OPENMHZ_URL_BASE,
         ),
         feed_store.SourceType.FIRE_NOTIFICATIONS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.FIRE_NOTIFICATIONS,
             topic_kind=TopicKind.SEGMENTED,
-            claimable=True,
-            default_cap=300,
+            feed_claimable=True,
+            # Fire has no controlled mono-source benchmark yet. This is the
+            # existing bcfy_calls cap used as a provisional proxy; under the
+            # default 800-task ceiling it also prevents Fire from consuming
+            # the final 200 worker slots. See "Worker Cap Calibration" in
+            # collectors/README.md for the evidence, limitations, and update
+            # procedure.
+            default_feed_cap=600,
             url_base_env="FIRE_NOTIFICATIONS_URL_BASE",
         ),
     }
@@ -87,26 +93,26 @@ def source_spec(
     return SOURCE_RUNTIME_SPECS[source_type]
 
 
-def claimable_source_specs() -> dict[
+def feed_claimable_source_specs() -> dict[
     feed_store.SourceType,
     SourceRuntimeSpec,
 ]:
-    """Return VM-claimable source specs keyed by source type."""
+    """Return Feed-authority source specs keyed by source type."""
     return {
         source_type: spec
         for source_type, spec in SOURCE_RUNTIME_SPECS.items()
-        if spec.claimable
+        if spec.feed_claimable
     }
 
 
-def default_caps() -> dict[feed_store.SourceType, int]:
-    """Return default VM lease caps keyed by source type."""
+def default_feed_claim_caps() -> dict[feed_store.SourceType, int]:
+    """Return default Feed lease caps keyed by source type."""
     caps: dict[feed_store.SourceType, int] = {}
-    for source_type, spec in claimable_source_specs().items():
-        if spec.default_cap is None:
-            msg = f"Claimable source type {source_type.value} has no cap"
+    for source_type, spec in feed_claimable_source_specs().items():
+        if spec.default_feed_cap is None:
+            msg = f"Feed-claimable source type {source_type.value} has no cap"
             raise ValueError(msg)
-        caps[source_type] = spec.default_cap
+        caps[source_type] = spec.default_feed_cap
     return caps
 
 

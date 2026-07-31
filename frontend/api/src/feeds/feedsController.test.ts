@@ -49,6 +49,7 @@ describe('FeedsController', () => {
     archiveUrl: undefined,
     status: 'active',
     substatus: 'active',
+    childStatus: 'active',
     lastHeartbeat: Date.parse('2024-01-01T00:00:00Z'),
   };
 
@@ -128,6 +129,83 @@ describe('FeedsController', () => {
         {
           ...expectedFrontendFeed,
           statusReasonDetail: 'provider timeout',
+        },
+      ]);
+    });
+
+    it('should project effective lease health into display fields', async () => {
+      mockRequest.mockResolvedValueOnce({
+        data: [
+          {
+            ...mockBackendFeed,
+            source_type: 'bcfy_calls',
+            source_feed_id: '7017-1001',
+            status: 'active',
+            status_reason: null,
+            bcfy_calls_sid: '7017',
+            lease_status: 'failing',
+            lease_last_heartbeat: '2024-01-02T00:00:00Z',
+            lease_status_reason: 'source_unreachable',
+            effective_status: 'failing',
+            effective_status_reason: 'source_unreachable',
+            effective_status_reason_detail: 'calls API unreachable',
+            effective_last_heartbeat: '2024-01-02T00:00:00Z',
+          },
+        ],
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeeds();
+
+      expect(result).toEqual([
+        {
+          ...expectedFrontendFeed,
+          sourceType: 'bcfy_calls',
+          sourceFeedId: '7017-1001',
+          sourceUrl: 'https://www.broadcastify.com/calls/tg/7017/1001',
+          archiveUrl:
+            'https://www.broadcastify.com/calls/tg/7017/1001/archives',
+          // Display fields carry the effective (lease) health while the
+          // raw child lifecycle stays available for action eligibility.
+          status: 'error',
+          substatus: 'failing',
+          childStatus: 'active',
+          statusReason: 'source_unreachable',
+          statusReasonDetail: 'calls API unreachable',
+          lastHeartbeat: Date.parse('2024-01-02T00:00:00Z'),
+          bcfyCallsSid: '7017',
+          leaseStatus: 'failing',
+          leaseLastHeartbeat: Date.parse('2024-01-02T00:00:00Z'),
+          leaseStatusReason: 'source_unreachable',
+        },
+      ]);
+    });
+
+    it('should not fall back to child reason when effective health is clean', async () => {
+      mockRequest.mockResolvedValueOnce({
+        data: [
+          {
+            ...mockBackendFeed,
+            status: 'active',
+            status_reason: 'source_offline',
+            status_reason_detail: 'stale child detail',
+            effective_status: 'active',
+            effective_status_reason: null,
+            effective_status_reason_detail: null,
+            effective_last_heartbeat: null,
+          },
+        ],
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeeds();
+
+      expect(result).toEqual([
+        {
+          ...expectedFrontendFeed,
+          statusReason: undefined,
+          statusReasonDetail: undefined,
+          lastHeartbeat: undefined,
         },
       ]);
     });
@@ -687,9 +765,14 @@ describe('FeedsController', () => {
       expect(url).toBe('https://openmhz.com/system/my-system');
     });
 
-    it('echo always produces undefined', async () => {
-      const url = await listFeedsWithSourceType('echo', 'some-id');
-      expect(url).toBeUndefined();
+    it('echo produces the GCS storage index URL with sourceFeedId hash and trailing slash', async () => {
+      const url = await listFeedsWithSourceType(
+        'echo',
+        'Yakima_Co_LV_Fire_Disp-rapid_deploy-16'
+      );
+      expect(url).toBe(
+        'https://storage.googleapis.com/wd-echo-recordings-prod/index.html#Yakima_Co_LV_Fire_Disp-rapid_deploy-16/'
+      );
     });
 
     it('fire_notifications produces the audioplay URL', async () => {
@@ -796,6 +879,129 @@ describe('FeedsController', () => {
     it('returns undefined for unknown source type', async () => {
       const url = await listFeedsArchiveUrl('unknown' as SourceType, 'some-id');
       expect(url).toBeUndefined();
+    });
+  });
+
+  describe('listFeedHistory', () => {
+    it('should return converted history events on success', async () => {
+      const mockBackendEvent = {
+        id: 'evt_123',
+        feed_id: 'feed_123',
+        action: 'feed.recovered',
+        actor: 'user:google:admin@example.com',
+        occurred_at: '2026-06-26T12:34:56.000Z',
+        feed_revision_num: 2,
+        before_values: { status: 'failing' },
+        after_values: { status: 'active' },
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          history_events: [mockBackendEvent],
+          next_token: 'token_next',
+          total: 1,
+        },
+      });
+
+      const controller = new FeedsController();
+      const query = {
+        limit: 10,
+        nextToken: 'token_abc',
+        order: 'asc' as const,
+      };
+
+      const result = await controller.listFeedHistory(
+        mockAdminRequest,
+        'feed_123',
+        query
+      );
+
+      expect(result).toEqual({
+        historyEvents: [
+          {
+            id: 'evt_123',
+            feedId: 'feed_123',
+            action: 'feed.recovered',
+            actor: 'user:google:admin@example.com',
+            occurredAt: Date.parse('2026-06-26T12:34:56.000Z'),
+            feedRevision: 2,
+            beforeValues: { status: 'failing' },
+            afterValues: { status: 'active' },
+          },
+        ],
+        nextToken: 'token_next',
+        total: 1,
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/history?limit=10&next_token=token_abc&order=asc',
+        method: 'GET',
+      });
+    });
+
+    it('should succeed and return history events for a non-admin user', async () => {
+      const mockBackendEvent = {
+        id: 'evt_123',
+        feed_id: 'feed_123',
+        action: 'feed.recovered',
+        actor: 'user:google:admin@example.com',
+        occurred_at: '2026-06-26T12:34:56.000Z',
+        feed_revision_num: 2,
+        before_values: { status: 'failing' },
+        after_values: { status: 'active' },
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          history_events: [mockBackendEvent],
+          next_token: 'token_next',
+          total: 1,
+        },
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeedHistory(
+        mockNonAdminRequest,
+        'feed_123',
+        { limit: 10 }
+      );
+
+      expect(result).toEqual({
+        historyEvents: [
+          {
+            id: 'evt_123',
+            feedId: 'feed_123',
+            action: 'feed.recovered',
+            actor: 'user:google:admin@example.com',
+            occurredAt: Date.parse('2026-06-26T12:34:56.000Z'),
+            feedRevision: 2,
+            beforeValues: { status: 'failing' },
+            afterValues: { status: 'active' },
+          },
+        ],
+        nextToken: 'token_next',
+        total: 1,
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/history?limit=10',
+        method: 'GET',
+      });
+    });
+
+    it('should throw HTTP error if backend fails', async () => {
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
+      error.response = { status: 404 };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      await expect(
+        controller.listFeedHistory(mockAdminRequest, 'feed_123', {
+          limit: 10,
+        })
+      ).rejects.toThrow(/Not Found/);
     });
   });
 

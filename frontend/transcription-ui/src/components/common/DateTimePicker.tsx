@@ -1,6 +1,7 @@
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DateTimePicker as MuiDateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import type { PickersActionBarAction } from '@mui/x-date-pickers/PickersActionBar';
 
 export interface DateTimePickerProps {
   label: string;
@@ -9,6 +10,8 @@ export interface DateTimePickerProps {
   error?: boolean;
   helperText?: string;
   width?: string | number;
+  // Picker-popup buttons; wrappers with their own Clear/Apply pass ['accept'].
+  actions?: PickersActionBarAction[];
 }
 
 export function DateTimePicker({
@@ -18,6 +21,7 @@ export function DateTimePicker({
   error,
   helperText,
   width,
+  actions = ['clear', 'cancel', 'accept'],
 }: DateTimePickerProps) {
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
@@ -34,7 +38,7 @@ export function DateTimePicker({
             sx: width ? { width } : undefined,
           },
           actionBar: {
-            actions: ['clear', 'cancel', 'accept'],
+            actions,
           },
         }}
       />

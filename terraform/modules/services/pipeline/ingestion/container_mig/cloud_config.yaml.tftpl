@@ -1,0 +1,163 @@
+#cloud-config
+
+write_files:
+- path: /etc/container-env/${service_name}.env
+  permissions: "0600"
+  content: |
+${env_file_content}
+- path: /etc/sysctl.d/99-port-range.conf
+  permissions: "0644"
+  content: |
+    # Expand ephemeral TCP source-port range so a single VM can sustain
+    # tens of thousands of outbound connections to upstream Icecast/HTTP
+    # sources without exhausting the default 32768-60999 range. Required
+    # for multi-worker density (each worker may hold hundreds of long-lived
+    # connections). Applied via `sysctl --system` in runcmd.
+    net.ipv4.ip_local_port_range = 10000 65535
+
+    # TCP keepalive tuning (HANDOFF-01 from radio-transcription PR #359
+    # worker hardening). Detect half-open connections (NAT idle drops,
+    # network blips) before asyncpg/aiohttp issues a query against a dead
+    # socket. 60 + 3 * 10 = 90s detection budget aligns with the worker's
+    # 90s graceful shutdown (SHUTDOWN-01 in PR #359). Default kernel values
+    # are 7200s/75s/9 (~2h before declared dead) — far too lenient for our
+    # workload. Applied via `sysctl --system` in runcmd.
+    net.ipv4.tcp_keepalive_time = 60
+    net.ipv4.tcp_keepalive_intvl = 10
+    net.ipv4.tcp_keepalive_probes = 3
+%{ if enable_autohealing }
+- path: /etc/systemd/system/${service_name}-health.service
+  permissions: "0644"
+  content: |
+    [Unit]
+    Description=${service_name} VM Health agent (Python same-image hysteresis)
+    # Start VM Health after all configured worker units have been *attempted*
+    # (After=, not Requires=). If a worker is slow or never comes up, the
+    # agent still starts and reports worker HTTP status-code state. It returns
+    # 200 while any worker is healthy, and also during the 600s continuous
+    # all-workers-down grace window before reporting VM-unhealthy to the MIG.
+    After=docker.service network-online.target ${worker_systemd_after_units}
+    Requires=docker.service network-online.target
+
+    [Service]
+    Type=simple
+    Restart=always
+    RestartSec=10
+    Environment=HOME=/home
+    ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
+    ExecStartPre=-/usr/bin/docker rm -f ${service_name}-health
+    # COS ships with `iptables INPUT policy DROP` plus a small allow-list (lo,
+    # icmp, established, tcp/22 for SSH). The VM Health agent binds host port
+    # 8080 via `--network host`, so Google autohealing probes traverse host
+    # INPUT. Re-assert this rule idempotently whenever the health service starts
+    # so a health-container restart also repairs a flushed host firewall rule.
+    ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport ${vm_health_port} -j ACCEPT || iptables -I INPUT -p tcp --dport ${vm_health_port} -j ACCEPT'
+    ExecStartPre=/usr/bin/docker pull ${container_image}
+    # --network host lets the VM Health container reach worker health ports on
+    # the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values; do
+    # not mount or pass the broad worker env file into this container.
+    #
+    # VM Health timing contract:
+    # - 2s worker probe timeout: local loopback /healthz should be fast, and a
+    #   wedged worker must not stall the VM Health probe loop.
+    # - 5s probe interval: sample worker state faster than GCP's 30s health
+    #   check cadence.
+    # - 600s continuous all-workers-down hysteresis: only mark the VM unhealthy
+    #   after every configured worker is down for 10 minutes.
+    # The health agent is stateless and only needs to close its aiohttp session,
+    # so its stop budget can stay short; worker units keep the long drain budget.
+    ExecStart=/usr/bin/docker run --rm --name ${service_name}-health \
+        --network host \
+        -e VM_HEALTH_WORKER_ENDPOINTS=${vm_health_worker_endpoints} \
+        -e VM_HEALTH_PROBE_TIMEOUT_SEC=2.0 \
+        -e VM_HEALTH_PROBE_INTERVAL_SEC=5.0 \
+        -e VM_HEALTH_LISTEN_HOST=0.0.0.0 \
+        -e VM_HEALTH_LISTEN_PORT=${vm_health_port} \
+        -e VM_HEALTH_HYSTERESIS_SEC=600.0 \
+        ${container_image} python -m backend.pipeline.ingestion.vm_health_agent
+    ExecStop=/usr/bin/docker stop -t 10 ${service_name}-health
+    TimeoutStopSec=20
+
+    [Install]
+    WantedBy=multi-user.target
+%{ endif }
+- path: /etc/systemd/system/${service_name}@.service
+  permissions: "0644"
+  content: |
+    [Unit]
+    # %i is the systemd instance specifier — expanded to the worker index
+    # when each configured ${service_name}@N.service unit is enabled below.
+    Description=${service_name} worker container (instance %i)
+    After=docker.service network-online.target
+    Requires=docker.service network-online.target
+
+    [Service]
+    Type=simple
+    Restart=always
+    RestartSec=10
+    Environment=HOME=/home
+    ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
+    ExecStartPre=-/usr/bin/docker rm -f ${service_name}-%i
+    ExecStartPre=/usr/bin/docker pull ${container_image}
+    # /bin/sh -c forces arithmetic expansion of $((${vm_health_port} + %i)). systemd's
+    # native ExecStart= does NOT do shell arithmetic — it would pass the
+    # literal string "$((... + %i))" to docker and fail at parse time.
+    # %i is expanded by systemd BEFORE the line runs, so /bin/sh sees a
+    # real integer. WORKER_INDEX=%i is metadata for log labeling only;
+    # worker code does not load-bear on it (verified absent from
+    # backend/pipeline/ingestion/ in planning).
+    #
+    # `--sysctl` flags re-apply the host /etc/sysctl.d/99-port-range.conf
+    # values inside the worker's network namespace. Worker containers run
+    # with default Docker bridge networking (-p 127.0.0.1:808X:8080), which
+    # places them in their OWN netns, and net.* sysctls are per-netns —
+    # they DO NOT inherit from the host. Without these flags, workers would
+    # silently use kernel defaults (32768-60999 ephemeral ports, 7200s
+    # keepalive idle), which defeats the entire HANDOFF-01 contract from
+    # PR #359 worker hardening. The host /etc/sysctl.d/ values still apply
+    # to (a) the host network stack and (b) the VM Health container
+    # (which runs --network host so it shares the host netns), so we keep
+    # both for belt-and-suspenders coverage.
+    ExecStart=/bin/sh -c '/usr/bin/docker run --rm --name ${service_name}-%i \
+        --ulimit nofile=65535:65535 \
+        --sysctl net.ipv4.ip_local_port_range="10000 65535" \
+        --sysctl net.ipv4.tcp_keepalive_time=60 \
+        --sysctl net.ipv4.tcp_keepalive_intvl=10 \
+        --sysctl net.ipv4.tcp_keepalive_probes=3 \
+%{ for mount in tmpfs_mounts ~}
+        --tmpfs ${mount} \
+%{ endfor ~}
+        -p 127.0.0.1:$((${vm_health_port} + %i)):8080 \
+        --env-file /etc/container-env/${service_name}.env \
+        -e WORKER_INDEX=%i \
+        ${container_image}'
+    # HANDOFF-01 from radio-transcription PR #359: stop-timeout must
+    # accommodate the worker's 90s graceful_shutdown_timeout_sec.
+    # The supervisor stops admission, drains runners, exact-finalizes
+    # grants, and then closes shared clients inside that worker budget.
+    #
+    # Budget layering after SIGTERM:
+    #   - docker stop -t 100 → gives the worker 100s to exit before
+    #     SIGKILL. 10s margin over the worker's 90s graceful budget for
+    #     post-process-exit container teardown (image stop, fd flush).
+    #   - TimeoutStopSec=120 → gives `docker stop` itself 120s to return
+    #     before systemd kills it. 20s margin over docker's -t 100.
+    #
+    # Docker's default `-t 10` could SIGKILL the worker before its exact
+    # grants settle, leaving the remaining grants for heartbeat-expiry
+    # recovery.
+    ExecStop=/usr/bin/docker stop -t 100 ${service_name}-%i
+    TimeoutStopSec=120
+
+    [Install]
+    WantedBy=multi-user.target
+
+runcmd:
+- sysctl --system
+- systemctl daemon-reload
+%{ for worker_index in worker_indices }
+- systemctl enable --now ${service_name}@${worker_index}.service
+%{ endfor }
+%{ if enable_autohealing }
+- systemctl enable --now ${service_name}-health.service
+%{ endif }

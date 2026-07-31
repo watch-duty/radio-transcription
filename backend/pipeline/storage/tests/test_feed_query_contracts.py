@@ -217,9 +217,8 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
         self,
     ) -> None:
         lifecycle_sql = [
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
             feed_queries.RELEASE_FEED_SQL,
-            feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
         ]
 
@@ -264,12 +263,6 @@ class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
 
         self.assertNotIn("AND status = 'active'::feed_status", sql)
 
-    def test_batch_worker_release_requires_active_status(self) -> None:
-        sql = _sql_without_comments(feed_queries.RELEASE_FEEDS_BATCH_SQL)
-
-        self.assertIn("WHERE worker_id = $1", sql)
-        self.assertIn("AND status = 'active'::feed_status", sql)
-
     def test_admin_reset_and_delete_refuse_active_feeds(self) -> None:
         """Active feeds must be deactivated before reset or hard delete."""
         for sql in (
@@ -309,10 +302,10 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS DISTINCT FROM COALESCE"
-            r"\(\$7, 'system_unexpected_error'\)\s+"
+            r"WHEN feeds\.status_reason IS DISTINCT FROM COALESCE\(\s*"
+            r"\$7, 'system_unexpected_error'\s*\)\s+"
             r"THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
+            r"ELSE feeds\.status_reason_updated_at\s+END",
         )
         self.assertIn("WHERE f.id = $1", sql)
         self.assertIn("AND f.worker_id = $2", sql)
@@ -394,9 +387,10 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
+            r"WHEN feeds\.status_reason IS NOT NULL\s+"
+            r"OR feeds\.status_reason_detail IS NOT NULL\s+"
             r"THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
+            r"ELSE feeds\.status_reason_updated_at\s+END",
         )
         self.assertIn("failure_count = 0", sql)
         self.assertIn(
@@ -415,9 +409,10 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
+            r"WHEN feeds\.status_reason IS NOT NULL\s+"
+            r"OR feeds\.status_reason_detail IS NOT NULL\s+"
             r"THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
+            r"ELSE feeds\.status_reason_updated_at\s+END",
         )
         self.assertIn("status = 'unclaimed'::feed_status", sql)
 
@@ -436,9 +431,10 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
+            r"WHEN feeds\.status_reason IS NOT NULL\s+"
+            r"OR feeds\.status_reason_detail IS NOT NULL\s+"
             r"THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
+            r"ELSE feeds\.status_reason_updated_at\s+END",
         )
         self.assertIn("current_state.worker_id = $2", sql)
         self.assertIn("current_state.fencing_token = $3", sql)
@@ -525,21 +521,24 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "WITH\n"
             "    bcfy_feeds_claim AS MATERIALIZED (\n"
             "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status\n"
+            "        WHERE source_type = 'bcfy_feeds'\n"
+            "          AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $2\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
             "    ),\n"
             "    bcfy_calls_claim AS MATERIALIZED (\n"
             "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status\n"
+            "        WHERE source_type = 'bcfy_calls'\n"
+            "          AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $3\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
             "    ),\n"
             "    openmhz_claim AS MATERIALIZED (\n"
             "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status\n"
+            "        WHERE source_type = 'openmhz'\n"
+            "          AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $4\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
@@ -561,7 +560,8 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "    FROM claimed\n"
             "    WHERE feeds.id = claimed.id\n"
             "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-            "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+            "              feeds.last_processed_filename,\n"
+            "              feeds.last_bookmark_time,\n"
             "              feeds.fencing_token, feeds.failure_count,\n"
             "              feeds.status_reason\n"
             ")\n"
@@ -626,8 +626,10 @@ class TestBuildAcquireFeedsRecoverySql(unittest.TestCase):
         )
         self.assertIn("status = 'failing'::feed_status", sql)
         self.assertIn("status = 'active'::feed_status", sql)
-        self.assertIn("retry_after IS NULL OR retry_after <= NOW()", sql)
-        self.assertIn("last_heartbeat < NOW() - $2::interval", sql)
+        self.assertRegex(
+            sql, r"retry_after IS NULL\s+OR retry_after <= NOW\(\)"
+        )
+        self.assertRegex(sql, r"last_heartbeat < NOW\(\) - \$2::interval")
 
     def test_source_type_literals_inlined(self) -> None:
         sql = feed_queries.build_acquire_feeds_recovery_sql(
@@ -698,9 +700,9 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
         sql = _sql_without_comments(sync_feed_queries.HEARTBEAT_SQL)
 
         self.assertIn("status_reason_detail = NULL", sql)
-        self.assertIn(
-            "feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL",
+        self.assertRegex(
             sql,
+            r"feeds\.status_reason IS NOT NULL\s+OR feeds\.status_reason_detail IS NOT NULL",
         )
 
     def test_status_reason_timestamp_updates_are_conditional(self) -> None:

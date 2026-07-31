@@ -5,12 +5,18 @@ import Replay5Icon from '@mui/icons-material/Replay5';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
-import FormControlLabel from '@mui/material/FormControlLabel';
+import Chip from '@mui/material/Chip';
 import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import type { SxProps, Theme } from '@mui/material/styles';
+import { type SxProps, type Theme } from '@mui/material/styles';
+
+import { DEFAULT_PAN, DEFAULT_SPEED } from '../../audio/audioSettings';
+import { useIsNarrow } from '../../hooks/useIsNarrow';
+import { AudioSettingsMenu } from './control/AudioSettingsMenu';
+import { VolumeControl } from './control/VolumeControl';
+
+const PAN_LABELS: Record<number, string> = { '-1': 'L', '0': 'C', '1': 'R' };
 
 export interface AudioControlProps {
   isAudioPlaying: boolean;
@@ -20,10 +26,14 @@ export interface AudioControlProps {
   onFastForward: () => void;
   onFastRewind: () => void;
   onSkipTime: (offsetSeconds: number) => void;
-  playLatestAudio: boolean;
-  togglePlayLatestAudio: (checked: boolean) => void;
   disableControls?: boolean;
-  disableCheckbox?: boolean;
+  volumeDb?: number;
+  setVolumeDb?: (db: number) => void;
+  pan?: number;
+  setPan?: (pan: number) => void;
+  speed?: number;
+  setSpeed?: (speed: number) => void;
+  onReset?: () => void;
   sx?: SxProps<Theme>;
 }
 
@@ -35,46 +45,63 @@ export function AudioControl({
   onFastForward,
   onFastRewind,
   onSkipTime,
-  playLatestAudio,
-  togglePlayLatestAudio,
   disableControls = false,
-  disableCheckbox = false,
+  volumeDb,
+  setVolumeDb,
+  pan,
+  setPan,
+  speed,
+  setSpeed,
+  onReset,
   sx,
 }: AudioControlProps) {
+  const isNarrow = useIsNarrow();
+
+  const controlSize = isNarrow ? 'medium' : 'large';
+
+  const hasAudioSettings =
+    volumeDb !== undefined &&
+    setVolumeDb !== undefined &&
+    pan !== undefined &&
+    setPan !== undefined &&
+    speed !== undefined &&
+    setSpeed !== undefined;
+
   return (
     <Box
       sx={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
+        position: 'relative',
         width: '100%',
         mb: 2.5,
+        flexWrap: { xs: 'wrap', md: 'nowrap' },
+        gap: { xs: 1, md: 0 },
         ...sx,
       }}
     >
-      {/* Left spacer to balance the checkbox on the right */}
-      <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }} />
-
-      {/* Center: 7 control buttons */}
       <Box
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 0,
+          justifyContent: 'center',
+          mx: 'auto',
         }}
       >
         <Tooltip title="Rewind to previous detected speech">
           <span>
             <IconButton
               onClick={onFastRewind}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind to previous detected speech"
               disabled={disableControls}
             >
               <MoveToSpeechIcon
-                fontSize="large"
+                fontSize={controlSize}
                 sx={{ transform: 'scaleX(-1)' }}
               />
             </IconButton>
@@ -84,13 +111,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onSkipToPrevious}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind to previous segment"
               disabled={disableControls}
             >
-              <SkipPreviousIcon fontSize="large" />
+              <SkipPreviousIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -98,13 +125,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={() => onSkipTime(-5)}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind 5 seconds"
               disabled={disableControls}
             >
-              <Replay5Icon fontSize="large" />
+              <Replay5Icon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -112,16 +139,16 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onTogglePlayPause}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label={isAudioPlaying ? 'pause' : 'play'}
               disabled={disableControls}
             >
               {isAudioPlaying ? (
-                <PauseIcon fontSize="large" />
+                <PauseIcon fontSize={controlSize} />
               ) : (
-                <PlayArrowIcon fontSize="large" />
+                <PlayArrowIcon fontSize={controlSize} />
               )}
             </IconButton>
           </span>
@@ -130,13 +157,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={() => onSkipTime(5)}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance 5 seconds"
               disabled={disableControls}
             >
-              <Forward5Icon fontSize="large" />
+              <Forward5Icon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -144,13 +171,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onSkipToNext}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance to next segment"
               disabled={disableControls}
             >
-              <SkipNextIcon fontSize="large" />
+              <SkipNextIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -158,32 +185,59 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onFastForward}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance to next detected speech"
               disabled={disableControls}
             >
-              <MoveToSpeechIcon fontSize="large" />
+              <MoveToSpeechIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
       </Box>
 
-      {/* Right side: Checkbox */}
-      <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={playLatestAudio}
-              onChange={(e) => togglePlayLatestAudio(e.target.checked)}
+      {hasAudioSettings && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: { xs: 0.25, sm: 0.5 },
+            position: 'absolute',
+            left: 0,
+          }}
+        >
+          <VolumeControl
+            volumeDb={volumeDb}
+            setVolumeDb={setVolumeDb}
+            disableControls={disableControls}
+          />
+          <AudioSettingsMenu
+            pan={pan}
+            setPan={setPan}
+            speed={speed}
+            setSpeed={setSpeed}
+            onReset={onReset}
+            disableControls={disableControls}
+          />
+          {pan !== undefined && pan !== DEFAULT_PAN && (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`Pan ${PAN_LABELS[pan] ?? pan}`}
+              onDelete={setPan ? () => setPan(DEFAULT_PAN) : undefined}
             />
-          }
-          label="Always play latest audio"
-          slotProps={{ typography: { variant: 'body2' } }}
-          disabled={disableCheckbox || disableControls}
-        />
-      </Box>
+          )}
+          {speed !== undefined && speed !== DEFAULT_SPEED && (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${speed}×`}
+              onDelete={setSpeed ? () => setSpeed(DEFAULT_SPEED) : undefined}
+            />
+          )}
+        </Box>
+      )}
     </Box>
   );
 }

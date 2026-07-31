@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import io
 import os
-import shutil
 import unittest
 import uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import docker
+import numpy as np
 import requests as sync_requests
 import soundfile as sf
 from testcontainers.core.container import DockerContainer
@@ -45,10 +46,6 @@ _RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 # Audio constants
 _FLAC_MAGIC = b"fLaC"
-_BAD_STREAMINFO_FLAC = (
-    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
-)
-_ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
 def _docker_available() -> bool:
@@ -143,22 +140,20 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs_client = gcs_client.GcsClient()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
+        async def _pass_through_encode(pcm_path: Path) -> bytes | None:
+            data = await asyncio.to_thread(pcm_path.read_bytes)
+            await asyncio.to_thread(pcm_path.unlink, missing_ok=True)
+            return data or None
 
-        self.patcher_transcode = patch(
-            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._transcode_wav_to_flac",
-            AsyncMock(side_effect=_mock_transcode),
+        self.patcher_encode = patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._encode_pcm_segment_to_flac",
+            AsyncMock(side_effect=_pass_through_encode),
         )
-        self.patcher_transcode.start()
+        self.patcher_encode.start()
 
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""
-        self.patcher_transcode.stop()
+        self.patcher_encode.stop()
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         for key in MOCK_ENV_VARS:
@@ -209,6 +204,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         exit_code: int = 0,
         wait_delay: float = 0.01,
         wait_exception: Exception | None = None,
+        clock: Any = None,
     ):
         """Create side effect for _create_ffmpeg_process that writes segment files."""
 
@@ -216,8 +212,17 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _url: str, segment_pattern: str, _auth: str = ""
         ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
-            for index, segment in enumerate(segments):
-                (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
+            writing_done = asyncio.Event()
+
+            async def write_segments_task():
+                for index, segment in enumerate(segments):
+                    await asyncio.sleep(1.0)
+                    (segment_dir / f"chunk_{index:06d}.pcm").write_bytes(
+                        segment
+                    )
+                    if clock is not None:
+                        clock.advance(15)
+                writing_done.set()
 
             mock_proc = AsyncMock()
             mock_proc.pid = 12345
@@ -225,7 +230,11 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             mock_proc.terminate = MagicMock()
             mock_proc.stderr.readline = AsyncMock(return_value=b"")
 
+            write_task = asyncio.create_task(write_segments_task())
+            mock_proc._write_task = write_task
+
             async def _wait_impl() -> int:
+                await writing_done.wait()
                 await asyncio.sleep(wait_delay)
                 if wait_exception is not None:
                     raise wait_exception
@@ -308,7 +317,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         # Assert: GCS object content matches yielded segment bytes
         yielded_chunk, gcs_path = chunks_uploaded[0]
-        # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.wav"
+        # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.flac"
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
         self.assertEqual(downloaded, yielded_chunk)
@@ -320,7 +329,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
         self.assertEqual(row["failure_count"], 0)
 
-    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
@@ -328,15 +336,22 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_uploaded_segment_has_readable_flac_header(
         self, mock_create_ffmpeg
     ) -> None:
-        """No segment leaves ingestion with the unreadable muxer header."""
-        self.patcher_transcode.stop()
+        """No segment leaves ingestion unreadable -- exercises the real
+        (unmocked) in-process encode, not the pass-through test double.
+        """
+        self.patcher_encode.stop()
         try:
             feed = await self._lease_feed("flac-header-feed")
 
-            # The muxer emits a segment with a bad STREAMINFO header; the capture
-            # path must repair it before upload.
-            raw = _BAD_STREAMINFO_FLAC.read_bytes()
-            mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
+            # The primary process segments to headerless raw PCM; feed real
+            # samples through so the real encode has audio to compress.
+            sample_rate = 16000
+            t = np.arange(sample_rate * 15) / sample_rate
+            tone = (np.sin(2 * np.pi * 440 * t) * 20000).astype("<i2")
+            pcm_bytes = tone.tobytes()
+            mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
+                [pcm_bytes]
+            )
 
             shutdown = asyncio.Event()
             uploaded_paths = []
@@ -360,13 +375,14 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
             downloaded = await self._download_gcs_object(object_name)
 
-            # The repaired bytes differ from the raw muxer output and are now
-            # decodable by libsndfile (header accuracy is covered by the unit test).
-            self.assertNotEqual(downloaded, raw)
-            samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
-            self.assertGreater(len(samples), 0)
+            # Uploaded bytes are real, decodable FLAC (header accuracy for
+            # the encode itself is covered by the unit test).
+            self.assertEqual(downloaded[:4], _FLAC_MAGIC)
+            samples, sr = sf.read(io.BytesIO(downloaded), dtype="int16")
+            self.assertEqual(sr, sample_rate)
+            np.testing.assert_array_equal(samples, tone)
         finally:
-            self.patcher_transcode.start()
+            self.patcher_encode.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -431,14 +447,35 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], chunk_timestamps[-1])
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_stops_capture_after_partial_upload(
         self,
         mock_create_ffmpeg,
+        mock_now_utc,
     ) -> None:
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
+        import datetime  # noqa: PLC0415
+
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+
+        class MockClock:
+            def __init__(self, start_time: datetime.datetime) -> None:
+                self.current = start_time
+
+            def __call__(self) -> datetime.datetime:
+                return self.current
+
+            def advance(self, seconds: float) -> None:
+                self.current += datetime.timedelta(seconds=seconds)
+
+        clock = MockClock(t0)
+        mock_now_utc.side_effect = clock
+
         feed = await self._lease_feed("shutdown-feed")
 
         # Mock ffmpeg: 3 finalized segments; shutdown is checked between yields
@@ -447,7 +484,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _FLAC_MAGIC + b"\xcd" * 100,
             _FLAC_MAGIC + b"\xef" * 110,
         ]
-        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(segments)
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
+            segments, clock=clock
+        )
 
         shutdown = asyncio.Event()
         gcs_paths = []

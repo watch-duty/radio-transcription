@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -176,7 +176,9 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"backend/pipeline/segmentation/scripts/*.py" = ["INP001"]
 "model/**/*.py" = ["E501"]
+"model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
   "ALL",   # Ignore all linting rules for notebooks
 ]
@@ -238,6 +240,9 @@ known-first-party = ["backend", "local_dev"]
   "E501",   # Line too long
   "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
 ]
+"model/scripts/sft/oversample_bcfy_calls_production_shaped.py" = [
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
 "scripts/**/*.py" = ["E501"]
 "backend/pipeline/common/clients/audio_segments_client.py" = ["E501"]
 "backend/pipeline/common/clients/session_helper.py" = ["E501"]
@@ -283,16 +288,9 @@ known-first-party = ["backend", "local_dev"]
 "backend/pipeline/segmentation/transforms/stateless.py" = ["E501"]
 "backend/pipeline/segmentation/transforms/stitcher_engine.py" = ["E501"]
 "backend/pipeline/segmentation/utils.py" = ["E501"]
-"backend/pipeline/storage/audio_segment_queries.py" = ["E501"]
-"backend/pipeline/storage/connection.py" = ["E501"]
-"backend/pipeline/storage/feed_audit_sql.py" = ["E501"]
-"backend/pipeline/storage/feed_queries.py" = ["E501"]
-"backend/pipeline/storage/feed_store.py" = ["E501"]
-"backend/pipeline/storage/sync_feed_queries.py" = ["E501"]
 "backend/pipeline/transcription/main.py" = ["E501"]
 "backend/pipeline/transcription/processor.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/chirp.py" = ["E501"]
-"backend/pipeline/transcription/transcribers/gemini.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/local_api.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/mock.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/prompts.py" = ["E501"]

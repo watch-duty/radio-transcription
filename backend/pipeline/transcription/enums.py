@@ -10,3 +10,18 @@ class TranscriberType(StrEnum):
     GOOGLE_CHIRP_V3 = "google_chirp_v3"
     LOCAL_WHISPER = "local_whisper"
     GEMINI = "gemini"
+
+
+class TranscriptionStatus(StrEnum):
+    """Status categories for transcription pipeline telemetry."""
+
+    ATTEMPTS = "attempts"
+    SUCCESS = "success"
+    EMPTY = "empty"
+    UNINTELLIGIBLE = "unintelligible"
+    PARTIAL = "partial"
+    POLICY_BLOCKED = "policy_blocked"
+    TRANSIENT_ERROR = "transient_error"
+    PERMANENT_ERROR = "permanent_error"
+    FALLBACK = "fallback"
+    FALLBACK_UNAVAILABLE = "fallback_unavailable"

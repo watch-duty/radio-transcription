@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 import pytest
 import requests
+from google.cloud import storage
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
 _TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
@@ -32,6 +33,25 @@ async def _update_feed_bookmark(
         feed_id,
     )
     await conn.close()
+
+
+async def _deactivate_bcfy_calls_sid_lease(sid: str) -> None:
+    """Fence the temporary parent lease before deactivating its child Feed."""
+    conn = await asyncpg.connect(**_CONN_KWARGS)
+    try:
+        await conn.execute(
+            """
+            UPDATE public.ingestion_leases
+            SET status = 'deactivated'::public.feed_status,
+                worker_id = NULL,
+                last_heartbeat = NULL
+            WHERE source_type = 'bcfy_calls'
+              AND lease_key = $1
+            """,
+            sid,
+        )
+    finally:
+        await conn.close()
 
 
 def _create_and_cleanup_feed(
@@ -94,20 +114,34 @@ def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
     yield from _create_and_cleanup_feed(payload)
 
 
-@pytest.fixture(name="test_polling_feed")
-def create_test_polling_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary polling feed for testing.
+@pytest.fixture(name="test_sid_polling_feed")
+def create_test_sid_polling_feed() -> Generator[tuple[str, str]]:
+    """Create a temporary Calls Feed beneath its current SID authority.
+
+    Creating a ``bcfy_calls`` feed via the API provisions the parent SID
+    lease, membership properties, and active child in one transaction.
 
     Yields:
         tuple[str, str]: A tuple containing (feed_id, feed_name).
     """
+    sid = str(uuid.uuid4().fields[0])
+    group_id = "2912"
     feed_name = f"integration-test-polling-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
         "source_type": "bcfy_calls",
-        "source_feed_id": f"{uuid.uuid4().fields[0]}-{uuid.uuid4().fields[1]}",
+        "source_feed_id": f"{sid}-{group_id}",
     }
-    yield from _create_and_cleanup_feed(payload)
+    gen = _create_and_cleanup_feed(payload)
+    feed_id, _ = next(gen)
+    try:
+        yield feed_id, feed_name
+    finally:
+        asyncio.run(_deactivate_bcfy_calls_sid_lease(sid))
+        try:
+            next(gen)
+        except StopIteration:
+            pass
 
 
 @pytest.fixture(name="test_echo_feed")
@@ -118,10 +152,22 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         tuple[str, str]: A tuple containing (feed_id, source_feed_id).
     """
     feed_name = f"integration-test-echo-feed-{uuid.uuid4()}"
+    source_feed_id = f"src-{uuid.uuid4()}"
+    bucket_name = os.environ.get(
+        "ECHO_RECORDINGS_BUCKET", "echo-recordings-test"
+    )
+
+    # Create a dummy keep file to simulate GCS directory presence
+    # before creating the feed
+    gcs_client = storage.Client()
+    bucket = gcs_client.bucket(bucket_name)
+    blob = bucket.blob(f"{source_feed_id}/.keep")
+    blob.upload_from_string("")
+
     payload = {
         "name": feed_name,
         "source_type": "echo",
-        "source_feed_id": f"src-{uuid.uuid4()}",
+        "source_feed_id": source_feed_id,
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)
@@ -131,6 +177,11 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         try:
             next(gen)
         except StopIteration:
+            pass
+        # Clean up GCS keep file and dummy folder
+        try:
+            blob.delete()
+        except Exception:  # noqa: S110
             pass
 
 

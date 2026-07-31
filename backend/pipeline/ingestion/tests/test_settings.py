@@ -2,6 +2,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from backend.pipeline.ingestion import grant_control
 from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -58,8 +59,8 @@ class TestCollectorSettings(unittest.TestCase):
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
             "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-segmented-topic",
             "CAP_BCFY_FEEDS": "200",
-            "CAP_BCFY_CALLS": "400",
             "CAP_OPENMHZ": "700",
+            "CAP_FIRE_NOTIFICATIONS": "500",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -110,10 +111,33 @@ class TestCollectorSettings(unittest.TestCase):
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 200)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 200)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 700)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            500,
+        )
+
+    def test_phase1_expected_inputs(self) -> None:
+        """Loads Phase 1 lease-admission settings from environment."""
+        env = {
+            **_required_env(),
+            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
+            "STARTUP_STAGGER_MAX_SEC": "12.5",
+            "STARTUP_JITTER_MAX_SEC": "0.25",
+            "LEASE_POLL_JITTER_MAX_SEC": "0.75",
+            "WORKER_INDEX": "2",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.lease_admission_cycle_budget, 7)
+        self.assertEqual(settings.startup_stagger_max_sec, 12.5)
+        self.assertEqual(settings.startup_jitter_max_sec, 0.25)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.75)
+        self.assertEqual(settings.worker_index, 2)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -123,6 +147,11 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertIsInstance(settings.worker_id, uuid.UUID)
         self.assertEqual(settings.max_feeds_per_worker, 800)
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
+        self.assertEqual(settings.lease_admission_cycle_budget, 20)
+        self.assertEqual(settings.startup_stagger_max_sec, 60.0)
+        self.assertEqual(settings.startup_jitter_max_sec, 2.0)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 1.0)
+        self.assertIsNone(settings.worker_index)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
@@ -158,32 +187,64 @@ class TestCollectorSettings(unittest.TestCase):
             "projects/test-project/topics/test-topic",
         )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 240)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 900)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            600,
+        )
 
-    def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
-        """Allows zero/negative values because parsing does not enforce ranges."""
+    def test_calls_authority_and_work_defaults(self) -> None:
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(
+            set(settings.feed_claim_caps),
+            {
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            },
+        )
+        self.assertEqual(settings.worker_profile.name, "mixed")
+        _feed, sid = settings.worker_profile.allocations
+        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
+        self.assertTrue(sid.claims_enabled)
+        self.assertEqual(settings.bcfy_calls_work_concurrency, 16)
+        self.assertEqual(settings.bcfy_calls_work_queue_capacity, 32)
+
+    def test_sid_runtime_settings_from_environment(self) -> None:
         env = {
             **_required_env(),
-            "MAX_FEEDS_PER_WORKER": "0",
-            "LEASE_POLL_INTERVAL_SEC": "0.0",
-            "HEARTBEAT_INTERVAL_SEC": "-1.0",
-            "ALLOYDB_POOL_MIN_SIZE": "0",
-            "ALLOYDB_POOL_MAX_SIZE": "-2",
-            "ABANDONMENT_WINDOW_SEC": "-0.5",
+            "MAX_SIDS_PER_WORKER": "19",
+            "SID_LEASE_ADMISSION_CYCLE_BUDGET": "3",
+            "BCFY_CALLS_WORK_CONCURRENCY": "12",
         }
 
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.max_feeds_per_worker, 0)
-        self.assertEqual(settings.lease_poll_interval_sec, 0.0)
-        self.assertEqual(settings.heartbeat_interval_sec, -1.0)
-        self.assertEqual(settings.db.pool_min_size, 0)
-        self.assertEqual(settings.db.pool_max_size, -2)
-        self.assertEqual(settings.abandonment_window_sec, -0.5)
+        self.assertEqual(settings.bcfy_calls_work_concurrency, 12)
+        self.assertEqual(settings.bcfy_calls_work_queue_capacity, 24)
+        _feed, sid = settings.worker_profile.allocations
+        self.assertIs(sid.domain_id, grant_control.DomainId.SID)
+        self.assertEqual(sid.owned_cap, 19)
+        self.assertEqual(sid.claims_per_cycle, 3)
+        self.assertTrue(sid.claims_enabled)
+
+    def test_zero_process_capacity_fails_closed(self) -> None:
+        """Reject a topology that cannot own even one selected grant."""
+        env = {
+            **_required_env(),
+            "MAX_FEEDS_PER_WORKER": "0",
+        }
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            self.assertRaisesRegex(ValueError, "feed owned_cap"),
+        ):
+            CollectorSettings()
 
     def test_caps_partial_env_override(self) -> None:
         """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""
@@ -192,22 +253,26 @@ class TestCollectorSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
-        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
-        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
-        self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.feed_claim_caps[SourceType.BCFY_FEEDS], 999)
+        self.assertNotIn(SourceType.BCFY_CALLS, settings.feed_claim_caps)
+        self.assertEqual(settings.feed_claim_caps[SourceType.OPENMHZ], 900)
+        self.assertEqual(
+            settings.feed_claim_caps[SourceType.FIRE_NOTIFICATIONS],
+            600,
+        )
 
-    def test_caps_keys_match_default_caps_registry(self) -> None:
-        """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
+    def test_feed_claim_cap_keys_match_default_registry(self) -> None:
         with patch.dict("os.environ", _required_env(), clear=True):
             settings = CollectorSettings()
 
-        # ECHO is intentionally absent: Echo feeds aren't VM-leased.
-        self.assertNotIn(SourceType.ECHO, settings.caps)
-        self.assertIn(SourceType.BCFY_FEEDS, settings.caps)
-        self.assertIn(SourceType.BCFY_CALLS, settings.caps)
-        self.assertIn(SourceType.OPENMHZ, settings.caps)
-        self.assertIn(SourceType.FIRE_NOTIFICATIONS, settings.caps)
+        self.assertEqual(
+            set(settings.feed_claim_caps),
+            {
+                SourceType.BCFY_FEEDS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            },
+        )
 
     def test_invalid_missing_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is missing."""
@@ -254,12 +319,98 @@ class TestCollectorSettings(unittest.TestCase):
             with self.assertRaises(ValueError):
                 CollectorSettings()
 
+    def test_invalid_lease_admission_cycle_budget_raises(self) -> None:
+        """Rejects non-numeric, zero, and negative admission budgets."""
+        for value in ("not-an-int", "0", "-1"):
+            with self.subTest(value=value):
+                env = {
+                    **_required_env(),
+                    "LEASE_ADMISSION_CYCLE_BUDGET": value,
+                }
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
+    def test_invalid_negative_startup_and_poll_jitter_raise(self) -> None:
+        """Rejects non-numeric and negative pacing/jitter values."""
+        cases = (
+            ("STARTUP_STAGGER_MAX_SEC", "not-a-float"),
+            ("STARTUP_STAGGER_MAX_SEC", "-0.1"),
+            ("STARTUP_JITTER_MAX_SEC", "not-a-float"),
+            ("STARTUP_JITTER_MAX_SEC", "-0.1"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "not-a-float"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "-0.1"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
+    def test_nonfinite_startup_and_poll_jitter_raise(self) -> None:
+        """Rejects NaN and infinity for pacing/jitter values."""
+        cases = (
+            ("STARTUP_STAGGER_MAX_SEC", "nan"),
+            ("STARTUP_STAGGER_MAX_SEC", "inf"),
+            ("STARTUP_STAGGER_MAX_SEC", "-inf"),
+            ("STARTUP_JITTER_MAX_SEC", "nan"),
+            ("STARTUP_JITTER_MAX_SEC", "inf"),
+            ("STARTUP_JITTER_MAX_SEC", "-inf"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "nan"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "inf"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "-inf"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
+    def test_zero_pacing_values_disable_delays(self) -> None:
+        """Allows zero delay and jitter values to disable pacing."""
+        env = {
+            **_required_env(),
+            "STARTUP_STAGGER_MAX_SEC": "0",
+            "STARTUP_JITTER_MAX_SEC": "0",
+            "LEASE_POLL_JITTER_MAX_SEC": "0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.startup_stagger_max_sec, 0.0)
+        self.assertEqual(settings.startup_jitter_max_sec, 0.0)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.0)
+
+    def test_worker_index_nullable_and_invalid_values(self) -> None:
+        """Parses WORKER_INDEX when present and allows it to be absent."""
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings()
+
+        self.assertIsNone(settings.worker_index)
+
+        env = {**_required_env(), "WORKER_INDEX": "2"}
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.worker_index, 2)
+
+        env = {**_required_env(), "WORKER_INDEX": "not-an-int"}
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaises(ValueError):
+                CollectorSettings()
+
     def test_invalid_task_cancel_budget_exceeds_graceful_shutdown_raises(
         self,
     ) -> None:
-        """SHUTDOWN-02: ValueError raised when task_cancel_budget_sec +
-        2s settle exceeds graceful_shutdown_timeout_sec (D-03 / D-11).
-        """
+        """Reject a cooperative drain budget without finalization headroom."""
         env = {
             **_required_env(),
             "TASK_CANCEL_BUDGET_SEC": "120.0",
@@ -276,9 +427,7 @@ class TestCollectorSettings(unittest.TestCase):
     def test_edge_case_task_cancel_budget_at_boundary_does_not_raise(
         self,
     ) -> None:
-        """Boundary: task_cancel_budget_sec + 2.0 == graceful_shutdown_
-        timeout_sec is allowed (D-03 uses `>`, not `>=`).
-        """
+        """Allow exactly two seconds of finalization headroom."""
         env = {
             **_required_env(),
             "TASK_CANCEL_BUDGET_SEC": "88.0",

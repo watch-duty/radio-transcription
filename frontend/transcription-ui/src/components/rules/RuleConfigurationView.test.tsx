@@ -15,6 +15,7 @@ import { type Feed, type Rule, SourceType } from '@transcription/common';
 
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
+import { dryRunRule } from '../../service/dryRunRule';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
@@ -40,6 +41,10 @@ vi.mock('../../service/deleteRule', () => ({
 
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+}));
+
+vi.mock('../../service/dryRunRule', () => ({
+  dryRunRule: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -145,6 +150,26 @@ describe('RuleConfigurationView', () => {
       });
     });
 
+    it("displays a rule's tags as chips in the table", async () => {
+      vi.mocked(listRules).mockResolvedValue([
+        {
+          ...mockRules[0],
+          tags: [
+            { key: 'geo_event_type', value: 'flooding' },
+            { key: 'geo_event_type', value: 'wildfire' },
+          ],
+        },
+      ]);
+
+      renderView();
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('geo_event_type: flooding, wildfire')
+        ).toBeInTheDocument();
+      });
+    });
+
     it('validates empty required fields and displays interactive errors', async () => {
       renderView();
 
@@ -233,6 +258,7 @@ describe('RuleConfigurationView', () => {
               keywords: ['dispatch'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );
@@ -242,6 +268,120 @@ describe('RuleConfigurationView', () => {
         );
         expect(within(formCard).getByLabelText('Rule Name')).toHaveValue('');
       });
+    });
+
+    it('adds a tag and includes it in the create payload', async () => {
+      vi.mocked(createRule).mockResolvedValue(mockRules[0]);
+
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'dispatch' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Value'), {
+        target: { value: 'flooding' },
+      });
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: 'Add Tag' })
+      );
+
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: /Create Rule/i })
+      );
+
+      await waitFor(() => {
+        expect(createRule).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tags: [{ key: 'geo_event_type', value: 'flooding' }],
+          }),
+          'fake-jwt-token-xyz'
+        );
+      });
+    });
+
+    it('adds a tag on Enter without submitting the form', async () => {
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+      const valueField = within(formCard).getByLabelText('Value');
+      fireEvent.change(valueField, { target: { value: 'flooding' } });
+      fireEvent.keyDown(valueField, { key: 'Enter', code: 'Enter' });
+
+      // The tag row was added (its value is now shown in a row field)...
+      await waitFor(() => {
+        expect(
+          within(formCard).getByDisplayValue('geo_event_type')
+        ).toBeInTheDocument();
+      });
+      // ...and the form was NOT submitted.
+      expect(createRule).not.toHaveBeenCalled();
+    });
+
+    it("loads an existing rule's tags into the editor", async () => {
+      vi.mocked(listRules).mockResolvedValue([
+        {
+          ...mockRules[0],
+          tags: [{ key: 'geo_event_type', value: 'flooding' }],
+        },
+      ]);
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('Evacuation Trigger')).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Edit Evacuation Trigger' })
+      );
+
+      const editFormCard = screen.getByTestId('rule-config-card');
+      expect(
+        within(editFormCard).getByDisplayValue('geo_event_type')
+      ).toBeInTheDocument();
+      expect(
+        within(editFormCard).getByDisplayValue('flooding')
+      ).toBeInTheDocument();
+    });
+
+    it('blocks submit and shows an error when a tag is missing its value', async () => {
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'dispatch' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+
+      fireEvent.click(
+        within(formCard).getByRole('button', { name: /Create Rule/i })
+      );
+
+      expect(
+        screen.getByText('Both key and value must be populated to add a tag.')
+      ).toBeInTheDocument();
+      expect(createRule).not.toHaveBeenCalled();
     });
 
     it('supports transitioning to edit mode, cancelling, and saving updates', async () => {
@@ -307,6 +447,7 @@ describe('RuleConfigurationView', () => {
               keywords: ['evacuate', 'evacuation'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );
@@ -403,9 +544,79 @@ describe('RuleConfigurationView', () => {
               keywords: ['evacuate', 'evacuation'],
               caseSensitive: false,
             },
+            tags: [],
           },
           'fake-jwt-token-xyz'
         );
+      });
+    });
+    it('supports dry run testing of a rule configuration', async () => {
+      vi.mocked(dryRunRule).mockResolvedValue({
+        hitCount: 45,
+        totalEvaluated: 5000,
+        examples: [
+          {
+            feedId: '1',
+            audioSegmentId: '123',
+            text: 'This is an evacuate test transcript.',
+            matchedSpans: [
+              { startIndex: 11, endIndex: 19, matchedText: 'evacuate' },
+            ],
+          },
+        ],
+      });
+
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Evacuation Test Rule' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'evacuate' },
+      });
+
+      const testBtn = within(formCard).getByRole('button', {
+        name: /Test Rule/i,
+      });
+      fireEvent.click(testBtn);
+
+      expect(screen.getByText('Test Rule Results')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Running rule against historical transcripts/i)
+      ).toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(dryRunRule).toHaveBeenCalledTimes(1);
+        expect(dryRunRule).toHaveBeenCalledWith(
+          {
+            daysLookback: 1,
+            rule: {
+              ruleName: 'Evacuation Test Rule',
+              description: undefined,
+              isActive: true,
+              scope: { level: 'GLOBAL', targetFeeds: [] },
+              conditions: {
+                evaluationType: 'KEYWORD_MATCH',
+                operator: 'ANY',
+                keywords: ['evacuate'],
+                caseSensitive: false,
+              },
+              tags: [],
+            },
+          },
+          'fake-jwt-token-xyz'
+        );
+
+        // The modal should display the results
+        expect(
+          screen.getByText(
+            /Rule matched 45 of 5,000 transcripts evaluated from the past 1 day/i
+          )
+        ).toBeInTheDocument();
+        expect(screen.getByText('Matched examples')).toBeInTheDocument();
+        expect(screen.getByText('evacuate')).toBeInTheDocument();
       });
     });
   });

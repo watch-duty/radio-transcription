@@ -1,27 +1,35 @@
 import { useState } from 'react';
 
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import LinkIcon from '@mui/icons-material/Link';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import FlagIcon from '@mui/icons-material/Flag';
+import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { type TranscriptAnnotationData } from '@transcription/common';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  type Annotation,
+  AudioClassification,
+  type TranscriptAnnotationData,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { useUserInfo } from '../../hooks/useUserInfo';
+import { flagSegment } from '../../service/flagSegment';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
+  findTranscriptFlagAnnotation,
 } from '../../utils/annotationUtils';
+import { cacheAudioSegment } from '../../utils/cacheUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
-import { SegmentInfoPopover } from './SegmentInfoPopover';
+import { TranscriptSharePopover } from './TranscriptSharePopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -38,6 +46,7 @@ interface TranscriptRowProps {
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
   isTopAudioSegmentRow?: boolean;
+  isNarrow?: boolean;
 }
 
 export function TranscriptRow({
@@ -55,9 +64,12 @@ export function TranscriptRow({
   redactTranscripts = false,
   onRowClick,
   isTopAudioSegmentRow = false,
+  isNarrow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
-  const { isAdmin } = useAuth();
+  const { token } = useAuth();
+  const { data: user } = useUserInfo(token);
+  const queryClient = useQueryClient();
 
   const [isHovered, setIsHovered] = useState(false);
 
@@ -65,6 +77,46 @@ export function TranscriptRow({
 
   const isSilence = !!audioSegment.isSilenceBundle;
   const isOutage = !!audioSegment.isOutageBundle;
+
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const flagAnnotation = findTranscriptFlagAnnotation(audioSegment.annotations);
+  const flagData = flagAnnotation?.data as
+    | { flaggedByUserIds: string[] }
+    | undefined;
+  const flaggedByUserIds = flagData?.flaggedByUserIds || [];
+  const hasUserFlagged = !!user && flaggedByUserIds.includes(user.email);
+
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
+    : false;
+  const hasErrorsWithText = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0 && !!transcriptAnnotation.text
+    : false;
+  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
+  const isMissingTextButSpeech =
+    !!transcriptAnnotation &&
+    !transcriptAnnotation.text &&
+    audioSegment.classification === AudioClassification.SPEECH &&
+    !hasErrors;
+  const isPlaceholder =
+    isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
+
+  const degradationReasons: string[] = [];
+  if (audioSegment.missingPriorContext && audioSegment.missingPostContext) {
+    degradationReasons.push(
+      'Audio recording was cut off at the beginning and end'
+    );
+  } else if (audioSegment.missingPriorContext) {
+    degradationReasons.push('Audio recording was cut off at the beginning');
+  } else if (audioSegment.missingPostContext) {
+    degradationReasons.push('Audio recording was cut off at the end');
+  }
+  if (hasErrorsWithText && transcriptAnnotation) {
+    degradationReasons.push(...transcriptAnnotation.errors);
+  }
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
@@ -81,22 +133,16 @@ export function TranscriptRow({
       return '[Waiting on transcript]';
     }
 
-    if (transcriptAnnotation.errors.length > 0) {
+    if (transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text) {
       return '[Transcription failed]';
+    }
+
+    if (isMissingTextButSpeech) {
+      return '[Possible speech detected. No transcription available]';
     }
 
     return transcriptAnnotation.text;
   }
-
-  const transcriptAnnotation = findTranscriptAnnotationData(
-    audioSegment.annotations
-  );
-
-  const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0
-    : false;
-  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -124,6 +170,42 @@ export function TranscriptRow({
     }
     return theme.palette.primary.light;
   };
+
+  const flagMutation = useMutation({
+    mutationFn: async () => {
+      if (!user || !token) return;
+
+      const newAnnotation = await flagSegment(
+        audioSegment.id,
+        !hasUserFlagged,
+        token
+      );
+      return newAnnotation;
+    },
+    onSuccess: (updatedAnnotation) => {
+      triggerSnackbar(
+        hasUserFlagged ? 'Flag removed' : 'Transcript flagged as incorrect'
+      );
+      if (!updatedAnnotation) return;
+      // Update cache immediately to avoid flashing
+      cacheAudioSegment(queryClient, audioSegment.id, (segment) => {
+        const oldFlagAnnotation = findTranscriptFlagAnnotation(
+          segment.annotations
+        );
+        const newAnnotations = segment.annotations.filter(
+          (a: Annotation) => a !== oldFlagAnnotation
+        );
+        newAnnotations.push(updatedAnnotation);
+        return {
+          ...segment,
+          annotations: newAnnotations,
+        };
+      });
+    },
+    onError: () => {
+      triggerSnackbar('Failed to flag transcript');
+    },
+  });
 
   return (
     <Box
@@ -168,58 +250,131 @@ export function TranscriptRow({
         id={`transcript-${audioSegment.id}`}
         divider={index < totalAudioSegments - 1}
         sx={{
-          display: 'flex',
+          display: { xs: 'grid', sm: 'flex' },
+          gridTemplateColumns: { xs: '1fr auto', sm: 'unset' },
+          gridTemplateRows: { xs: 'auto auto', sm: 'unset' },
+          gridTemplateAreas: {
+            xs: `
+              "meta    actions"
+              "text    text"
+            `,
+            sm: 'unset',
+          },
           alignItems: 'center',
-          gap: 2,
+          columnGap: { xs: 1, sm: 2 },
+          rowGap: { xs: 0.25, sm: 2 },
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
           borderLeft: `5px solid ${getBorderColor()}`,
-          pt: isSilence || isOutage ? '0px !important' : undefined,
-          pb: isSilence || isOutage ? '0px !important' : undefined,
+          pt:
+            isSilence || isOutage
+              ? '0px !important'
+              : { xs: 0.75, sm: undefined },
+          pb:
+            isSilence || isOutage
+              ? '0px !important'
+              : { xs: 0.75, sm: undefined },
+          px: { xs: 1.5, sm: 2 },
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
         onClick={() => onRowClick(audioSegment.id)}
       >
+        {/* Meta Box (Play, Alert, Time/Duration) */}
         <Box
           sx={{
-            width: theme.spacing(3),
+            gridArea: { xs: 'meta', sm: 'unset' },
             display: 'flex',
-            justifyContent: 'center',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: { xs: 1, sm: 2 },
             flexShrink: 0,
+            width: { xs: '100%', sm: 'auto' },
           }}
         >
-          <AlertTooltip
-            evaluationDecisions={
-              isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
-            }
-            ruleIdToNameMap={ruleIdToNameMap}
-            rulesLoading={rulesLoading}
-          />
-        </Box>
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            width: 90,
-            flexShrink: 0,
-          }}
-        >
-          {!isSilence && (
-            <Typography variant="caption" color="text.secondary">
-              {currentDate.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                timeZoneName: 'short',
-                hour12: false,
-              })}
-            </Typography>
-          )}
-          {!isOngoingSilence && (
+          {/* Play Control (First on mobile, third on desktop) */}
+          <Box
+            sx={{
+              order: { xs: 1, sm: 3 },
+              width: theme.spacing(5),
+              height: theme.spacing(5),
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {!isOutage && (
+              <TranscriptPlayControl
+                audioUri={audioSegment.playbackAudioUri ?? ''}
+                segmentId={audioSegment.id}
+                onToggleAudio={onToggleAudio}
+                isAudioPlaying={isAudioPlaying}
+                currentlyPlayingSegmentId={
+                  isCurrentlyPlaying
+                    ? audioSegment.id
+                    : currentlyPlayingSegmentId
+                }
+                hideButton={isNarrow ? false : !isHovered}
+              />
+            )}
+          </Box>
+
+          {/* Alert Tooltip (Second on mobile, first on desktop) */}
+          <Box
+            sx={{
+              order: { xs: 2, sm: 1 },
+              width: {
+                xs:
+                  (evaluationAnnotation?.decisions?.length ?? 0) > 0
+                    ? theme.spacing(3)
+                    : 0,
+                sm: theme.spacing(3),
+              },
+              display:
+                (evaluationAnnotation?.decisions?.length ?? 0) > 0
+                  ? 'flex'
+                  : { xs: 'none', sm: 'flex' },
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <AlertTooltip
+              evaluationDecisions={
+                isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
+              }
+              ruleIdToNameMap={ruleIdToNameMap}
+              rulesLoading={rulesLoading}
+            />
+          </Box>
+
+          {/* Time & Duration Box (Third on mobile, second on desktop) */}
+          <Box
+            sx={{
+              order: { xs: 3, sm: 2 },
+              display: 'flex',
+              flexDirection: { xs: 'row', sm: 'column' },
+              alignItems: { xs: 'center', sm: 'flex-end' },
+              gap: { xs: 1, sm: 0 },
+              width: { xs: 'auto', sm: 90 },
+              flexShrink: 0,
+            }}
+          >
+            {!isSilence && (
+              <Typography variant="caption" color="text.secondary">
+                {currentDate.toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  timeZoneName: 'short',
+                  hour12: false,
+                })}
+              </Typography>
+            )}
+            {/* For ongoing silence at the live edge, display elapsed time without seconds
+                to keep the running duration informative without causing second-by-second visual jitter during polling. */}
             <Typography
               variant="caption"
               color="text.secondary"
@@ -231,40 +386,22 @@ export function TranscriptRow({
               {formatDuration(
                 (new Date(audioSegment.endTimestamp).getTime() -
                   new Date(audioSegment.startTimestamp).getTime()) /
-                  1000
+                  1000,
+                !isOngoingSilence
               )}
             </Typography>
-          )}
+          </Box>
         </Box>
+
+        {/* Text Box */}
         <Box
           sx={{
-            width: theme.spacing(5),
-            height: theme.spacing(5),
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          {!isOutage && (
-            <TranscriptPlayControl
-              audioUri={audioSegment.playbackAudioUri ?? ''}
-              segmentId={audioSegment.id}
-              onToggleAudio={onToggleAudio}
-              isAudioPlaying={isAudioPlaying}
-              currentlyPlayingSegmentId={
-                isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
-              }
-              hideButton={!isHovered}
-            />
-          )}
-        </Box>
-        <Box
-          sx={{
+            gridArea: { xs: 'text', sm: 'unset' },
             flexGrow: 1,
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
+            mt: 0,
           }}
         >
           <Typography
@@ -282,98 +419,75 @@ export function TranscriptRow({
               transition: 'filter 0.3s ease, opacity 0.3s ease',
               filter: redactTranscripts ? 'blur(6px)' : 'none',
               opacity: redactTranscripts ? 0.6 : 1,
-              fontStyle:
-                isSilence || isWaiting || hasErrors || isOutage
-                  ? 'italic'
-                  : 'normal',
+              fontStyle: isPlaceholder ? 'italic' : 'normal',
             }}
           >
             {isPlaceholder ? (
               renderTranscriptionText(transcriptAnnotation)
             ) : (
-              <HighlightedTranscript
-                text={transcriptAnnotation?.text ?? ''}
-                ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
-              />
+              <>
+                {hasErrorsWithText && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'block',
+                      typography: 'caption',
+                      fontStyle: 'italic',
+                      color: 'error.main',
+                      mb: 1,
+                    }}
+                  >
+                    [Transcript may be incomplete]
+                  </Box>
+                )}
+                <HighlightedTranscript
+                  text={transcriptAnnotation?.text ?? ''}
+                  ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+                />
+              </>
             )}
           </Typography>
-          {!isSilence &&
-            !isOutage &&
-            (audioSegment.missingPriorContext ||
-              audioSegment.missingPostContext) && (
-              <Tooltip
-                title={`Transcription may be degraded: missing ${[
-                  audioSegment.missingPriorContext && 'prior',
-                  audioSegment.missingPostContext && 'post',
-                ]
-                  .filter(Boolean)
-                  .join(' and ')} audio context.`}
-              >
-                <WarningAmberIcon
-                  color="warning"
-                  fontSize="small"
-                  sx={{
-                    flexShrink: 0,
-                    mt: 0.25, // Align slightly down to match text baseline
-                  }}
-                />
-              </Tooltip>
-            )}
         </Box>
-        <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-          {!isSilence && !isOutage && (
-            <Tooltip title="Copy transcript">
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label="copy transcript"
-                  onClick={(e) => {
-                    if (transcriptAnnotation?.text) {
-                      e.stopPropagation();
-                      navigator.clipboard.writeText(transcriptAnnotation.text);
-                      triggerSnackbar('Transcript copied');
-                    }
-                  }}
-                  sx={{ cursor: 'copy' }}
-                  disabled={
-                    !transcriptAnnotation ||
-                    transcriptAnnotation.errors.length > 0
-                  }
-                >
-                  <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          )}
-          <Tooltip title="Copy transcript deep link">
+        <Box
+          sx={{
+            gridArea: { xs: 'actions', sm: 'unset' },
+            flexShrink: 0,
+            alignSelf: 'center',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          {!isOutage && (
             <IconButton
               size="small"
-              aria-label="copy deeplink"
               onClick={(e) => {
                 e.stopPropagation();
-                const url = new URL(
-                  window.location.origin + window.location.pathname
-                );
-                url.searchParams.set('feedId', audioSegment.feedId);
-                url.searchParams.set('segmentId', audioSegment.id);
-                url.searchParams.set(
-                  'timestamp',
-                  new Date(audioSegment.startTimestamp).getTime().toString()
-                );
-                navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Transcript link copied');
+                flagMutation.mutate();
               }}
-              sx={{ cursor: 'copy' }}
+              disabled={flagMutation.isPending}
+              title={
+                hasUserFlagged ? 'Remove flag' : 'Flag transcript as incorrect'
+              }
+              sx={{ mr: 1 }}
             >
-              <LinkIcon fontSize="small" />
+              {flagMutation.isPending ? (
+                <CircularProgress size={20} color="inherit" />
+              ) : hasUserFlagged ? (
+                <FlagIcon fontSize="small" color="error" />
+              ) : (
+                <FlagOutlinedIcon fontSize="small" />
+              )}
             </IconButton>
-          </Tooltip>
-          {isAdmin && (
-            <SegmentInfoPopover
-              audioSegment={audioSegment}
-              triggerSnackbar={triggerSnackbar}
-            />
           )}
+          <TranscriptSharePopover
+            audioSegment={audioSegment}
+            transcriptAnnotation={transcriptAnnotation}
+            isSilence={isSilence}
+            isOutage={isOutage}
+            hasErrors={hasErrors}
+            degradationReasons={degradationReasons}
+            triggerSnackbar={triggerSnackbar}
+          />
         </Box>
       </ListItem>
     </Box>

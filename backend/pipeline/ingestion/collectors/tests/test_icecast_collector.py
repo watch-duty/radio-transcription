@@ -1,17 +1,20 @@
 import asyncio
 import datetime
+import io
 import os
-import shutil
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import constants
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
@@ -30,6 +33,32 @@ MOCK_ENV_VARS = {
 
 # Static UUID for consistent test assertions
 TEST_FEED_ID = uuid.UUID("12345678-1234-5678-1234-567812345678")
+
+
+class IncrementalClock:
+    def __init__(
+        self, start_time: datetime.datetime, steps: float | list[float] = 15.0
+    ) -> None:
+        self.current = start_time
+        if isinstance(steps, list):
+            self.steps = [datetime.timedelta(seconds=s) for s in steps]
+            self.step = None
+        else:
+            self.steps = None
+            self.step = datetime.timedelta(seconds=steps)
+        self.idx = 0
+
+    def __call__(self) -> datetime.datetime:
+        ret = self.current
+        if self.step is not None:
+            self.current += self.step
+        elif self.steps is not None:
+            if self.idx < len(self.steps):
+                self.current += self.steps[self.idx]
+                self.idx += 1
+            else:
+                self.current += datetime.timedelta(seconds=1.0)
+        return ret
 
 
 def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
@@ -98,6 +127,17 @@ def _assert_collector_failure(
     testcase.assertEqual(str(exc), reason)
 
 
+def _make_pcm_segment(duration_sec: float = CHUNK_DURATION_SECONDS) -> bytes:
+    """Create dummy PCM bytes of exact length corresponding to duration_sec."""
+    num_bytes = int(
+        icecast_collector.SAMPLE_RATE_HZ
+        * 2
+        * icecast_collector.NUM_AUDIO_CHANNELS
+        * duration_sec
+    )
+    return b"\x00" * num_bytes
+
+
 def _make_process_factory(
     *,
     pid: int,
@@ -122,12 +162,25 @@ def _make_process_factory(
         mock_proc.stderr = _make_stderr_reader(stderr_lines)
 
         for index, segment in enumerate(segments or []):
-            (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
+            (segment_dir / f"chunk_{index:06d}.pcm").write_bytes(segment)
 
         async def _wait_impl() -> int:
             if wait_exception is not None:
                 raise wait_exception
-            await asyncio.sleep(wait_delay)
+            if segments and len(segments) > 1:
+                prev_seg = segment_dir / f"chunk_{len(segments) - 2:06d}.pcm"
+                start = time.monotonic()
+                while prev_seg.exists() and (time.monotonic() - start) < 2.0:
+                    encode_func = getattr(
+                        icecast_collector, "_encode_pcm_segment_to_flac", None
+                    )
+                    call_count = getattr(encode_func, "call_count", 0)
+                    if call_count >= len(segments) - 1:
+                        break
+                    await asyncio.sleep(0.001)
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(wait_delay)
             return wait_result
 
         mock_proc.wait = AsyncMock(side_effect=_wait_impl)
@@ -162,7 +215,7 @@ class TestPathDiagnostics(unittest.TestCase):
 
     def test_stat_oserror_returns_none(self) -> None:
         """Diagnostic helpers must not mask the original collector failure."""
-        path = Path("/tmp/unreadable_segment.flac")  # noqa: S108
+        path = Path("/tmp/unreadable_segment.pcm")  # noqa: S108
         with patch.object(Path, "stat", side_effect=PermissionError):
             self.assertIsNone(icecast_collector._path_size(path))
             self.assertIsNone(icecast_collector._path_mtime(path))
@@ -229,7 +282,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.pcm",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -252,7 +305,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.pcm",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -271,7 +324,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.pcm",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -290,20 +343,22 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
+        # The real encode reads a PCM file and returns FLAC bytes; tests
+        # exercise capture control flow, not the encode itself, so mock it
+        # as a pass-through (return the raw segment bytes unchanged) unless
+        # a test overrides the side_effect.
+        async def _pass_through_encode(pcm_path: Path) -> bytes | None:
+            data = await asyncio.to_thread(pcm_path.read_bytes)
+            await asyncio.to_thread(pcm_path.unlink, missing_ok=True)
+            return data or None
 
-        self.mock_transcode = AsyncMock(side_effect=_mock_transcode)
+        self.mock_encode = AsyncMock(side_effect=_pass_through_encode)
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector,
-                "_transcode_wav_to_flac",
-                self.mock_transcode,
+                "_encode_pcm_segment_to_flac",
+                self.mock_encode,
             ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
@@ -353,30 +408,17 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_failed_header_repair_drops_segment(
+    async def test_failed_encode_drops_segment(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """A segment whose header repair fails must not be read or yielded."""
+        """A segment whose FLAC encode fails must not be yielded."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=42,
             segments=[b"BAD_SEGMENT", b"GOOD_SEGMENT"],
             wait_delay=0.1,
             wait_result=0,
         )
-        calls = 0
-
-        async def _custom_transcode(wav_path: Path, flac_path: Path) -> bool:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return False
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        self.mock_transcode.side_effect = _custom_transcode
+        self.mock_encode.side_effect = [None, b"GOOD_SEGMENT"]
 
         feed = _make_feed("test-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
@@ -389,8 +431,143 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         )
         chunks = await _collect_chunks(gen)
 
-        # Only the segment whose repair succeeded reaches the caller.
+        # Only the segment whose encode succeeded reaches the caller.
         self.assertEqual(chunks, [b"GOOD_SEGMENT"])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_interval_lag_measures_gap_past_chunk_duration(
+        self, mock_create_ffmpeg: AsyncMock, mock_now: MagicMock
+    ) -> None:
+        """Lag is measured against the previous segment's receipt, not a
+        fixed session-start anchor, so it reflects fresh backlog rather than
+        cumulative source-clock drift.
+        """
+        anchor = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+        seg0_receipt = anchor + datetime.timedelta(seconds=2)
+        seg1_receipt = seg0_receipt + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS + 5
+        )
+        # Calls in order: anchor, seg0 receipt_time, seg1 receipt_time,
+        # seg1 chunk_end_time clamp (process_done is True by then).
+        mock_now.side_effect = [
+            anchor,
+            seg0_receipt,
+            seg1_receipt,
+            seg1_receipt,
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.05,
+            wait_result=0,
+        )
+
+        feed = _make_feed("lag-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIsNone(chunks[0].stream_interval_lag_sec)
+        assert chunks[1].stream_interval_lag_sec is not None
+        self.assertAlmostEqual(chunks[1].stream_interval_lag_sec, 5.0, places=3)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors"
+        ".icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors"
+        ".icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_interval_lag_triggers_timeline_re_anchor(
+        self, mock_create_ffmpeg: AsyncMock, mock_now: MagicMock
+    ) -> None:
+        """If interval lag exceeds threshold (5s), the stream anchor is moved
+        forward to re-align subsequent chunks to real-time.
+        """
+        anchor = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+        seg0_receipt = anchor + datetime.timedelta(seconds=15)
+        # 30-second gap before segment 1 (chunk duration is 15s, so
+        # interval is 45s and lag is 30s)
+        seg1_receipt = seg0_receipt + datetime.timedelta(seconds=45)
+        # segment 2 arrives normally 15s after segment 1
+        seg2_receipt = seg1_receipt + datetime.timedelta(seconds=15)
+
+        # Calls to _now_utc:
+        # 1. capture start anchor
+        # 2. seg0 receipt_time
+        # 3. seg1 receipt_time
+        # 4. seg2 receipt_time
+        # 5. seg2 process_done clamp
+        mock_now.side_effect = [
+            anchor,
+            seg0_receipt,
+            seg1_receipt,
+            seg2_receipt,
+            seg2_receipt,
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.05,
+            wait_result=0,
+        )
+
+        feed = _make_feed("reanchor-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(chunks), 3)
+
+        # Chunk 0: normal
+        self.assertEqual(chunks[0].chunk_start_time, anchor)
+        self.assertEqual(chunks[0].chunk_end_time, seg0_receipt)
+        self.assertIsNone(chunks[0].stream_interval_lag_sec)
+
+        # Chunk 1: lag is 30s (exceeds 5s threshold)
+        # It should trigger re-anchoring.
+        # Adjusted start time: 12:00:45 (receipt_time 12:01:00 - 15s duration)
+        # Adjusted end time: 12:01:00
+        self.assertEqual(chunks[1].stream_interval_lag_sec, 30.0)
+        expected_start1 = anchor + datetime.timedelta(seconds=45)
+        self.assertEqual(chunks[1].chunk_start_time, expected_start1)
+        self.assertEqual(chunks[1].chunk_end_time, seg1_receipt)
+
+        # Chunk 2: normal, calculated relative to new anchor
+        # Start time should be contiguous with Chunk 1's end time: 12:01:00
+        # End time: 12:01:15 (matching seg2_receipt)
+        self.assertEqual(chunks[2].stream_interval_lag_sec, 0.0)
+        expected_start2 = anchor + datetime.timedelta(seconds=60)
+        self.assertEqual(chunks[2].chunk_start_time, expected_start2)
+        self.assertEqual(chunks[2].chunk_end_time, seg2_receipt)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -590,7 +767,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(403, reason="Forbidden"),
         )
         with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -715,6 +892,111 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
             "HTTP error 404 Not Found",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_404_source_offline(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Transient HTTP error 401 with probe 404 maps to source_offline."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed("transient-401-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(404, reason="Not Found"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_OFFLINE,
+            "HTTP error 404 Not Found",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_401_auth_failed(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Persistent HTTP error 401 with probe 401 maps to system_authentication_failed."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed("persistent-401-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(401, reason="Unauthorized"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            "HTTP error 401 Unauthorized",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_200_source_unreachable(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Transient HTTP error 401 with probe 200 maps to source_unreachable."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed(
+            "transient-401-online-feed", "http://example.com/stream"
+        )
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "ffmpeg failed with authentication error despite stream being available "
+            "on probe; stderr: HTTP error 401 Unauthorized",
         )
 
     @patch(
@@ -1066,19 +1348,18 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         # after every chunk's natural end so min() picks chunk_end_time even if
         # wait_task.done() flips before an intermediate segment.
         t0 = fixed_anchor
-        after_all_chunks_done = t0 + datetime.timedelta(
-            seconds=CHUNK_DURATION_SECONDS * 4 + 1
+        mock_now_utc.side_effect = IncrementalClock(
+            t0, steps=[15.0, 15.0, 15.0, 0.0, 0.0]
         )
-        mock_now_utc.side_effect = [t0] + [after_all_chunks_done] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
-                b"FLAC_SEGMENT_0",
-                b"FLAC_SEGMENT_1",
-                b"FLAC_SEGMENT_2",
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
             ],
-            wait_delay=0.0,
+            wait_delay=0.1,
             wait_result=0,
         )
 
@@ -1119,6 +1400,58 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_timestamps_use_exact_pcm_sample_count(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test timestamp math: chunk start and end times reflect exact sample duration."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.side_effect = IncrementalClock(
+            fixed_anchor, steps=[12.5, 18.25, 0.0, 0.0]
+        )
+
+        # Segments of exact lengths: 12.5 seconds and 18.25 seconds
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=3334,
+            segments=[
+                _make_pcm_segment(12.5),
+                _make_pcm_segment(18.25),
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("exact-pcm-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 2)
+
+        ts0 = results[0].chunk_start_time
+        end0 = results[0].chunk_end_time
+        ts1 = results[1].chunk_start_time
+        end1 = results[1].chunk_end_time
+
+        self.assertEqual(ts0, fixed_anchor)
+        self.assertEqual((end0 - ts0).total_seconds(), 12.5)
+        self.assertEqual(ts1, end0)
+        self.assertEqual((end1 - ts1).total_seconds(), 18.25)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_last_chunk_end_time_clamped_to_current_time(
         self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
@@ -1143,7 +1476,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
-            segments=[b"FLAC_SEGMENT_0"],
+            segments=[_make_pcm_segment(CHUNK_DURATION_SECONDS)],
             wait_delay=0.1,
             wait_result=0,
         )
@@ -1162,6 +1495,241 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].chunk_start_time, fixed_anchor)
         self.assertEqual(results[0].chunk_end_time, clamp_time)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_timestamps_adjusted_for_burst(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test that start/end timestamps are shifted into the past when a burst is detected."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+
+        t_anchor = fixed_anchor
+        t_seg1 = t_anchor + datetime.timedelta(seconds=1)
+        t_seg2 = t_anchor + datetime.timedelta(seconds=2)
+        t_seg3 = t_anchor + datetime.timedelta(seconds=3)
+        t_seg4 = t_seg3 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS)
+        t_seg5 = t_seg4 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS)
+        t_future = t_seg5 + datetime.timedelta(seconds=100)
+
+        mock_now_utc.side_effect = [
+            t_anchor,  # stream_anchor_time
+            t_seg1,  # Seg 1 receipt_time
+            t_seg2,  # Seg 2 receipt_time
+            t_seg3,  # Seg 3 receipt_time
+            t_seg4,  # Seg 4 receipt_time
+            t_seg5,  # Seg 5 receipt_time
+            t_future,  # Seg 5 min() clamp (not clamped)
+        ]
+
+        # 5 segments, each of CHUNK_DURATION_SECONDS duration
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4445,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("burst-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 5)
+
+        # We expect:
+        # Total burst duration (first 3 segments) = CHUNK_DURATION_SECONDS * 3.
+        # Adjusted stream_anchor_time = T - (CHUNK_DURATION_SECONDS * 3).
+        burst_duration = CHUNK_DURATION_SECONDS * 3
+
+        self.assertEqual(
+            results[0].chunk_start_time,
+            fixed_anchor - datetime.timedelta(seconds=burst_duration - 3),
+        )
+        self.assertEqual(
+            results[0].chunk_end_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS - 3
+            ),
+        )
+
+        self.assertEqual(
+            results[1].chunk_start_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS - 3
+            ),
+        )
+        self.assertEqual(
+            results[1].chunk_end_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2 - 3
+            ),
+        )
+
+        self.assertEqual(
+            results[2].chunk_start_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2 - 3
+            ),
+        )
+        self.assertEqual(
+            results[2].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+
+        self.assertEqual(
+            results[3].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+        self.assertEqual(
+            results[3].chunk_end_time,
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS + 3),
+        )
+
+        self.assertEqual(
+            results[4].chunk_start_time,
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS + 3),
+        )
+        self.assertEqual(
+            results[4].chunk_end_time,
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS * 2 + 3),
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_timestamps_mid_stream_disconnect_and_catchup(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Verify timeline manager handles a mid-stream disconnect followed by
+        a catch-up burst and return to normal cadence.
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.side_effect = IncrementalClock(
+            fixed_anchor,
+            steps=[1.0, 1.0, 1.0, 15.0, 315.0, 1.0, 1.0, 15.0, 0.0, 0.0],
+        )
+
+        # 8 segments of 15 seconds each
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4446,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 1 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 2 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 3 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 4 (steady)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 5 (late/burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 6 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 7 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 8 (steady)
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("midstream-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 8)
+
+        # Start-up burst (Seg 1-3) adjusted anchor backward
+        # Last burst chunk (Seg 3) received at 12:00:03
+        # Start-up anchor: 12:00:03 - 45s = 11:59:18
+        self.assertEqual(
+            results[0].chunk_start_time,
+            fixed_anchor - datetime.timedelta(seconds=42),
+        )
+        self.assertEqual(
+            results[2].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+
+        # Seg 4 (steady) starts at 12:00:03, ends at 12:00:18 (received at 12:00:18)
+        self.assertEqual(
+            results[3].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+        self.assertEqual(
+            results[3].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=18),
+        )
+
+        # Seg 5-7 is a mid-stream catch-up burst after a 5 minute disconnect gap.
+        # Last catch-up chunk (Seg 7) received at 12:05:35.
+        # Cumulative duration before Seg 7 = 6 segments = 90s.
+        # Original Segment 7 end = 11:59:18 + 90s + 15s = 12:01:03.
+        # Net shift = 12:05:35 - 12:01:03 = 272s.
+        # Adjusted anchor: 11:59:18 + 272s = 12:03:50.
+
+        # Seg 5 (first catch-up chunk): starts at 12:00:18 + 272s = 12:04:50
+        self.assertEqual(
+            results[4].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=290),
+        )
+        self.assertEqual(
+            results[4].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=305),
+        )
+
+        # Seg 7 (last catch-up chunk): starts at 12:05:20, ends at 12:05:35 (receipt_time)
+        self.assertEqual(
+            results[6].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=320),
+        )
+        self.assertEqual(
+            results[6].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=335),
+        )
+
+        # Seg 8 (first steady chunk after disconnect) ends at receipt_time 12:05:50
+        self.assertEqual(
+            results[7].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=335),
+        )
+        self.assertEqual(
+            results[7].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=350),
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -1202,26 +1770,40 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_stream_lag_logged(
-        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
+    async def test_reconnect_lag_decoupled_from_consumer_backpressure(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
-        """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
+        """Verify that consumer-side delays do not corrupt receipt_time stamps of subsequent chunks."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+
+        t0_conn = fixed_anchor
+        t0_seg0 = fixed_anchor + datetime.timedelta(seconds=15)
+        t0_seg1 = fixed_anchor + datetime.timedelta(seconds=30)
+        t0_seg2 = fixed_anchor + datetime.timedelta(seconds=45)
+
+        mock_now_utc.side_effect = [
+            t0_conn,
+            t0_seg0,
+            t0_seg1,
+            t0_seg2,
+            t0_seg2 + datetime.timedelta(seconds=10),
+        ]
+
         mock_create_ffmpeg.side_effect = _make_process_factory(
-            pid=8888,
-            segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
-            wait_delay=0.5,
+            pid=777,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.1,
             wait_result=0,
         )
 
-        feed = _make_feed("lag-feed", "http://example.com/stream")
+        feed = _make_feed("backpressure-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
-
-        t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
-        mock_now_utc.side_effect = [
-            t0,  # stream_anchor_time
-            t0
-            + datetime.timedelta(seconds=85),  # receipt_time for first segment
-        ]
 
         gen = icecast_collector.capture_icecast_stream(
             feed,
@@ -1230,18 +1812,42 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             resources=_default_resources(),
         )
 
-        chunk = await gen.__anext__()
+        chunks = []
+        async for chunk in gen:
+            chunks.append(chunk)
+            if len(chunks) == 1:
+                await asyncio.sleep(0.5)
 
-        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
-        self.mock_logger.warning.assert_called_once()
-        log_args = self.mock_logger.warning.call_args.args
-        self.assertIn("Stream lag has exceeded threshold", log_args[0])
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0].receipt_time, t0_seg0)
+        self.assertEqual(chunks[1].receipt_time, t0_seg1)
+        self.assertEqual(chunks[2].receipt_time, t0_seg2)
+
+        self.assertEqual(chunks[0].chunk_start_time, t0_conn)
+        self.assertEqual(chunks[0].chunk_end_time, t0_seg0)
+        self.assertEqual(chunks[1].chunk_start_time, t0_seg0)
+        self.assertEqual(chunks[1].chunk_end_time, t0_seg1)
+        self.assertEqual(chunks[2].chunk_start_time, t0_seg1)
+        self.assertEqual(chunks[2].chunk_end_time, t0_seg2)
+
+    # NOTE: stream lag is no longer reported via a threshold-based warning
+    # log against a fixed session-start anchor (see
+    # test_stream_interval_lag_measures_gap_past_chunk_duration above) —
+    # that approach conflated real backlog with ordinary long-session
+    # source-clock drift. It's now a per-interval value on CapturedChunk
+    # that collector_runtime folds into the chunk_ingested SLO event.
 
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-02: Icecast stamps receipt_time at segment finalization."""
 
     @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._encode_pcm_segment_to_flac",
+        new_callable=AsyncMock,
+        return_value=b"seg0",
+    )
     @patch(
         "backend.pipeline.ingestion.collectors.icecast"
         ".icecast_collector._now_utc"
@@ -1255,6 +1861,7 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create: AsyncMock,
         mock_now: MagicMock,
+        mock_encode: AsyncMock,
     ) -> None:
         fixed_time = datetime.datetime(
             2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
@@ -1273,171 +1880,84 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        with patch.object(
-            icecast_collector,
-            "_transcode_wav_to_flac",
-            AsyncMock(side_effect=_mock_transcode),
-        ):
-            gen = icecast_collector.capture_icecast_stream(
-                feed,
-                shutdown,
-                "http://example.com/",
-                resources=_default_resources(),
-            )
-            chunks = await _collect_chunks_with_timestamps(gen)
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown,
+            "http://example.com/",
+            resources=_default_resources(),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
 
 
-_BAD_STREAMINFO_FLAC = (
-    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
-)
-_ffmpeg_available = shutil.which("ffmpeg") is not None
+class TestEncodePcmSegmentToFlac(unittest.IsolatedAsyncioTestCase):
+    """Guards the contract that no segment leaves ingestion unreadable.
 
+    Encoding is pure Python (numpy + soundfile) now, not a subprocess, so
+    these run unconditionally -- no ffmpeg-availability gate needed.
+    """
 
-class TestTranscodeWavToFlac(unittest.IsolatedAsyncioTestCase):
-    """Guards the contract that no segment leaves ingestion unreadable."""
+    async def test_valid_pcm_produces_readable_flac(self) -> None:
+        sample_rate = 16000
+        duration_sec = 15
+        num_samples = sample_rate * duration_sec
+        # A real (non-silent) waveform, not zeros, so the encode has
+        # actual content to compress.
+        t = np.arange(num_samples) / sample_rate
+        tone = (np.sin(2 * np.pi * 440 * t) * 20000).astype("<i2")
+        pcm_bytes = tone.tobytes()
 
-    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
-    async def test_transcode_produces_readable_flac(self) -> None:
-        raw = _BAD_STREAMINFO_FLAC.read_bytes()
         with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            # Even if the file has a .wav extension, writing bad FLAC data to it
-            # simulates ffmpeg decoding the unreadable stream data and transcoding it.
-            wav_segment.write_bytes(raw)
+            pcm_segment = Path(tmp) / "chunk_000000.pcm"
+            pcm_segment.write_bytes(pcm_bytes)
 
-            flac_segment = Path(tmp) / "chunk_000000.flac"
-
-            # The source flac data (in wav_segment) is unreadable by sf.read directly
-            with self.assertRaises(sf.LibsndfileError):
-                sf.read(str(wav_segment))
-
-            success = await icecast_collector._transcode_wav_to_flac(
-                wav_segment, flac_segment
+            flac_bytes = await icecast_collector._encode_pcm_segment_to_flac(
+                pcm_segment
             )
-            self.assertTrue(success)
 
-            info = sf.info(str(flac_segment))
-            samples, sample_rate = sf.read(str(flac_segment), dtype="float32")
+            # The PCM temp file is consumed and removed by the encode call.
+            self.assertFalse(pcm_segment.exists())
 
-        # The transcoded header advertises the true frame count rather than the
-        # unknown-length sentinel, so the duration downstream derives from it
-        # (len / sample_rate) is correct.
+        self.assertIsNotNone(flac_bytes)
+        assert flac_bytes is not None
+        info = sf.info(io.BytesIO(flac_bytes))
+        samples, sample_rate_out = sf.read(
+            io.BytesIO(flac_bytes), dtype="int16"
+        )
+
+        # The header advertises the true frame count, not an unknown-length
+        # sentinel, so downstream duration derivation is correct.
         self.assertEqual(info.frames, len(samples))
-        self.assertEqual(sample_rate, 16000)
-        self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
+        self.assertEqual(sample_rate_out, sample_rate)
+        self.assertEqual(len(samples), num_samples)
+        np.testing.assert_array_equal(samples, tone)
 
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_timeout_triggers_cleanup(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = None
-
-        terminated_event = asyncio.Event()
-
-        def mock_terminate():
-            terminated_event.set()
-
-        mock_process.terminate = mock_terminate
-
-        async def mock_wait():
-            await terminated_event.wait()
-            return 0
-
-        mock_process.wait = mock_wait
-        mock_create_exec.return_value = mock_process
-
-        with patch.object(icecast_collector, "_FIX_HEADER_TIMEOUT_SEC", 0.05):
-            with tempfile.TemporaryDirectory() as tmp:
-                wav_segment = Path(tmp) / "chunk_000000.wav"
-                wav_segment.write_bytes(b"dummy_data")
-                flac_segment = Path(tmp) / "chunk_000000.flac"
-
-                success = await icecast_collector._transcode_wav_to_flac(
-                    wav_segment, flac_segment
-                )
-
-                # Give background tasks (cleanup) a tick to run
-                await asyncio.sleep(0.02)
-
-                self.assertTrue(terminated_event.is_set())
-                self.assertFalse(
-                    success,
-                    "a timed-out transcode must not report success",
-                )
-
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_nonzero_exit_reports_failure(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = 1
-        mock_process.wait = AsyncMock(return_value=1)
-        mock_create_exec.return_value = mock_process
-
+    async def test_empty_pcm_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            wav_segment.write_bytes(b"dummy_data")
-            flac_segment = Path(tmp) / "chunk_000000.flac"
+            pcm_segment = Path(tmp) / "chunk_000000.pcm"
+            pcm_segment.write_bytes(b"")
 
-            success = await icecast_collector._transcode_wav_to_flac(
-                wav_segment, flac_segment
+            result = await icecast_collector._encode_pcm_segment_to_flac(
+                pcm_segment
             )
 
-            self.assertFalse(success)
+            self.assertIsNone(result)
+            self.assertFalse(pcm_segment.exists())
 
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_cancellation_triggers_cleanup(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = None
-
-        terminated_event = asyncio.Event()
-
-        def mock_terminate():
-            terminated_event.set()
-
-        mock_process.terminate = mock_terminate
-
-        async def mock_wait():
-            await terminated_event.wait()
-            return 0
-
-        mock_process.wait = mock_wait
-        mock_create_exec.return_value = mock_process
-
+    async def test_malformed_pcm_returns_none_not_raises(self) -> None:
+        """An odd byte count can't form whole int16 samples; must drop, not crash."""
         with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            wav_segment.write_bytes(b"dummy_data")
-            flac_segment = Path(tmp) / "chunk_000000.flac"
+            pcm_segment = Path(tmp) / "chunk_000000.pcm"
+            pcm_segment.write_bytes(b"\x01\x02\x03")
 
-            # Start the task and cancel it immediately
-            task = asyncio.create_task(
-                icecast_collector._transcode_wav_to_flac(
-                    wav_segment, flac_segment
-                )
+            result = await icecast_collector._encode_pcm_segment_to_flac(
+                pcm_segment
             )
-            await asyncio.sleep(0.01)  # let it start and await wait_for
-            task.cancel()
 
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-
-            # Give background tasks (cleanup) a tick to run
-            await asyncio.sleep(0.02)
-
-            self.assertTrue(terminated_event.is_set())
+            self.assertIsNone(result)
+            self.assertFalse(pcm_segment.exists())
 
 
 class TestBuildAuthAndUrl(unittest.TestCase):
@@ -1490,6 +2010,50 @@ class TestBuildAuthAndUrl(unittest.TestCase):
             "https://audio.example.com/12345.mp3?burst=0",
         )
 
+    def test_basic_auth_fallback_swaps_partner_url(self) -> None:
+        """When BROADCASTIFY_XAN_TOKEN is not set and url_base is partner.broadcastify.com, it swaps the URL to audio.broadcastify.com."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        auth_header, url = icecast_collector._build_auth_and_url(
+            url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
+            source_feed_id="12345",
+        )
+
+        self.assertEqual(
+            auth_header,
+            "Authorization: Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=\r\n",
+        )
+        self.assertEqual(
+            url,
+            f"{constants.BCFY_FEEDS_PUBLIC_URL_BASE}12345.mp3?burst=0",
+        )
+
+    def test_basic_auth_fallback_uses_env_var_override(self) -> None:
+        """Verify basic auth fallback uses BCFY_FEEDS_PUBLIC_URL_BASE override."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+        os.environ["BCFY_FEEDS_PUBLIC_URL_BASE"] = (
+            "https://custom-public.example.com/"
+        )
+        try:
+            auth_header, url = icecast_collector._build_auth_and_url(
+                url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
+                source_feed_id="12345",
+            )
+            self.assertEqual(
+                auth_header,
+                "Authorization: Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=\r\n",
+            )
+            self.assertEqual(
+                url,
+                "https://custom-public.example.com/12345.mp3?burst=0",
+            )
+        finally:
+            os.environ.pop("BCFY_FEEDS_PUBLIC_URL_BASE", None)
+
     def test_basic_auth_missing_credentials(self) -> None:
         """When token is missing and credentials are also missing, it raises config error."""
         os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
@@ -1502,6 +2066,311 @@ class TestBuildAuthAndUrl(unittest.TestCase):
                 source_feed_id="12345",
             )
         self.assertIn("missing_broadcastify_credentials", str(ctx.exception))
+
+
+class TestIcecastTimelineManager(unittest.TestCase):
+    """Tests for IcecastTimelineManager validation constraints."""
+
+    def test_negative_duration_raises_value_error(self) -> None:
+        """Verify that negative chunk durations raise ValueError."""
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now - datetime.timedelta(seconds=5),
+            session_id="session",
+            receipt_time=now,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            manager.process_chunk(chunk, 16000 * 15, process_done=False)
+        self.assertIn("Negative chunk duration", str(ctx.exception))
+
+    def test_non_monotonic_start_time_clamps_to_last_end(self) -> None:
+        """Verify that non-monotonic chunk start times are clamped to last end time and stream anchor is shifted."""
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk1, 16000 * 15, process_done=False)
+
+        chunk2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=10),
+            chunk_end_time=now + datetime.timedelta(seconds=25),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        res_clamped = manager.process_chunk(
+            chunk2, 16000 * 30, process_done=False
+        )
+        self.assertEqual(len(res_clamped), 1)
+        self.assertEqual(
+            res_clamped[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        # Verify stream_anchor_time was shifted forward by 5s to prevent perpetual clamping
+        self.assertEqual(
+            manager.stream_anchor_time,
+            now + datetime.timedelta(seconds=5),
+        )
+
+    def test_microsecond_rounding_coalesced(self) -> None:
+        """Verify that microsecond-level rounding errors in chunk start times are coalesced."""
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        chunk1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk1, 16000 * 15, process_done=False)
+
+        # Test overlap of 1 microsecond
+        chunk2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=15)
+            - datetime.timedelta(microseconds=1),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        res = manager.process_chunk(chunk2, 16000 * 30, process_done=False)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(
+            res[0].chunk_start_time, now + datetime.timedelta(seconds=15)
+        )
+
+        # Test gap of 1 microsecond
+        chunk3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=30)
+            + datetime.timedelta(microseconds=1),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=30),
+        )
+        res2 = manager.process_chunk(chunk3, 16000 * 45, process_done=False)
+        self.assertEqual(len(res2), 1)
+        self.assertEqual(
+            res2[0].chunk_start_time, now + datetime.timedelta(seconds=30)
+        )
+
+        # Test overlap of exactly 2 microseconds (boundary value - should coalesce)
+        chunk4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=45)
+            - datetime.timedelta(microseconds=2),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=45),
+        )
+        res3 = manager.process_chunk(chunk4, 16000 * 60, process_done=False)
+        self.assertEqual(len(res3), 1)
+        self.assertEqual(
+            res3[0].chunk_start_time, now + datetime.timedelta(seconds=45)
+        )
+
+        # Test overlap of 3 microseconds (clamped gracefully without error)
+        chunk5 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=60)
+            - datetime.timedelta(microseconds=3),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=60),
+        )
+        res4 = manager.process_chunk(chunk5, 16000 * 75, process_done=False)
+        self.assertEqual(len(res4), 1)
+        self.assertEqual(
+            res4[0].chunk_start_time, now + datetime.timedelta(seconds=60)
+        )
+
+    def test_midstream_burst_does_not_shift_anchor_before_last_yielded_end(
+        self,
+    ) -> None:
+        """Verify mid-stream burst unrolling bounds backward anchor shift to preserve monotonicity."""
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk0 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk0, 16000 * 15, process_done=False)
+        self.assertEqual(manager.stream_anchor_time, now)
+
+        # Mid-stream burst of fast chunks
+        c1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=15),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=18),
+        )
+        c2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=30),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=21),
+        )
+        c3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=45),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=24),
+        )
+        manager.process_chunk(c1, 16000 * 30, process_done=False)
+        manager.process_chunk(c2, 16000 * 45, process_done=False)
+        manager.process_chunk(c3, 16000 * 60, process_done=False)
+
+        # Exit burst mode on steady chunk c4
+        c4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=60),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=39),
+        )
+        res_burst = manager.process_chunk(c4, 16000 * 75, process_done=False)
+        self.assertEqual(len(res_burst), 4)
+
+        # Anchoring should remain contiguous with last yielded end time (now)
+        self.assertEqual(manager.stream_anchor_time, now)
+        self.assertEqual(
+            res_burst[0].chunk_start_time,
+            now + datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(
+            res_burst[3].chunk_end_time,
+            now + datetime.timedelta(seconds=75),
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.logger"
+    )
+    def test_audio_lag_warning_logged_when_lag_exceeds_timeout(
+        self, mock_logger: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test that [Ingestion Audio Lag] warning behavior is controlled by AUDIO_LAG_WARN_THRESHOLD_SEC and previous_receipt_time."""
+        fixed_now = datetime.datetime(
+            2026, 7, 27, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.return_value = fixed_now
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_pcm = Path(tmp_dir) / "mock_test_lag_segment.pcm"
+                tmp_pcm.write_bytes(
+                    b"\x00\x00" * 16000 * 10
+                )  # 10 seconds of 16kHz audio
+
+                # Case 1: Above threshold (180s lag > 120s threshold) on an established stream -> Warning logged
+                anchor_above = fixed_now - datetime.timedelta(seconds=180)
+                (
+                    chunk,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=1,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk)
+                mock_logger.warning.assert_called_once()
+                warning_call = mock_logger.warning.call_args[0]
+                self.assertIn("[Ingestion Audio Lag]", warning_call[0])
+                self.assertEqual(warning_call[1], "test-feed-id")
+
+                mock_logger.reset_mock()
+
+                # Case 2: Below threshold (60s lag < 120s threshold, standard stream buffer latency) -> Warning NOT logged
+                anchor_below = fixed_now - datetime.timedelta(seconds=60)
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_below,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=2,
+                    stream_anchor_time=anchor_below,
+                    process_done=False,
+                    previous_receipt_time=fixed_now
+                    - datetime.timedelta(seconds=10),
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_below)
+                mock_logger.warning.assert_not_called()
+
+                # Case 3: Initial stream startup chunk (previous_receipt_time is None) -> Warning NOT logged
+                tmp_pcm.write_bytes(b"\x00\x00" * 16000 * 10)
+                (
+                    chunk_startup,
+                    _rcpt,
+                    _cum,
+                ) = await icecast_collector._process_finalized_segment(
+                    current_segment_pcm=tmp_pcm,
+                    next_index=0,
+                    stream_anchor_time=anchor_above,
+                    process_done=False,
+                    previous_receipt_time=None,
+                    cumulative_pcm_samples=0,
+                    session_id="test-session-id",
+                    feed_id="test-feed-id",
+                    feed_name="test-feed-name",
+                )
+                self.assertIsNotNone(chunk_startup)
+                mock_logger.warning.assert_not_called()
+
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":

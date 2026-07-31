@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
     SEGMENTED_PUBSUB_TOPIC_PATH,
+    _ensure_clients_initialized,
     _parse_timestamp,
     handle_notification,
 )
@@ -104,6 +108,11 @@ class TestHandle:
         mock_publisher = MagicMock()
         mock_publisher.publish.return_value.result.return_value = "msg-id"
 
+        mock_executor = MagicMock()
+        mock_executor.submit.side_effect = lambda fn, *args, **kwargs: fn(
+            *args, **kwargs
+        )
+
         with (
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.feed_store",
@@ -118,6 +127,10 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main._MIRROR_EXECUTOR",
+                mock_executor,
+            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -401,6 +414,68 @@ class TestHandle:
 
         expected_ts = datetime(2026, 5, 31, 0, 28, 18, tzinfo=UTC)
         assert chunk.start_timestamp.ToDatetime(UTC) == expected_ts
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_passes_gcs_time_created_as_receipt_time_to_publisher(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies Echo collector extracts timeCreated as receipt_time and populates receipt_timestamp on chunk."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": FeedStatus.ACTIVE,
+            },
+        )
+
+        event = self._make_event(
+            name="fire-ca/20260531/Middlebury_Regional_EMS_20260531_002818.mp3"
+        )
+        time_created_iso = "2026-05-31T01:03:57.708000+00:00"
+        event.data["timeCreated"] = time_created_iso
+
+        _handle(event)
+
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(publish_args[1])
+
+        expected_receipt = datetime.fromisoformat(time_created_iso)
+        assert chunk.receipt_timestamp.ToDatetime(UTC) == expected_receipt
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_missing_time_created_passes_none_receipt_time_gracefully(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies missing timeCreated in CloudEvent data passes receipt_time=None without crashing."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": FeedStatus.ACTIVE,
+            },
+        )
+
+        event = self._make_event(
+            name="fire-ca/20260531/Middlebury_Regional_EMS_20260531_002818.mp3"
+        )
+        if "timeCreated" in event.data:
+            del event.data["timeCreated"]
+
+        _handle(event)
+
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(publish_args[1])
+        assert not chunk.HasField("receipt_timestamp")
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_gcs_time_created_fallback_for_unparseable_filename(
@@ -860,48 +935,42 @@ class TestHandle:
         # matches the source object name (we preserve the path).
         copy_args = gcs.bucket.return_value.copy_blob.call_args
         assert copy_args[0][2] == "fire-ca/20260326/fire_20260326_143022.mp3"
-        # timeout kwarg is set so the rewrite cannot hang past the
-        # Cloud Run request deadline.
         assert copy_args.kwargs["timeout"] == 30
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_dual_write_failure_does_not_fail_handler(
+    def test_dual_write_mirrors_even_when_feed_unresolved_or_deactivated(
         self, mock_store, _patch_globals
     ) -> None:
-        feed = self._active_feed()
-        self._set_feed(mock_store, feed)
-
-        # Capture call order across both mocks so the heartbeat-before-mirror
-        # invariant is verified explicitly — guards against a future refactor
-        # that swaps the two lines and silently suppresses the heartbeat.
-        call_order: list[str] = []
-        mock_store.record_heartbeat.side_effect = lambda *_args, **_kwargs: (
-            call_order.append("heartbeat")
-        )
-
-        gcs = _patch_globals["gcs"]
-
-        def _failing_copy(*_args: object, **_kw: object) -> None:
-            call_order.append("copy_blob")
-            msg = "Cross-project IAM denied"
-            raise RuntimeError(msg)
-
-        gcs.bucket.return_value.copy_blob.side_effect = _failing_copy
+        self._set_feed(mock_store, None)
 
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
             "wd-echo-recordings-dev",
         ):
-            # Must complete without raising — mirror failure is best-effort.
             _handle(self._make_event())
 
-        # Ordering invariant: heartbeat fires first; mirror is best-effort after.
-        assert call_order == ["heartbeat", "copy_blob"], call_order
-        # Prod path completed (heartbeat recorded) and the feed was NOT
-        # punished for the dev-side failure.
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.assert_called_once()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_precondition_failed_swallowed(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed = self._active_feed()
+        self._set_feed(mock_store, feed)
+
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.side_effect = PreconditionFailed(
+            "Already exists"
+        )
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
+            "wd-echo-recordings-dev",
+        ):
+            _handle(self._make_event())
+
         self._assert_heartbeat_recorded(mock_store, feed["id"])
-        mock_store.record_failure.assert_not_called()
-        mock_store.record_non_budgeted_failure.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1057,49 @@ class TestHandleNotification:
         ingest_time_ms = int(baggage_dict["ingest_time_ms"])
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         assert abs(now_ms - ingest_time_ms) < 10000
+
+
+# ---------------------------------------------------------------------------
+# Concurrent client initialization (max_instance_request_concurrency > 1)
+# ---------------------------------------------------------------------------
+class TestConcurrentInit:
+    """The shared clients are lazily built under a lock so that concurrent
+    requests to a single warm container cannot race to construct them twice.
+    """
+
+    def test_concurrent_calls_initialize_clients_once(self) -> None:
+        num_threads = 8
+        # Release all threads into the init path at once
+        start_barrier = threading.Barrier(num_threads)
+
+        def slow_gcs_client(*_args, **_kwargs) -> MagicMock:
+            time.sleep(0.05)
+            return MagicMock()
+
+        def invoke() -> None:
+            start_barrier.wait(timeout=5)
+            _ensure_clients_initialized()
+
+        module = "backend.pipeline.ingestion.collectors.echo.main"
+        with (
+            patch.multiple(
+                module,
+                gcs_client=None,
+                pubsub_client=None,
+                feed_store=None,
+            ),
+            patch(
+                f"{module}.storage.Client", side_effect=slow_gcs_client
+            ) as mock_client,
+        ):
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=num_threads
+            ) as executor:
+                futures = [executor.submit(invoke) for _ in range(num_threads)]
+                for future in futures:
+                    future.result(timeout=10)
+
+        assert mock_client.call_count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ The generated `openapi.yaml` and the configuration files contain placeholders in
 2.  **`${radio_transcription_api_url}`**
     - **Locations**: `tsoa.json`, `openapi.yaml`
     - **Purpose**: The backend address for the Cloud Run service where requests should be routed.
-3.  **`${rules_management_api_url}`**
+3.  **`${rules_api_url}`**
     - **Locations**: `tsoa.json`, `openapi.yaml`
     - **Purpose**: The backend address for the Rules Management service where requests should be routed.
 

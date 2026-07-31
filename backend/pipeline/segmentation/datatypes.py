@@ -1,8 +1,9 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
+import concurrent.futures
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import apache_beam as beam
 import numpy as np
@@ -37,6 +38,25 @@ BufferedChunk = bp_state.BufferedChunkProto
 
 
 @dataclass(frozen=True)
+class AudioSignal:
+    """Represents an in-memory decoded audio signal."""
+
+    samples: np.ndarray
+    sample_rate: int
+
+    @property
+    def duration_seconds(self) -> float:
+        return (
+            len(self.samples) / float(self.sample_rate)
+            if self.sample_rate > 0
+            else 0.0
+        )
+
+
+AudioFutureMap = dict[str, concurrent.futures.Future[AudioSignal]]
+
+
+@dataclass(frozen=True)
 class AudioChunkData:
     """A domain model representing a single decoded audio chunk and its VAD metadata."""
 
@@ -46,6 +66,7 @@ class AudioChunkData:
     gcs_uri: str
     duration_ms: int
     sample_rate: int
+    denoised_audio: np.ndarray | None = None
 
 
 FeedMetadata = bp_state.FeedMetadataProto
@@ -100,7 +121,12 @@ class StitcherContext:
         """Ordered list of URIs that have been accumulated into the current transmission buffer."""
         return [c.gcs_uri for c in self.contributing_chunks]
 
-    def add_contributing_chunk(self, gcs_uri: str, timestamp_ms: int) -> None:
+    def add_contributing_chunk(
+        self,
+        gcs_uri: str,
+        timestamp_ms: int,
+        receipt_time_ms: int | None = None,
+    ) -> None:
         """Adds a chunk to the contributing lists if not already present.
 
         Args:
@@ -110,6 +136,7 @@ class StitcherContext:
                 downstream stateless stage uses it to align relative segment offsets to
                 absolute timeline boundaries, ensuring sample-accurate slicing and stitching
                 across chunk boundaries.
+            receipt_time_ms: Optional wall-clock arrival time in milliseconds at collector.
         """
         if not any(c.gcs_uri == gcs_uri for c in self.contributing_chunks):
             self.contributing_chunks.append(
@@ -118,6 +145,7 @@ class StitcherContext:
                     gcs_uri=gcs_uri,
                     traceparent=self.traceparent,
                     baggage=self.baggage,
+                    receipt_time_ms=receipt_time_ms,
                 )
             )
 
@@ -224,3 +252,23 @@ class ScheduleStaleTimerAction(StateMachineAction):
     """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
 
     deadline_ms: int
+
+
+class StitcherDlqPayload(TypedDict):
+    """Payload emitted to the Dead Letter Queue when chunk stitching fails."""
+
+    feed_id: str
+    gcs_uri: str
+    session_id: str
+    error_message: str
+    traceparent: str | None
+
+
+@dataclass(frozen=True)
+class StitcherChunkResult:
+    """Structured output returned after processing and stitching a chronological chunk."""
+
+    outputs: list[tuple[str, FlushRequest] | tuple[str, StitcherDlqPayload]]
+    next_context: TransmissionContext
+    next_expected_ts: int
+    next_last_start_ms: int | None

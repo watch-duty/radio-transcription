@@ -92,6 +92,17 @@ components:
         - $ref: "#/components/schemas/KeywordConditions"
         - $ref: "#/components/schemas/RegexConditions"
         - $ref: "#/components/schemas/GroupConditions"
+    Tag:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required:
+        - key
+        - value
+      type: object
+      additionalProperties: false
     RuleMetadata:
       properties:
         createdBy:
@@ -119,6 +130,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
         metadata:
           $ref: "#/components/schemas/RuleMetadata"
       required:
@@ -151,6 +166,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - ruleName
         - scope
@@ -169,6 +188,81 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      type: object
+      additionalProperties: false
+    TextMatchSpan:
+      properties:
+        startIndex:
+          type: number
+          format: double
+        endIndex:
+          type: number
+          format: double
+        matchedText:
+          type: string
+      required:
+        - startIndex
+        - endIndex
+        - matchedText
+      type: object
+      additionalProperties: false
+    DryRunMatchExample:
+      properties:
+        audioSegmentId:
+          type: string
+        feedId:
+          type: string
+        text:
+          type: string
+        matchedSpans:
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
+      required:
+        - audioSegmentId
+        - feedId
+        - text
+        - matchedSpans
+      type: object
+      additionalProperties: false
+    DryRunResponse:
+      properties:
+        hitCount:
+          type: number
+          format: double
+        totalEvaluated:
+          type: number
+          format: double
+        examples:
+          items:
+            $ref: "#/components/schemas/DryRunMatchExample"
+          type: array
+      required:
+        - hitCount
+        - totalEvaluated
+        - examples
+      type: object
+      additionalProperties: false
+    DryRunRequest:
+      properties:
+        rule:
+          $ref: "#/components/schemas/RuleCreate"
+        maxExamples:
+          type: number
+          format: double
+        feedIds:
+          items:
+            type: string
+          type: array
+        daysLookback:
+          type: number
+          format: double
+      required:
+        - rule
       type: object
       additionalProperties: false
     FeedStatus:
@@ -185,17 +279,6 @@ components:
         - failing
         - quarantined
         - deactivated
-    Tag:
-      properties:
-        key:
-          type: string
-        value:
-          type: string
-      required:
-        - key
-        - value
-      type: object
-      additionalProperties: false
     BackendFeedStatusReason:
       type: string
       enum:
@@ -239,6 +322,8 @@ components:
           $ref: "#/components/schemas/FeedStatus"
         substatus:
           $ref: "#/components/schemas/BackendFeedStatus"
+        childStatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
           type: number
           format: double
@@ -253,6 +338,15 @@ components:
           format: double
         statusReasonDetail:
           type: string
+        bcfyCallsSid:
+          type: string
+        leaseStatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
+        leaseLastHeartbeat:
+          type: number
+          format: double
+        leaseStatusReason:
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
@@ -299,6 +393,122 @@ components:
           type: array
         name:
           type: string
+      type: object
+      additionalProperties: false
+    FeedSearchOptionsResponse:
+      properties:
+        sourceTypes:
+          items:
+            $ref: "#/components/schemas/SourceType"
+          type: array
+        statuses:
+          items:
+            type: string
+          type: array
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      required:
+        - sourceTypes
+        - statuses
+        - tags
+      type: object
+      additionalProperties: false
+    AuditTrailValues:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sourceType:
+          $ref: "#/components/schemas/SourceType"
+        status:
+          $ref: "#/components/schemas/BackendFeedStatus"
+        failureCount:
+          type: number
+          format: double
+        retryAfter:
+          type: string
+        statusReason:
+          allOf:
+            - $ref: "#/components/schemas/BackendFeedStatusReason"
+          nullable: true
+        statusReasonUpdatedAt:
+          type: string
+        statusReasonDetail:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        sourceFeedId:
+          type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      type: object
+      additionalProperties: false
+    FeedHistoryEvent:
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        action:
+          type: string
+        actor:
+          type: string
+        occurredAt:
+          type: number
+          format: double
+        feedRevision:
+          type: number
+          format: double
+        beforeValues:
+          $ref: "#/components/schemas/AuditTrailValues"
+        afterValues:
+          $ref: "#/components/schemas/AuditTrailValues"
+      required:
+        - id
+        - feedId
+        - action
+        - actor
+        - occurredAt
+        - feedRevision
+        - beforeValues
+        - afterValues
+      type: object
+      additionalProperties: false
+    ListFeedHistoryResponse:
+      properties:
+        historyEvents:
+          items:
+            $ref: "#/components/schemas/FeedHistoryEvent"
+          type: array
+        nextToken:
+          type: string
+        total:
+          type: number
+          format: double
+      required:
+        - historyEvents
+        - total
+      type: object
+      additionalProperties: false
+    ListFeedHistoryQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
       type: object
       additionalProperties: false
     FeedCreate:
@@ -373,6 +583,7 @@ components:
         - TRANSCRIPT
         - EVALUATION
         - WAVEFORM
+        - TRANSCRIPT_FLAG
       type: string
     TranscriptAnnotationData:
       properties:
@@ -385,22 +596,6 @@ components:
       required:
         - text
         - errors
-      type: object
-      additionalProperties: false
-    TextMatchSpan:
-      properties:
-        startIndex:
-          type: number
-          format: double
-        endIndex:
-          type: number
-          format: double
-        matchedText:
-          type: string
-      required:
-        - startIndex
-        - endIndex
-        - matchedText
       type: object
       additionalProperties: false
     RuleAnnotation:
@@ -450,6 +645,16 @@ components:
         - durationSeconds
       type: object
       additionalProperties: false
+    TranscriptFlagAnnotationData:
+      properties:
+        flaggedByUserIds:
+          items:
+            type: string
+          type: array
+      required:
+        - flaggedByUserIds
+      type: object
+      additionalProperties: false
     Annotation:
       properties:
         type:
@@ -461,6 +666,7 @@ components:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
             - $ref: "#/components/schemas/WaveformAnnotationData"
+            - $ref: "#/components/schemas/TranscriptFlagAnnotationData"
       required:
         - type
         - createdAt
@@ -864,6 +1070,61 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
+  /api/v1/rules/dry-run:
+    post:
+      operationId: DryRunRule
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryRunResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DryRunRequest"
+      x-google-backend: radio-transcription-api
   /api/v1/feeds:
     get:
       operationId: ListFeeds
@@ -1022,6 +1283,55 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/FeedCreate"
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/search-options:
+    get:
+      operationId: GetFeedSearchOptions
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedSearchOptionsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters: []
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}:
     get:
@@ -1245,6 +1555,91 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/{feedId}/history:
+    get:
+      operationId: ListFeedHistory
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListFeedHistoryResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:
@@ -1668,6 +2063,82 @@ paths:
           required: false
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{audioSegmentId}/flagSegment:
+    post:
+      operationId: FlagSegment
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Annotation"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: audioSegmentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                isFlagged:
+                  type: boolean
+              required:
+                - isFlagged
+              type: object
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/

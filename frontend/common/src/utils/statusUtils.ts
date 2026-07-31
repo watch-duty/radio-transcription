@@ -29,30 +29,30 @@ export function convertFeedStatusReason(
     : 'unknown';
 }
 
+export const FEED_STATUS_BUCKETS: Record<BackendFeedStatus, FeedStatus> = {
+  active: 'active',
+  failing: 'error',
+  quarantined: 'error',
+  unclaimed: 'inactive',
+  deactivated: 'inactive',
+};
+
+const FEED_STATUS_OPTION_ORDER: FeedStatus[] = ['active', 'inactive', 'error'];
+
 export function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  switch (status) {
-    case 'active':
-      return 'active';
-    case 'quarantined':
-    case 'failing':
-      return 'error';
-    case 'deactivated':
-    case 'unclaimed':
-    default:
-      return 'inactive';
-  }
+  return FEED_STATUS_BUCKETS[status] ?? 'inactive';
+}
+
+export function normalizeFeedStatusOptions(statuses: string[]): FeedStatus[] {
+  const buckets = new Set(
+    statuses.map((s) => convertFeedStatusBackend(s as BackendFeedStatus))
+  );
+  return FEED_STATUS_OPTION_ORDER.filter((bucket) => buckets.has(bucket));
 }
 
 export function mapFeedStatusToBackendStatuses(status: string): BackendFeedStatus[] {
-  const s = status.toLowerCase();
-  switch (s) {
-    case 'active':
-      return ['active'];
-    case 'error':
-      return ['failing', 'quarantined'];
-    case 'inactive':
-      return ['unclaimed', 'deactivated'];
-    default:
-      return [];
-  }
+  const bucket = status.toLowerCase();
+  return (Object.keys(FEED_STATUS_BUCKETS) as BackendFeedStatus[]).filter(
+    (backend) => FEED_STATUS_BUCKETS[backend] === bucket
+  );
 }

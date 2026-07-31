@@ -81,6 +81,16 @@ class FeedUpdate(BaseModel):
 
 
 class Feed(FeedBase):
+    """API projection of one feed.
+
+    ``status`` and its reason/heartbeat fields are the raw child
+    lifecycle used for admin action eligibility. The ``effective_*``
+    fields carry the server-derived lease-aware health for maintained
+    Broadcastify Calls SID members (mirroring the child for other rows)
+    and should drive status display and filtering. ``bcfy_calls_sid``
+    and the ``lease_*`` fields expose raw SID management metadata.
+    """
+
     id: uuid.UUID
     source_feed_id: str
     status: FeedStatus
@@ -88,6 +98,14 @@ class Feed(FeedBase):
     status_reason: FeedStatusReason | None = None
     status_reason_detail: str | None = None
     last_speech_segment_timestamp: datetime.datetime | None = None
+    bcfy_calls_sid: str | None = None
+    lease_status: FeedStatus | None = None
+    lease_last_heartbeat: datetime.datetime | None = None
+    lease_status_reason: FeedStatusReason | None = None
+    effective_status: FeedStatus | None = None
+    effective_status_reason: FeedStatusReason | None = None
+    effective_status_reason_detail: str | None = None
+    effective_last_heartbeat: datetime.datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -115,3 +133,9 @@ class ListFeedHistoryResponse(BaseModel):
     history_events: list[FeedHistoryEvent]
     next_token: str | None = None
     total: int
+
+
+class FeedSearchOptionsResponse(BaseModel):
+    source_types: list[str]
+    statuses: list[str]
+    tags: list[Tag]

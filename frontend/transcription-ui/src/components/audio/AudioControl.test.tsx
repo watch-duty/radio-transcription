@@ -12,7 +12,6 @@ describe('AudioControl', () => {
   const mockOnFastForward = vi.fn();
   const mockOnFastRewind = vi.fn();
   const mockOnSkipTime = vi.fn();
-  const mockTogglePlayLatestAudio = vi.fn();
 
   const defaultProps = {
     isAudioPlaying: false,
@@ -22,8 +21,6 @@ describe('AudioControl', () => {
     onFastForward: mockOnFastForward,
     onFastRewind: mockOnFastRewind,
     onSkipTime: mockOnSkipTime,
-    playLatestAudio: true,
-    togglePlayLatestAudio: mockTogglePlayLatestAudio,
   };
 
   beforeEach(() => {
@@ -34,7 +31,7 @@ describe('AudioControl', () => {
     cleanup();
   });
 
-  it('renders all buttons and the checkbox with correct aria-labels', () => {
+  it('renders all buttons with correct aria-labels', () => {
     render(<AudioControl {...defaultProps} />);
 
     expect(
@@ -48,9 +45,47 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeTruthy();
-    expect(
-      screen.getByRole('checkbox', { name: 'Always play latest audio' })
-    ).toBeTruthy();
+  });
+
+  it('renders volume slider and Audio controls button in row when state is passed', () => {
+    render(
+      <AudioControl
+        {...defaultProps}
+        volumeDb={0}
+        setVolumeDb={vi.fn()}
+        pan={0}
+        setPan={vi.fn()}
+        speed={1}
+        setSpeed={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('slider', { name: 'Volume' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'audio controls' })).toBeTruthy();
+  });
+
+  it('renders active Pan and Speed Chip badges right of settings button when off-default', () => {
+    const setPan = vi.fn();
+    const setSpeed = vi.fn();
+    render(
+      <AudioControl
+        {...defaultProps}
+        volumeDb={0}
+        setVolumeDb={vi.fn()}
+        pan={-1}
+        setPan={setPan}
+        speed={1.5}
+        setSpeed={setSpeed}
+      />
+    );
+
+    expect(screen.getByText('Pan L')).toBeTruthy();
+    expect(screen.getByText('1.5×')).toBeTruthy();
+
+    // Clicking delete button on Pan chip resets pan to 0
+    const panCancel = screen.getAllByTestId('CancelIcon')[0];
+    fireEvent.click(panCancel);
+    expect(setPan).toHaveBeenCalledWith(0);
   });
 
   it('shows pause icon when isAudioPlaying is true', () => {
@@ -103,15 +138,6 @@ describe('AudioControl', () => {
     expect(mockOnFastForward).toHaveBeenCalledTimes(1);
   });
 
-  it('triggers callback when checkbox is toggled', () => {
-    render(<AudioControl {...defaultProps} />);
-    const checkbox = screen.getByRole('checkbox', {
-      name: 'Always play latest audio',
-    });
-    fireEvent.click(checkbox);
-    expect(mockTogglePlayLatestAudio).toHaveBeenCalledWith(false);
-  });
-
   it('disables all buttons when disableControls is true', () => {
     render(<AudioControl {...defaultProps} disableControls={true} />);
 
@@ -125,13 +151,6 @@ describe('AudioControl', () => {
     expect(screen.getByLabelText('advance to next segment')).toBeDisabled();
     expect(
       screen.getByLabelText('advance to next detected speech')
-    ).toBeDisabled();
-  });
-
-  it('disables the checkbox when disableCheckbox is true', () => {
-    render(<AudioControl {...defaultProps} disableCheckbox={true} />);
-    expect(
-      screen.getByRole('checkbox', { name: 'Always play latest audio' })
     ).toBeDisabled();
   });
 });

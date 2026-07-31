@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
+
+import httpx
 import requests
 from requests.adapters import HTTPAdapter
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 from urllib3.util import Retry
+
+from backend.pipeline.common import auth_client, env
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 
 DEFAULT_STATUS_FORCELIST = [429, 500, 502, 503, 504]
 
@@ -13,6 +28,7 @@ def create_resilient_session(
     status_forcelist: list[int] | None = None,
     *,
     raise_on_status: bool = False,
+    allowed_methods: Collection[str] | None = Retry.DEFAULT_ALLOWED_METHODS,
 ) -> requests.Session:
     """
     Creates a requests.Session configured with exponential backoff retries
@@ -24,6 +40,7 @@ def create_resilient_session(
         status_forcelist: List of HTTP status codes to retry. Defaults to [502, 503, 504].
         raise_on_status: Whether to raise an exception immediately on matched status codes.
             Must be passed as a keyword argument.
+        allowed_methods: Collection of HTTP methods to retry. Set to None to retry all methods.
 
     Returns:
         A requests.Session instance.
@@ -37,8 +54,76 @@ def create_resilient_session(
             if status_forcelist is not None
             else DEFAULT_STATUS_FORCELIST,
             raise_on_status=raise_on_status,
+            allowed_methods=allowed_methods,
         )
         adapter = HTTPAdapter(max_retries=retries)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
     return session
+
+
+def is_transient_httpx_error(e: BaseException) -> bool:
+    """Checks if an exception is a transient HTTP/transport error suitable for retries."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code in {429, 500, 502, 503, 504}
+    return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
+
+
+def get_httpx_retry_config(
+    total_attempts: int = 4,
+    multiplier: float = 0.5,
+    min_seconds: float = 0.5,
+    max_seconds: float = 10.0,
+) -> dict:
+    """Returns tenacity retry configuration arguments."""
+    return {
+        "stop": stop_after_attempt(total_attempts),
+        "wait": wait_exponential(
+            multiplier=multiplier, min=min_seconds, max=max_seconds
+        ),
+        "retry": retry_if_exception(is_transient_httpx_error),
+        "reraise": True,
+    }
+
+
+def authenticated_get(
+    client: httpx.Client,
+    base_url: str,
+    url: str,
+    *,
+    params: dict | None = None,
+    timeout: float = 5,
+    total_attempts: int = 4,
+    multiplier: float = 0.5,
+    min_seconds: float = 0.5,
+    max_seconds: float = 2.0,
+) -> httpx.Response:
+    """Performs a GET against an internal API with traceparent propagation, GCP
+    auth, and retries on transient errors.
+
+    Raises the last ``httpx.HTTPError`` if every retry attempt is exhausted.
+    """
+    headers: dict[str, str] = {}
+
+    traceparent = get_current_traceparent()
+    if traceparent:
+        headers["traceparent"] = traceparent
+
+    if env.is_gcp_env():
+        token = auth_client.get_id_token(base_url)
+        headers["Authorization"] = f"Bearer {token}"
+
+    for attempt in Retrying(
+        **get_httpx_retry_config(
+            total_attempts=total_attempts,
+            multiplier=multiplier,
+            min_seconds=min_seconds,
+            max_seconds=max_seconds,
+        )
+    ):
+        with attempt:
+            response = client.get(
+                url, params=params, headers=headers, timeout=timeout
+            )
+            response.raise_for_status()
+    return response

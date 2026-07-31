@@ -21,13 +21,28 @@ from backend.pipeline.common.tracing_utils import (
     setup_tracing,
 )
 from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.processor import TranscriptionEventProcessor
+from backend.pipeline.transcription.processor import (
+    TranscriptionEventProcessor,
+    is_transient_exception,
+)
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
 # Setup Logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+class MissingOutputTopicError(ValueError):
+    """Raised when OUTPUT_TOPIC is unset.
+
+    This is expected in local/test environments that don't provision Pub/Sub
+    topics, so eager_warmup() tolerates specifically this exception type and
+    lets the service start in a degraded state. Other configuration failures
+    (e.g. an invalid TRANSCRIBER_CONFIG) raise plain ValueError/pydantic
+    ValidationError and are deliberately left uncaught, since those are
+    deterministic and will never succeed on retry.
+    """
 
 
 class TranscriptionServiceContainer:
@@ -104,7 +119,8 @@ class TranscriptionServiceContainer:
             The cached TranscriptionEventProcessor instance.
 
         Raises:
-            ValueError: If the OUTPUT_TOPIC environment variable is not set.
+            MissingOutputTopicError: If the OUTPUT_TOPIC environment variable
+                is not set.
         """
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
@@ -112,7 +128,7 @@ class TranscriptionServiceContainer:
             if not output_topic:
                 msg = "OUTPUT_TOPIC environment variable must be set"
                 logger.error(msg)
-                raise ValueError(msg)
+                raise MissingOutputTopicError(msg)
 
             transcriber = self.get_transcriber(project_id)
             publisher = self.get_publisher()
@@ -144,16 +160,28 @@ class TranscriptionServiceContainer:
         return self._processor
 
     def eager_warmup(self) -> None:
-        """Eagerly warms up and caches all gRPC clients during container initialization."""
+        """Eagerly warms up and caches all gRPC clients during container initialization.
+
+        Only MissingOutputTopicError is tolerated here, since that's the one
+        expected/benign gap in local and test environments that don't
+        provision Pub/Sub topics. Everything else — including invalid
+        transcriber configuration (e.g. GEMINI_USER_PROMPT unset,
+        unrecognized TRANSCRIBER_TYPE) — is deterministic and will never
+        resolve on retry, so it's left to propagate and fail container
+        startup outright. That way a misconfigured deployment fails to come
+        up (and Cloud Run keeps routing to the last good revision) instead of
+        starting "successfully" and then returning 500 for every request.
+        """
         logger.info("Performing eager warm-start for container services...")
         try:
             self.get_processor()
-            logger.info("Container services eagerly warmed up successfully.")
-        except Exception as e:
+        except MissingOutputTopicError as e:
             logger.warning(
-                "Eager warm-start skipped or failed (expected in some test/local envs): %s",
+                "Eager warm-start skipped: %s (expected in some test/local envs).",
                 e,
             )
+            return
+        logger.info("Container services eagerly warmed up successfully.")
 
 
 def _setup_default_executor() -> ThreadPoolExecutor:
@@ -234,5 +262,15 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service is not initialized",
         )
-    await processor.process_event(envelope)
+
+    try:
+        await processor.process_event(envelope)
+    except Exception as e:
+        if is_transient_exception(e):
+            # Suppress noisy Uvicorn tracebacks while preserving Pub/Sub retry behavior
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Transient error processing message: {e}",
+            )
+        raise  # Re-raise permanent/unexpected bugs so they are properly logged
     return Response(status_code=status.HTTP_204_NO_CONTENT)

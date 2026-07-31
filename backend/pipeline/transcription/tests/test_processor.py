@@ -27,18 +27,24 @@ from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
 )
+from backend.pipeline.common.exceptions import PartialTranscriptionError
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
 )
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
+from backend.pipeline.transcription.enums import TranscriptionStatus
 from backend.pipeline.transcription.processor import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     TranscriptionEventProcessor,
-    _is_transient_exception,
+    is_transient_exception,
 )
+from backend.pipeline.transcription.transcribers import base
 from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers.gemini import (
+    GeminiTransientTranscriptionError,
+)
 from backend.services.audio_segments import models as audio_segments_models
 
 
@@ -113,23 +119,34 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             audio_segments_client=mock_audio_segments_client,
         )
 
-        # Run process_event
-        await processor.process_event(cloud_event)
+        # Run with an SDK provider so emitted child spans receive their own IDs.
+        with patch.object(
+            tracing_utils._state,
+            "custom_provider",
+            TracerProvider(),
+        ):
+            await processor.process_event(cloud_event)
 
         # Verify transcriber was invoked with GCS reference
         mock_transcriber.transcribe.assert_called_once_with(
             uri="gs://bucket/normalized.flac",
             duration_ms=5001,  # (1005 * 1000 + 2) - (1000 * 1000 + 1) = 5001 ms
+            context=base.TranscriptionContext(segment_id="tx-1111"),
         )
 
         # Verify final egress publishing was called with correctly serialized TranscribedAudio proto
         mock_publisher.publish.assert_called_once()
         call_args = mock_publisher.publish.call_args
         self.assertEqual(call_args.kwargs["ordering_key"], "feed-2222")
-        self.assertEqual(
-            call_args.kwargs["traceparent"],
-            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        )
+        version, trace_id, span_id, flags = call_args.kwargs[
+            "traceparent"
+        ].split("-")
+        self.assertEqual(version, "00")
+        self.assertEqual(trace_id, "4bf92f3577b34da6a3ce929d0e0e4736")
+        self.assertRegex(span_id, r"^[0-9a-f]{16}$")
+        self.assertNotEqual(span_id, "0000000000000000")
+        self.assertNotEqual(span_id, "00f067aa0ba902b7")
+        self.assertEqual(flags, "01")
 
         # Deserialize output data passed to publish
         out_proto = TranscribedAudio()
@@ -147,10 +164,10 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "success"
+            "transcription_status", TranscriptionStatus.SUCCESS
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
@@ -164,6 +181,85 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
                 "text": "Hello world",
                 "errors": [],
             },
+        )
+
+    async def test_process_event_partial_transcription(self) -> None:
+        """Verifies behavior when speech API returns a partial transcription error."""
+        # Setup mocks
+        mock_transcriber = MagicMock(spec=Transcriber)
+        mock_transcriber.transcribe.side_effect = PartialTranscriptionError(
+            partial_text="This is a partial", reason="MAX_TOKENS"
+        )
+
+        mock_publisher = MagicMock()
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        # Build dummy claim proto
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 1000000},
+            end_timestamp={"seconds": 1005, "nanos": 2000000},
+        )
+
+        # Serialize and wrap in Pub/Sub envelope
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+                "messageId": "msg-1",
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # Run process_event
+        await processor.process_event(cloud_event)
+
+        # Verify add_audio_segment_annotation was called with partial text and error
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="tx-1111",
+            annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
+            data={
+                "text": "This is a partial",
+                "errors": ["Partial transcription (MAX_TOKENS)"],
+            },
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "success"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", TranscriptionStatus.PARTIAL
         )
 
     async def test_process_event_empty_transcription(self) -> None:
@@ -232,18 +328,100 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             audio_segment_id="tx-1111",
             annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
             data={
-                "text": (CHIRP_UNINTELLIGIBLE_MARKER),
-                "errors": ["Empty transcription from Speech Model"],
+                "text": "",
+                "errors": [],
             },
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "unintelligible"
+            "transcription_status", TranscriptionStatus.EMPTY
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "success"
+        )
+
+    async def test_process_event_unintelligible_marker_transcription(
+        self,
+    ) -> None:
+        """Verifies behavior when speech API returns the unintelligible marker explicitly."""
+        # Setup mocks
+        mock_transcriber = MagicMock(spec=Transcriber)
+        mock_transcriber.transcribe.return_value = CHIRP_UNINTELLIGIBLE_MARKER
+
+        mock_publisher = MagicMock()
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 1000000},
+            end_timestamp={"seconds": 1005, "nanos": 2000000},
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+                "messageId": "msg-1",
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        await processor.process_event(cloud_event)
+
+        # Verify add_audio_segment_annotation was called without errors
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="tx-1111",
+            annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
+            data={
+                "text": CHIRP_UNINTELLIGIBLE_MARKER,
+                "errors": [],
+            },
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "start"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", TranscriptionStatus.ATTEMPTS
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", TranscriptionStatus.UNINTELLIGIBLE
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
@@ -304,13 +482,13 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "error"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "error"
+            "transcription_status", TranscriptionStatus.PERMANENT_ERROR
         )
 
         # Egress publishing must never be called (event silently dropped)
@@ -385,12 +563,82 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         # Egress publishing must never be called
         mock_publisher.publish.assert_not_called()
 
-        # The annotation is still written with the transient failure message
+        # The annotation is NOT written for transient failures
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
+
+    async def test_process_event_transient_failure_then_success(self) -> None:
+        """Verifies a two-delivery sequence: a transient failure propagates without writing annotations, and a subsequent retry succeeds and writes the final transcript annotation."""
+        mock_transcriber = MagicMock(spec=Transcriber)
+        # 1st call raises transient, 2nd call returns success
+        mock_transcriber.transcribe.side_effect = [
+            GeminiTransientTranscriptionError("Transient API drop"),
+            "Engine 41 responding",
+        ]
+
+        mock_publisher = MagicMock()
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # --- Delivery 1: Transient Failure ---
+        with self.assertRaises(GeminiTransientTranscriptionError):
+            await processor.process_event(cloud_event)
+
+        # Verify no egress published and no DB annotation written
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
+
+        # --- Delivery 2: Successful Retry ---
+        await processor.process_event(cloud_event)
+
+        # Verify egress was published
+        mock_publisher.publish.assert_called_once()
+
+        # Verify the annotation was written EXACTLY once with the successful transcript
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
         call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
             "data"
         ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        self.assertEqual(call_data["text"], "Engine 41 responding")
+        self.assertEqual(call_data["errors"], [])
 
     async def test_process_event_audio_too_long_permanent_failure(self) -> None:
         """Verifies that when audio duration exceeds the transcriber's limit,
@@ -508,12 +756,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServiceUnavailable):
             await processor.process_event(cloud_event)
 
-        mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_google_api_permanent_error_silent_drop(
         self,
@@ -629,11 +872,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_retry_error_permanent_cause_silent_drop(
         self,
@@ -746,11 +985,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_requests_timeout_transient_error_propagates(
         self,
@@ -803,11 +1038,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_requests_connection_error_transient_error_propagates(
         self,
@@ -860,11 +1091,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_requests_http_500_transient_error_propagates(
         self,
@@ -921,11 +1148,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
-        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
-        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
-            "data"
-        ]
-        self.assertIn("Transient Failure", call_data["errors"][0])
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     async def test_process_event_requests_http_400_permanent_error_silent_drop(
         self,
@@ -990,45 +1213,45 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
 
 
 class IsTransientExceptionTest(unittest.TestCase):
-    """Unit tests for the _is_transient_exception helper."""
+    """Unit tests for the is_transient_exception helper."""
 
     def test_google_api_call_error_transient(self) -> None:
         e = GoogleAPICallError("Resource exhausted")
         e.code = 429
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Internal error")
         e.code = 500
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Conflict")
         e.code = 409
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Bad request")
         e.code = 400
-        self.assertFalse(_is_transient_exception(e))
+        self.assertFalse(is_transient_exception(e))
 
     def test_google_genai_api_error_transient(self) -> None:
         e = genai_errors.APIError(429, {})
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = genai_errors.APIError(503, {})
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = genai_errors.APIError(400, {})
-        self.assertFalse(_is_transient_exception(e))
+        self.assertFalse(is_transient_exception(e))
 
     def test_httpx_errors_transient(self) -> None:
         mock_request = httpx.Request("GET", "https://example.com")
         e = httpx.ReadTimeout("Timeout", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = httpx.ConnectError("Connection refused", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = httpx.RequestError("Request failed", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
 
 class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):

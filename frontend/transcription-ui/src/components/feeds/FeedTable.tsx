@@ -10,6 +10,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import TuneIcon from '@mui/icons-material/Tune';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
@@ -28,13 +29,13 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Feed, SourceType } from '@transcription/common';
 
+import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
+import { FeedHistoryModal } from './FeedHistoryModal';
 import { FeedTagChip } from './FeedTagChip';
 import { groupTagsByKey } from './tagDisplay';
 
@@ -49,6 +50,8 @@ export interface FeedTableProps {
   title?: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   isLoading: boolean;
   feedTotal: number;
   allowEdit?: boolean;
@@ -57,6 +60,9 @@ export interface FeedTableProps {
   isSubmitting?: boolean;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 interface SortConfig {
@@ -106,15 +112,23 @@ VirtuosoTable.displayName = 'VirtuosoTable';
 function VirtuosoTableRow(
   props: ComponentProps<typeof TableRow> & {
     item?: Feed;
-    context?: { editingFeedId?: string; allowEdit?: boolean };
+    context?: {
+      editingFeedId?: string;
+      allowEdit?: boolean;
+      isNarrow?: boolean;
+    };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingFeedId === item.id);
   const allowEdit = context?.allowEdit ?? false;
-  const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 1fr 60px'
-    : '1.5fr 1fr 1fr 2fr';
+  const isNarrow = context?.isNarrow ?? false;
+
+  const gridTemplateColumns = isNarrow
+    ? '1fr auto'
+    : allowEdit
+      ? '1.5fr 1fr 1fr 100px'
+      : '1.5fr 1fr 1fr 2fr';
 
   return (
     <TableRow
@@ -125,6 +139,14 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
+        gridTemplateRows: isNarrow ? 'auto auto auto' : 'unset',
+        gridTemplateAreas: isNarrow
+          ? `
+            "name-source status"
+            "type        links-actions"
+            "tags        tags"
+          `
+          : 'unset',
         width: '100%',
         alignItems: 'center',
         borderBottom: '1px solid',
@@ -155,6 +177,8 @@ export function FeedTable({
   title = 'Feeds',
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   isLoading,
   feedTotal,
   allowEdit = false,
@@ -163,9 +187,13 @@ export function FeedTable({
   isSubmitting = false,
   filters,
   onFiltersChange,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: FeedTableProps) {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isNarrow = useIsNarrow();
+
+  const [historyFeed, setHistoryFeed] = useState<Feed | null>(null);
 
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
@@ -195,7 +223,7 @@ export function FeedTable({
   }, [feeds, sortConfig]);
 
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 1fr 60px'
+    ? '1.5fr 1fr 1fr 100px'
     : '1.5fr 1fr 1fr 2fr';
 
   const sortConfigColumn = sortConfig.column;
@@ -257,6 +285,7 @@ export function FeedTable({
           component="div"
           role="cell"
           sx={{
+            gridArea: { xs: 'name-source', sm: 'unset' },
             py: 1,
             display: 'flex',
             flexDirection: 'column',
@@ -290,7 +319,12 @@ export function FeedTable({
         <TableCell
           component="div"
           role="cell"
-          sx={{ borderBottom: 'none', minWidth: 0 }}
+          sx={{
+            gridArea: { xs: 'type', sm: 'unset' },
+            borderBottom: 'none',
+            minWidth: 0,
+            py: { xs: 0.5, sm: undefined },
+          }}
         >
           <Chip
             label={toSourceTypeString(feed.sourceType)}
@@ -302,7 +336,15 @@ export function FeedTable({
         <TableCell
           component="div"
           role="cell"
-          sx={{ borderBottom: 'none', minWidth: 0 }}
+          sx={{
+            gridArea: { xs: 'status', sm: 'unset' },
+            borderBottom: 'none',
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: { xs: 'flex-end', sm: 'flex-start' },
+            py: { xs: 0.5, sm: undefined },
+          }}
         >
           <FeedStatusIndicator
             status={feed.status}
@@ -319,11 +361,20 @@ export function FeedTable({
           component="div"
           role="cell"
           sx={{
+            gridArea: { xs: 'links-actions', sm: 'unset' },
             borderBottom: 'none',
             display: 'flex',
             alignItems: 'center',
             minWidth: 0,
             width: '100%',
+            py: { xs: 0.5, sm: undefined },
+            gap: 1,
+            ...(allowEdit && {
+              justifyContent: {
+                xs: 'flex-end',
+                sm: allowEdit ? 'flex-end' : 'flex-start',
+              },
+            }),
           }}
         >
           {allowEdit ? (
@@ -349,11 +400,12 @@ export function FeedTable({
             <Box
               sx={{
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 0.5,
-                alignItems: 'flex-start',
-                width: '100%',
+                flexDirection: { xs: 'row', sm: 'column' },
+                gap: { xs: 1.5, sm: 0.5 },
+                alignItems: { xs: 'center', sm: 'flex-start' },
+                flexGrow: 1,
                 overflow: 'hidden',
+                justifyContent: { xs: 'flex-end', sm: 'flex-start' },
               }}
             >
               {feed.sourceUrl ? (
@@ -362,16 +414,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Source:</b>{' '}
-                  <Link
-                    href={feed.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.sourceUrl}
-                  </Link>
+                  {isNarrow ? (
+                    <Link
+                      href={feed.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Source
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Source:</b>{' '}
+                      <Link
+                        href={feed.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.sourceUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {feed.archiveUrl ? (
@@ -380,16 +446,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Archive:</b>{' '}
-                  <Link
-                    href={feed.archiveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.archiveUrl}
-                  </Link>
+                  {isNarrow ? (
+                    <Link
+                      href={feed.archiveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Archive
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Archive:</b>{' '}
+                      <Link
+                        href={feed.archiveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.archiveUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {!feed.sourceUrl && !feed.archiveUrl ? (
@@ -399,6 +479,25 @@ export function FeedTable({
               ) : null}
             </Box>
           )}
+
+          <IconButton
+            size="small"
+            onClick={() => setHistoryFeed(feed)}
+            sx={{
+              border: '1px solid',
+              borderRadius: 1.5,
+              p: 0.5,
+              flexShrink: 0,
+              '&:hover': {
+                borderColor: 'primary.main',
+                bgcolor: 'primary.soft',
+                color: 'primary.main',
+              },
+            }}
+            aria-label={`View audit trail for ${feed.name}`}
+          >
+            <VisibilityIcon fontSize="small" />
+          </IconButton>
         </TableCell>
 
         {feed.tags && feed.tags.length > 0 ? (
@@ -406,9 +505,11 @@ export function FeedTable({
             component="div"
             role="cell"
             sx={{
-              gridColumn: '1 / -1',
+              gridArea: { xs: 'tags', sm: 'unset' },
+              gridColumn: { xs: 'unset', sm: '1 / -1' },
               borderBottom: 'none',
               pt: 0,
+              pb: { xs: 1.5, sm: undefined },
               display: 'flex',
               flexWrap: 'wrap',
               gap: 0.75,
@@ -530,27 +631,40 @@ export function FeedTable({
           >
             <TuneIcon color="action" fontSize="small" />
             <Box sx={{ flexGrow: 1 }}>
-              <MultiSelectFilter
+              <MultiSelectFilter<SourceType>
                 label="Source Type"
-                options={ALL_SOURCE_TYPES}
+                options={
+                  sourceTypes && sourceTypes.length > 0
+                    ? sourceTypes
+                    : ALL_SOURCE_TYPES
+                }
                 value={filters.sourceTypes}
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
-                getOptionLabel={toSourceTypeString}
-                renderOptionContent={toSourceTypeString}
-                renderValueLabel={toSourceTypeString}
+                getOptionLabel={(type) => toSourceTypeString(type)}
+                renderOptionContent={(type) => toSourceTypeString(type)}
+                renderValueLabel={(type) => toSourceTypeString(type)}
                 size="small"
               />
             </Box>
             <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
-                options={['Active', 'Inactive', 'Error']}
+                options={
+                  statuses && statuses.length > 0
+                    ? statuses
+                    : ['Active', 'Inactive', 'Error']
+                }
                 value={filters.statuses}
                 onChange={(statuses) =>
                   onFiltersChange({ ...filters, statuses })
                 }
+                getOptionLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
+                renderOptionContent={(s) =>
+                  s.charAt(0).toUpperCase() + s.slice(1)
+                }
+                renderValueLabel={(s) => s.charAt(0).toUpperCase() + s.slice(1)}
                 size="small"
               />
             </Box>
@@ -626,37 +740,58 @@ export function FeedTable({
               : 'Register feeds on the left to start listening.'}
           </Typography>
         </Box>
-      ) : isMobile ? (
+      ) : isNarrow ? (
         <TableContainer
           component="div"
           sx={{ flexGrow: 1, overflowY: 'visible' }}
         >
           <Table component="div" sx={{ display: 'block', width: '100%' }}>
-            <TableHead component="div" sx={{ display: 'block' }}>
-              {tableHeader}
-            </TableHead>
             <TableBody component="div" sx={{ display: 'block' }}>
               {sortFeeds.map((feed) => (
                 <VirtuosoTableRow
                   key={feed.id}
                   item={feed}
-                  context={{ editingFeedId, allowEdit }}
+                  context={{ editingFeedId, allowEdit, isNarrow: true }}
                 >
                   {renderRowContent(feed)}
                 </VirtuosoTableRow>
               ))}
             </TableBody>
           </Table>
+          {hasNextPage && (
+            <Box
+              sx={{
+                display: 'flex',
+                justify: 'center',
+                alignItems: 'center',
+                p: 2,
+              }}
+            >
+              <CircularProgress size={24} />
+            </Box>
+          )}
         </TableContainer>
       ) : (
         <TableVirtuoso
           data={sortFeeds}
-          context={{ editingFeedId, allowEdit }}
+          context={{ editingFeedId, allowEdit, isNarrow: false }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
           itemContent={(_index, feed) => renderRowContent(feed)}
+          endReached={() => {
+            if (hasNextPage && !isFetchingNextPage && onLoadMore) {
+              onLoadMore();
+            }
+          }}
+        />
+      )}
+      {historyFeed && (
+        <FeedHistoryModal
+          feed={historyFeed}
+          open={true}
+          onClose={() => setHistoryFeed(null)}
         />
       )}
     </Card>

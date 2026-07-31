@@ -8,11 +8,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
-import { type Feed } from '@transcription/common';
+import { type Feed, SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import { listFeeds } from '../../service/listFeeds';
+import { useFeedSearchOptions } from '../../hooks/useFeedSearchOptions';
+import { useFeeds } from '../../hooks/useFeeds';
+import { handleListboxScroll } from '../../utils/scrollUtils';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -27,9 +28,6 @@ interface FeedSearchViewProps {
   onFeedSelect?: (feedId: string) => void;
 }
 
-const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
-const QUERY_DEBOUNCE_TIME_MS = 300;
-
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   filters: FeedFilters;
@@ -37,6 +35,9 @@ interface CondensedFeedSearchResultsProps {
   feedsLoading: boolean;
   feedTotal: number;
   onFeedSelect?: (feedId: string) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function CondensedFeedSearchResults({
@@ -45,6 +46,9 @@ function CondensedFeedSearchResults({
   onFiltersChange,
   feedsLoading,
   onFeedSelect,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: CondensedFeedSearchResultsProps) {
   const [inputValue, setInputValue] = useState('');
 
@@ -70,19 +74,39 @@ function CondensedFeedSearchResults({
           setInputValue(newInputValue);
           onFiltersChange({ ...filters, searchQuery: newInputValue });
         }}
-        loading={feedsLoading}
+        loading={feedsLoading || isFetchingNextPage}
         loadingText={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CircularProgress size={16} /> Loading feeds...
           </Box>
         }
+        slotProps={{
+          listbox: {
+            onScroll: (event) =>
+              handleListboxScroll(
+                event,
+                onLoadMore,
+                hasNextPage,
+                isFetchingNextPage
+              ),
+          },
+        }}
         renderInput={(params) => (
           <TextField
             {...params}
-            label="Select feed"
             placeholder="Search or select feed..."
             slotProps={{
               ...params.slotProps,
+              htmlInput: {
+                ...params.slotProps?.htmlInput,
+                'aria-label': 'Select feed',
+              },
+            }}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: 1,
+              },
             }}
           />
         )}
@@ -161,20 +185,30 @@ interface TableFeedSearchResultsProps {
   title: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
+  sourceTypes?: SourceType[];
+  statuses?: string[];
   feedsLoading: boolean;
   feedTotal: number;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
 }
 
 function TableFeedSearchResults({
   title,
   feeds,
   tags,
+  sourceTypes,
+  statuses,
   feedsLoading,
   feedTotal,
   filters,
   onFiltersChange,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
 }: TableFeedSearchResultsProps) {
   return (
     <Box
@@ -190,10 +224,15 @@ function TableFeedSearchResults({
         title={title}
         feeds={feeds}
         tags={tags}
+        sourceTypes={sourceTypes}
+        statuses={statuses}
         feedTotal={feedTotal}
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={onFiltersChange}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={onLoadMore}
       />
     </Box>
   );
@@ -214,48 +253,23 @@ export function FeedSearchView({
     tags: [],
   });
 
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
-    filters.searchQuery
-  );
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchQuery(filters.searchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [filters.searchQuery]);
-
   const {
-    data: feedsData,
+    feeds,
+    total: feedTotal,
     error: feedsError,
     isLoading: feedsLoading,
-  } = useQuery({
-    queryKey: [
-      'listFeeds',
-      token,
-      debouncedSearchQuery,
-      filters.sourceTypes,
-      filters.sourceTypes.length,
-      filters.statuses,
-      filters.statuses.length,
-      filters.tags,
-      filters.tags.length,
-    ],
-    queryFn: () =>
-      listFeeds(token!, {
-        name: debouncedSearchQuery || undefined,
-        sourceTypes:
-          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
-        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
-        tags: filters.tags.length > 0 ? filters.tags : undefined,
-      }),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-    refetchInterval: FEED_REFETCH_INTERVAL_MS,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useFeeds({
+    token,
+    searchQuery: filters.searchQuery,
+    sourceTypes: filters.sourceTypes,
+    statuses: filters.statuses,
+    tags: filters.tags,
   });
 
-  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
-  const feedTotal = feedsData?.total ?? 0;
+  const { data: searchOptionsData } = useFeedSearchOptions(token);
 
   useEffect(() => {
     if (feedsError) {
@@ -263,34 +277,7 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
-
-  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
-  const tags = useMemo<{ key: string; value: string }[]>(() => {
-    const seen = new Set<string>();
-    const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || [];
-    sourceFeeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          uniqueTags.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return uniqueTags.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [allFeeds]);
+  const tags = searchOptionsData?.tags ?? [];
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -305,6 +292,9 @@ export function FeedSearchView({
         feedsLoading={feedsLoading}
         feedTotal={feedTotal}
         onFeedSelect={onFeedSelect}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
       />
     );
   }
@@ -314,10 +304,15 @@ export function FeedSearchView({
       title={title}
       feeds={feeds ?? []}
       tags={tags}
+      sourceTypes={searchOptionsData?.sourceTypes}
+      statuses={searchOptionsData?.statuses}
       feedsLoading={feedsLoading}
       feedTotal={feedTotal}
       filters={filters}
       onFiltersChange={setFilters}
+      hasNextPage={hasNextPage}
+      isFetchingNextPage={isFetchingNextPage}
+      onLoadMore={fetchNextPage}
     />
   );
 }

@@ -165,7 +165,8 @@ export class WebAudioPlayer {
   }
 
   stop(): void {
-    // Pause before detaching so the `pause` event still drives playback state.
+    // Halt output before tearing down. The `pause` event is async, so callers
+    // must clear their own playback state — it won't reach a detached listener.
     this.audio.pause();
     this.detachListeners();
     this.audio.removeAttribute('src');

@@ -19,6 +19,13 @@ export function findEvaluationAnnotationData(
   return null;
 }
 
+// A segment is an "alert" when its evaluation annotation fired at least one rule
+// decision; used to tint the timeline overview.
+export function segmentHasAlert(segment: AudioSegment): boolean {
+  const evaluation = findEvaluationAnnotationData(segment.annotations);
+  return !!evaluation && evaluation.decisions.length > 0;
+}
+
 export function findTranscriptAnnotationData(
   annotations: Annotation[]
 ): TranscriptAnnotationData | null {
@@ -36,6 +43,17 @@ export function findWaveformAnnotationData(
   for (const annotation of annotations) {
     if (annotation.type === AnnotationType.WAVEFORM) {
       return annotation.data as WaveformAnnotationData;
+    }
+  }
+  return null;
+}
+
+export function findTranscriptFlagAnnotation(
+  annotations: Annotation[]
+): Annotation | null {
+  for (const annotation of annotations) {
+    if (annotation.type === AnnotationType.TRANSCRIPT_FLAG) {
+      return annotation;
     }
   }
   return null;

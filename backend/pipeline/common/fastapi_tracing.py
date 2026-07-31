@@ -22,7 +22,9 @@ def setup_fastapi_tracing(app: typing.Any, *, service_name: str) -> None:
     async def trace_middleware(
         request: Request, call_next: typing.Any
     ) -> Response:
-        setup_tracing(use_batch=False)
+        # Enable BatchSpanProcessor to avoid Cloud Trace quota exhaustion
+        # (429 ResourceExhausted) in high-throughput environments like FastAPI.
+        setup_tracing(use_batch=True)
         headers = dict(request.headers)
         context = TraceContextTextMapPropagator().extract(carrier=headers)
 

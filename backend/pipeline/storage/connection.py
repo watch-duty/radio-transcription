@@ -1,4 +1,8 @@
+import asyncio
+import collections.abc
 import logging
+import time
+import typing
 
 import asyncpg
 from tenacity import (
@@ -12,6 +16,7 @@ from tenacity import (
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 _logger = logging.getLogger(__name__)
+_POOL_RELEASE_TIMEOUT_RESERVE_SEC = 1.0
 
 
 async def create_pool(
@@ -62,7 +67,8 @@ async def create_pool(
         "database": db_name,
         "min_size": min_size,
         "max_size": max_size,
-        "statement_cache_size": 0,  # Required for PgBouncer transaction-mode pooling.
+        # Required for PgBouncer transaction-mode pooling.
+        "statement_cache_size": 0,
         # DB-01: `idle_in_transaction_session_timeout = 30000` (30s) is enforced
         # server-side via AlloyDB cluster `database_flags`, NOT via asyncpg
         # `server_settings` — see radio-transcription-deployment/terraform/
@@ -103,13 +109,87 @@ async def close_pool(pool: asyncpg.Pool) -> None:
     await pool.close()
 
 
+async def fetch_with_timeout_budget(
+    pool: asyncpg.Pool,
+    query: str,
+    *args: object,
+    timeout_sec: float | None = None,
+) -> list[collections.abc.Mapping[str, object]]:
+    """Fetch while bounding checkout, execution, and release together.
+
+    Args:
+        pool: Managed asyncpg connection pool.
+        query: SQL query to execute.
+        args: Positional query arguments.
+        timeout_sec: Optional total timeout for the complete pool lifecycle.
+
+    Returns:
+        Records returned by the query.
+
+    Raises:
+        TimeoutError: The bounded pool lifecycle exhausts ``timeout_sec``.
+        asyncio.CancelledError: The caller cancels checkout, execution, or
+            release.
+        Exception: The pool or query operation fails.
+    """
+    if timeout_sec is None:
+        rows = await pool.fetch(query, *args)
+        return typing.cast(
+            "list[collections.abc.Mapping[str, object]]",
+            rows,
+        )
+
+    deadline = time.monotonic() + timeout_sec
+    release_reserve_sec = min(
+        _POOL_RELEASE_TIMEOUT_RESERVE_SEC,
+        timeout_sec * 0.1,
+    )
+    operation_deadline = deadline - release_reserve_sec
+
+    def remaining_operation_timeout() -> float:
+        return max(0.0, operation_deadline - time.monotonic())
+
+    def remaining_release_timeout() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    db_connection = await pool.acquire(timeout=remaining_operation_timeout())
+    operation_failed = False
+    try:
+        rows = await db_connection.fetch(
+            query,
+            *args,
+            timeout=remaining_operation_timeout(),
+        )
+    except BaseException:
+        operation_failed = True
+        raise
+    finally:
+        try:
+            await pool.release(
+                db_connection,
+                timeout=remaining_release_timeout(),
+            )
+        except (Exception, asyncio.CancelledError):
+            if not operation_failed:
+                raise
+            _logger.warning(
+                "Failed to release database connection after query failure",
+                exc_info=True,
+            )
+    return typing.cast(
+        "list[collections.abc.Mapping[str, object]]",
+        rows,
+    )
+
+
 async def create_pool_from_settings(
     settings: AlloyDBSettings | None = None,
 ) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool using an AlloyDBSettings object.
 
-    If no settings object is provided, it defaults to loading from environment variables.
+    If no settings object is provided, it defaults to loading from environment
+    variables.
     """
     if settings is None:
         settings = AlloyDBSettings()

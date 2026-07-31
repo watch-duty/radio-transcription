@@ -22,6 +22,7 @@ from .models import (
     AnnotationCreate,
     AudioSegment,
     AudioSegmentCreate,
+    FlagTranscriptRequest,
     ListAudioSegmentsResponse,
 )
 from .service import AudioSegmentService
@@ -131,6 +132,30 @@ async def add_annotation(
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
         return await service.add_annotation(audio_segment_id, annotation)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@app.post(
+    "/v1/audio_segments/{audio_segment_id}/flag",
+    response_model=Annotation,
+    status_code=status.HTTP_200_OK,
+    tags=["audio_segments"],
+)
+async def flag_transcript(
+    request: Request,
+    audio_segment_id: str,
+    flag_request: FlagTranscriptRequest,
+) -> Annotation:
+    """Atomically flag or unflag a transcript."""
+    service: AudioSegmentService = request.app.state.audio_segment_service
+    try:
+        return await service.flag_transcript(
+            audio_segment_id, flag_request.user_id, flag_request.action
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

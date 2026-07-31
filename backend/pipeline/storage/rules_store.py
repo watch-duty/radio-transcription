@@ -29,16 +29,21 @@ class RulesStore:
         if data.get("rule_id"):
             data["rule_id"] = str(data["rule_id"])
 
-        for field in ["scope", "conditions", "metadata"]:
+        for field in ["scope", "conditions", "tags", "metadata"]:
             value = data.get(field)
             if value and isinstance(value, (str, bytes, bytearray)):
                 data[field] = json.loads(value)
         return data
 
-    async def create_rule(self, rule_in: RuleCreate) -> Rule:
+    async def create_rule(
+        self, rule_in: RuleCreate, actor_id: str = ""
+    ) -> Rule:
         """Create a new transcription rule."""
         scope_json = json.dumps(rule_in.scope.model_dump(mode="json"))
         conditions_json = json.dumps(rule_in.conditions.model_dump(mode="json"))
+        tags_json = json.dumps(
+            [tag.model_dump(mode="json") for tag in rule_in.tags]
+        )
 
         # Assign the mandatory created_by field
         created_by = rule_in.metadata.created_by
@@ -53,7 +58,9 @@ class RulesStore:
             rule_in.is_active,
             scope_json,
             conditions_json,
+            tags_json,
             created_by,
+            actor_id,
         )
         return Rule.model_validate(self._prepare_row(row))
 
@@ -73,7 +80,14 @@ class RulesStore:
     async def list_rules(self, rule_ids: list[str] | None = None) -> list[Rule]:
         """List all transcription rules, optionally filtered by rule IDs."""
         if rule_ids:
-            uids = [uuid.UUID(rid) for rid in rule_ids]
+            uids = []
+            for rid in rule_ids:
+                try:
+                    uids.append(uuid.UUID(rid))
+                except ValueError:
+                    pass
+            if not uids:
+                return []
             rows = await self._pool.fetch(
                 rules_queries.GET_RULES_BY_IDS_SQL, uids
             )
@@ -82,7 +96,7 @@ class RulesStore:
         return [Rule.model_validate(self._prepare_row(row)) for row in rows]
 
     async def update_rule(
-        self, rule_id: str, rule_in: RuleUpdate
+        self, rule_id: str, rule_in: RuleUpdate, actor_id: str = ""
     ) -> Rule | None:
         """Partially update an existing transcription rule."""
         try:
@@ -101,7 +115,7 @@ class RulesStore:
 
         for key, value in update_data.items():
             db_value = value
-            if key in {"scope", "conditions"} and db_value is not None:
+            if key in {"scope", "conditions", "tags"} and db_value is not None:
                 db_value = json.dumps(db_value)
 
             # Skip metadata for now as it contains immutable fields
@@ -117,11 +131,30 @@ class RulesStore:
         if not set_clauses:
             return await self.get_rule(rule_id)
 
+        values.append(actor_id)
+        actor_idx = arg_idx
+
         query_parts = [
-            "UPDATE rules SET ",
+            "WITH updated_rule AS (\n",
+            "  UPDATE rules SET ",
             ", ".join(set_clauses),
-            ", updated_at = NOW() WHERE id = $1 ",
-            rules_queries.RULE_RETURNING_SQL,
+            "  , audit_revision = audit_revision + 1",
+            "  , updated_at = NOW() WHERE id = $1\n",
+            "  RETURNING *\n",
+            "), audit_event AS (\n",
+            "  INSERT INTO rule_audit_events (\n",
+            "    rule_id, action, actor_id, rule_revision, before_values,\n",
+            "    after_values\n",
+            "  )\n",
+            "  SELECT u.id, 'rule.updated', $"
+            + str(actor_idx)
+            + ", u.audit_revision,\n",
+            "  row_to_json(r.*)::jsonb, row_to_json(u.*)::jsonb\n",
+            "  FROM updated_rule u JOIN rules r ON r.id = u.id\n",
+            ")\n",
+            "SELECT\n",
+            rules_queries.RULE_COLUMNS_SQL,
+            "FROM updated_rule\n",
         ]
         query = "".join(query_parts)
 
@@ -131,12 +164,14 @@ class RulesStore:
 
         return Rule.model_validate(self._prepare_row(row))
 
-    async def delete_rule(self, rule_id: str) -> bool:
+    async def delete_rule(self, rule_id: str, actor_id: str = "") -> bool:
         """Delete a transcription rule."""
         try:
             uid = uuid.UUID(rule_id)
         except ValueError:
             return False
 
-        result = await self._pool.execute(rules_queries.DELETE_RULE_SQL, uid)
-        return result == "DELETE 1"
+        row = await self._pool.fetchrow(
+            rules_queries.DELETE_RULE_SQL, uid, actor_id
+        )
+        return row is not None

@@ -10,28 +10,18 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2 
 
-      - name: Check for Module Changes
-        id: filter
-        run: |
-          # Check if any files in terraform/modules/ or protos/ changed (infra inputs)
-          INFRA_CHANGED=$(git diff --name-only HEAD^ HEAD | grep -E '^(terraform/modules/|protos/)' || true)
-          if [ -n "$INFRA_CHANGED" ]; then
-            echo "infra_change=true" >> $GITHUB_OUTPUT
-          else
-            echo "infra_change=false" >> $GITHUB_OUTPUT
-          fi
+      - name: Generate Bot Token
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.DEPLOYMENT_BOT_APP_ID }}
+          private-key: ${{ secrets.DEPLOYMENT_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
 
       - name: Notify Private Repo
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
         run: |
-          if [ "${{ steps.filter.outputs.infra_change }}" == "true" ]; then
-            echo "Infra change detected. Triggering Infrastructure (Waterfall will release app aswell)..."
-            gh workflow run terraform_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }} -f environment=dev -f deploy_release=true
-          else
-            echo "App code change only. Triggering App Deployment..."
-            gh workflow run app_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }} -f environment=dev
-          fi
+          echo "Triggering deployment..."
+          gh workflow run dev_deploy.yml --repo ${{ secrets.DEPLOYMENT_REPO_TARGET }} -f app_deploy_sha=${{ github.sha }}

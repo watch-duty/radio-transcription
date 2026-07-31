@@ -7,11 +7,12 @@ policy. The code is still the source of truth:
   `SourceObservation`, `CaptureResources`, `CollectorFn`, and `FeedFailure`.
 - `backend/pipeline/storage/feed_store.py` defines `SourceType` and
   `FeedStatusReason`.
-- `backend/pipeline/ingestion/router.py` defines the VM collector registry.
+- `backend/pipeline/ingestion/router.py` defines the Feed collector registry,
+  including the retained legacy Calls route.
 - `backend/pipeline/ingestion/settings.py` defines which source types the VM
-  fleet claims through `_DEFAULT_CAPS`.
-- `backend/pipeline/ingestion/main.py` enforces the registry/caps invariant at
-  startup.
+  fleet claims through `_DEFAULT_FEED_CLAIM_CAPS`.
+- `backend/pipeline/ingestion/main.py` enforces the Feed-cap and collector
+  authority invariants at startup.
 
 If this document disagrees with those files or their tests, the code and tests
 win. Update this guide when a behavior change would make the guidance
@@ -19,11 +20,25 @@ misleading.
 
 ## Overview
 
-| Method | Mechanism | Audio segmented? |
-|--------|----------|--------|
-| Continuous streaming icecast | VM | No |
-| Polling (API, fetching) | VM | Yes |
-| Push (Echo) | Cloud Function (on demand) | Yes|
+> [!IMPORTANT]
+> **Common Architecture Misconceptions**:
+> 1. **`bcfy_feeds` vs `bcfy_calls`**: `bcfy_feeds` represents continuous audio streams handled by [`icecast_collector.py`](./icecast/icecast_collector.py). Do not confuse it with `bcfy_calls` (Broadcastify Calls), which is polled as discrete pre-segmented calls through durable parent SID leases and does **NOT** pass through Dataflow segmentation.
+> 2. **Icecast Collector Scope**: `bcfy_feeds` is currently the primary continuous audio source captured via `icecast_collector.py`. Future/additional Icecast-protocol streams (`icecast`) use this same collector. Continuous streams (`bcfy_feeds` and `icecast`) are the **only** sources processed by the downstream Dataflow continuous audio segmentation pipeline.
+
+### Ingestion Source Module Mapping
+
+| Runtime Module | Handled `source_type` Values | Stream Architecture | Processed by Dataflow Segmentation? |
+| :--- | :--- | :--- | :--- |
+| [`icecast_collector.py`](./icecast/icecast_collector.py) | `bcfy_feeds` *(primary)*, `icecast` *(future)* | Continuous Icecast-protocol streams | **YES** |
+| [`sid_runner.py`](./bcfy_calls/sid_runner.py) and [`pipeline.py`](./bcfy_calls/pipeline.py) | `bcfy_calls` | Discrete call REST polling under parent SID leases | **NO** |
+| [`openmhz/collector.py`](./openmhz/collector.py) | `openmhz` | Discrete call polling API | **NO** |
+| [`fire_notifications/collector.py`](./fire_notifications/collector.py) | `fire_notifications` | Event notification stream | **NO** |
+| [`echo/main.py`](./echo/main.py) | `echo` | Archival push (Cloud Function) | **NO** |
+
+The legacy [`bcfy_calls_collector.py`](./bcfy_calls/bcfy_calls_collector.py)
+Feed route remains registered pending separate code removal, but Calls is not a
+Feed-claimable source. Production workers therefore reach Calls only through
+the SID runner.
 
 
 ## Feed Failure Runtime Boundary
@@ -56,6 +71,176 @@ object-notification completion policy in the handler and returns success for
 object-scoped and pipeline failures after a best-effort non-budgeted status
 recording attempt so one object cannot quarantine the feed or create a retry
 loop.
+
+## Runtime Control-Plane Contract
+
+VM collectors run inside `CollectorRuntime`; they should not claim feeds,
+renew leases, or build their own unbounded startup queues. Lease Admission is
+the runtime's pre-claim backpressure boundary: each lease-loop cycle limits the
+new primary plus recovery leases admitted before feed tasks are created.
+Collector code should assume it receives an already leased feed and should
+preserve the runtime's ownership of lease acquisition, fencing, heartbeat, and
+shutdown behavior.
+
+Broadcastify Calls uses the same runtime control plane with a different durable
+authority boundary: the supervisor claims parent SID leases, and
+`BcfyCallsSidRunner` dispatches child Feed batches through the bounded Calls
+work pool. It does not acquire Calls rows through `FeedStore`.
+
+Collector startup work must avoid creating synchronous herds against shared
+external systems. If many feed tasks share a blocking dependency such as a
+credential lookup, token refresh, or source-control call, coordinate that work
+at the async level before entering the shared thread pool. A cache, cooperative
+`asyncio.Lock`, or per-source limiter is preferable to letting every feed task
+start the same blocking operation at once.
+
+Worker Health is the worker-local `/healthz` signal. It remains tied to the
+worker event loop and heartbeat freshness, so collector code should yield
+regularly, respect cancellation, and keep blocking work out of the event loop.
+Do not rely on VM Health to hide real worker stalls.
+
+VM Health is the VM-level same-image health agent used by the MIG health check.
+It probes all configured local Worker Health endpoints by HTTP status and
+protects the VM from immediate autohealing until every configured worker has
+been continuously unhealthy for 600 seconds. That hysteresis absorbs transient
+overload; it does not make worker-level stalls acceptable.
+
+Recovery acquisition remains primary-first for v1. If primary acquisition keeps
+filling the Lease Admission budget, recovery rows can wait behind continuous
+primary backlog. Treat that as an explicit residual risk and future tuning area,
+not as something an individual collector should work around locally.
+
+## Worker Cap Calibration
+
+`SourceRuntimeSpec.default_feed_cap` is a per-source, per-worker Feed lease
+limit. It is not a fleet-size target.
+`CollectorSettings.max_feeds_per_worker` is the final worker-wide limit and
+defaults to 800, while `CAP_<SOURCE_TYPE>` can override an individual
+Feed-authority source cap. Feed inventory and VM count determine how many
+workers are needed after a safe per-worker cap is established; they must not be
+used to derive the cap itself.
+
+### Why Fire Notifications Defaults to 600
+
+There is no controlled Fire Notifications-only resource ramp as of July 2026,
+so 600 is a conservative proxy rather than a measured saturation point. The
+closest measured collector is `bcfy_calls`: both are segmented HTTP polling
+collectors, reuse the runtime-owned HTTP session, keep a bounded 1,000-item
+per-feed deduplication deque, and have no long-running subprocess per feed.
+Fire polls every 30-35 seconds versus every 10 seconds for `bcfy_calls`.
+
+Fire does add burst work that the proxy does not cover: it downloads every new
+MP3 and runs `ffprobe` in the shared thread pool. Its upstream API and download
+rate limits have not been load-tested either. For that reason, the default
+copies the historical comparator's former Feed cap instead of extrapolating to
+the 800-task worker ceiling or the 900 configured `openmhz` cap.
+
+The runtime currently limits same-host HTTP concurrency to 64 and admits 20
+new feed tasks per lease cycle, but those are queueing controls rather than
+proof of capacity. Fire does not separately limit `ffprobe` concurrency within
+the 512-thread shared executor, and neither file-list length nor downloaded MP3
+size has a collector-level bound. A synchronized item-arrival burst can
+therefore be limited by subprocess CPU, HTTP queueing, or audio-buffer memory
+before steady polling CPU becomes a problem.
+
+The provisional choice is:
+
+```text
+fire cap = former legacy bcfy_calls Feed cap = 600
+worker slots Fire cannot consume = 800 - 600 = 200
+```
+
+The 200-slot difference is a useful mixed-admission consequence, not an
+independently measured input to the cap. It does not reserve CPU, memory, HTTP,
+or thread-pool capacity for Fire download/`ffprobe` bursts.
+
+The proxy comes from the April 16, 2026 mono-source ramps in commit `9360b46c`,
+`EXPERIMENT_1B_REPORT.md` section 5.8. `docker stats` reports 100 CPU percentage
+points as one vCPU, so `vCPU/feed = CPU percentage points/feed / 100`.
+The ramp measured resource slopes at 200, 500, and 1,000 `bcfy_calls` feeds; it
+did not derive or validate 600 as that collector's saturation cap.
+
+| Source | Reference count/cap | Historical CPU percentage points/feed | Historical vCPU/feed | Historical RSS/feed |
+|--------|------------:|--------------------------------------:|---------------------:|--------------------:|
+| `bcfy_feeds` | 240 | 0.156 | 0.00156 | about 16.9 MiB |
+| `bcfy_calls` | 600 former Feed cap; now SID-owned | 0.009 | 0.00009 | 0.40 MiB |
+| `openmhz` | 900 configured; 800 worker-effective | 0.100 | 0.00100 | 2.805 MiB |
+| `fire_notifications` | 600 | not measured | not measured | not measured |
+
+At 600 feeds, the `bcfy_calls` fit implies about 0.054 marginal vCPU and
+240 MiB marginal RSS. Its fitted RSS intercept was about 155 MiB, making the
+total fitted worker RSS about 395 MiB. These figures justify using
+`bcfy_calls` as a low-cost proxy; they do not prove the same coefficients for
+Fire.
+
+The historical ramps used one `n2-standard-4` VM, three points per source,
+10-minute measurement windows, and disabled Pub/Sub. They were run once on one
+day and used glibc allocation; the current image uses jemalloc. The current
+`bcfy_feeds` audio path has also changed since that experiment, so its
+historical coefficient must not be treated as a current measurement. The
+source report lives on `origin/experiment/1b-stream-copy`; retrieve it with:
+
+```shell
+git fetch origin experiment/1b-stream-copy
+git show 9360b46c:model/data/wildfire_catalog/EXPERIMENT_1B_REPORT.md
+```
+
+### Updating a Cap
+
+Replace the proxy with a measured limit before raising Fire above 600:
+
+1. Run a Fire-only stepped ramp with the current production image, worker
+   resource limits, Pub/Sub enabled, representative file arrival rates, and a
+   restart/claim burst. Use at least five feed-count levels and repeat the ramp
+   on more than one worker or day.
+2. After warmup, measure sustained and peak cgroup CPU and RSS, event-loop
+   drift, poll latency and error/rate-limit rates, downloaded bytes, concurrent
+   downloads and `ffprobe` calls, file-list and MP3 size distributions,
+   thread-pool and HTTP-connector wait, lease-loop latency, and publish
+   throughput. Include a multi-hour soak to detect memory growth.
+3. Fit the steady-state models `CPU(N) = C0 + c*N` and
+   `RSS(N) = M0 + m*N`. Construct a conservative upper prediction envelope for
+   each complete model, including uncertainty in both intercept and slope, or
+   use the worst repeated ramp. Do not combine an upper-bound slope with an
+   optimistic point-estimate intercept.
+4. Choose explicit CPU and memory budgets below the worker limits so startup
+   and item-arrival bursts retain headroom. Calculate:
+
+   ```text
+   N_cpu        = max N where CPU_upper(N) <= CPU_budget
+   N_memory     = max N where RSS_upper(N) <= RSS_budget
+   N_event_loop = max tested N meeting drift and heartbeat guardrails
+   N_global     = max_feeds_per_worker - mixed_source_reserve
+   N_final      = round_down(
+       min(N_cpu, N_memory, N_event_loop, N_upstream, N_global)
+   )
+   ```
+
+   `N_upstream` is the largest count that stays inside provider rate limits and
+   acceptable poll/download latency. Set `mixed_source_reserve` to zero only
+   for a source-dedicated worker. Choose and justify any nonzero reserve from the
+   expected source mix; 200 is only the current consequence of the provisional
+   Fire cap. `CPU_budget` applies to total worker cgroup CPU, including executor
+   threads and child processes, not just the event-loop thread. The historical
+   experiment targeted about 80 `docker stats` CPU percentage points.
+   `RSS_budget` should stay at or below the memory-watchdog pause threshold
+   times a finite cgroup limit, currently 70%. The checked-in deployment does
+   not set a per-container memory limit, so configure one before relying on that
+   threshold or define and validate an explicit host-derived per-worker RSS
+   budget. Round down to a feed count that was actually exercised by the ramp.
+5. Validate the proposed cap in a representative mixed-source ramp. Use one
+   shared worker baseline rather than summing the intercept from each
+   mono-source fit:
+
+   ```text
+   CPU_mixed = C0_shared + sum(source_count * source_CPU_slope)
+   RSS_mixed = M0_shared + sum(source_count * source_RSS_slope)
+   ```
+
+6. Canary `N_final` with `CAP_FIRE_NOTIFICATIONS`, including a simultaneous
+   restart test. Promote it to `default_feed_cap` only after CPU, RSS,
+   event-loop, error-rate, and upstream-limit guardrails remain healthy, then
+   update this section and the cap tests with the new evidence.
 
 ## Status Reason Policy
 
@@ -264,8 +449,9 @@ same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
 1. Add the source type if it is new:
    - add a `SourceType` enum member;
    - add seed data in `terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql`;
-   - add a `_DEFAULT_CAPS` entry if VM workers should claim it;
-   - add a `_COLLECTORS` entry in `router.py`;
+   - add a `SourceRuntimeSpec` entry and set `feed_claimable=True` plus
+     `default_feed_cap` if Feed grants should own it;
+   - add a `_COLLECTORS` entry in `router.py` for a Feed collector route;
    - update topic routing if the source is continuous instead of segmented.
 2. Implement the `CollectorFn` signature from `models.py`.
 3. Use `CaptureResources.http_session` for ordinary async HTTP. A

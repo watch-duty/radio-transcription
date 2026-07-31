@@ -51,8 +51,8 @@ def _safe_blob_exists(storage_client: storage.Client, uri: str) -> bool:
     ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
     this guard a single malformed fileUri would crash ``run_preflight`` before the report
     is written. The hard gate should always write a preflight report.
-    A malformed URI is reported downstream as "not reachable" (and also fails
-    validate_audio_tuning_example), so the operator still gets a clear, actionable failure.
+    A malformed URI is reported downstream as "not reachable", so the operator
+    still gets a clear, actionable failure when reachability is checked.
     """
     try:
         return blob_exists(
@@ -73,16 +73,18 @@ def _estimate_text_tokens(
     not audio content). Token cap is 131,072; for typical <30s clips the audio
     portion is <1,000 tokens. Text estimate catches pathologically long transcripts.
     """
-    # Extract model text (ground truth)
-    try:
-        model_text = (
-            (example.get("contents") or [{}, {}])[1]
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-    except (IndexError, AttributeError):
-        model_text = ""
-    text_len = len(system_prompt) + len(user_prompt) + len(model_text)
+    text_len = len(system_prompt) + len(user_prompt)
+    contents = example.get("contents")
+    if isinstance(contents, list):
+        for turn in contents:
+            if not isinstance(turn, dict):
+                continue
+            parts = turn.get("parts", [])
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    text_len += len(part["text"])
     # Approximate 3 chars/token (conservative)
     return text_len // 3
 
@@ -129,11 +131,27 @@ def _find_unreachable_gcs_uris(
 
 def _extract_file_uris(example: dict[str, Any]) -> list[str]:
     uris: list[str] = []
-    parts = (example.get("contents") or [{}])[0].get("parts", [])
-    for p in parts:
-        if "fileData" in p:
-            uris.append(p["fileData"].get("fileUri", ""))
+    contents = example.get("contents", [])
+    if not isinstance(contents, list):
+        return uris
+    for turn in contents:
+        if not isinstance(turn, dict):
+            continue
+        parts = turn.get("parts", [])
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            file_data = part.get("fileData")
+            if isinstance(file_data, dict):
+                uris.append(file_data.get("fileUri", ""))
     return uris
+
+
+def _extract_target_file_uri(example: dict[str, Any]) -> str:
+    uris = _extract_file_uris(example)
+    return uris[-1] if uris else ""
 
 
 def _check_examples(
@@ -150,7 +168,8 @@ def _check_examples(
         ex_id = f"{split}[{i}]"
         if not validate_audio_tuning_example(ex):
             report.failures.append(
-                f"{ex_id}: failed validate_audio_tuning_example (empty target or malformed schema)"
+                f"{ex_id}: failed validate_audio_tuning_example "
+                "(missing wrapper fields or empty target)"
             )
             if ex_id not in report.offending_ids:
                 report.offending_ids.append(ex_id)
@@ -189,7 +208,8 @@ def run_preflight(
     Checks:
     1. Non-empty train split (at least 1 example)
     2. If val provided: non-empty val split; disjoint train/val fileUris
-    3. Per-example: validate_audio_tuning_example (empty target), estimated token cap, fileUri reachability
+    3. Per-example: local target-text contract, estimated token cap, and
+       fileUri reachability
     4. Duplicate fileUri detection in train set
     """
     report = PreflightReport()
@@ -207,9 +227,10 @@ def run_preflight(
         _write_report(report, report_path)
         return report
 
-    train_uris = _check_duplicate_train_uris(train_examples, report)
-    val_examples, val_uris = _load_and_check_val_split(
-        val_jsonl_path, train_uris, report
+    _check_duplicate_train_uris(train_examples, report)
+    train_all_uris = _extract_all_file_uris(train_examples)
+    val_examples, _ = _load_and_check_val_split(
+        val_jsonl_path, train_all_uris, report
     )
 
     unreachable: set[str] = set()
@@ -217,7 +238,16 @@ def run_preflight(
         # GCS reachability is network-bound and many examples can share the same
         # fileUri. Dedup here so large validation sets do not multiply metadata
         # calls for repeated audio.
-        unique_uris = sorted({u for u in [*train_uris, *val_uris] if u})
+        unique_uris = sorted(
+            {
+                u
+                for u in [
+                    *_extract_all_file_uris(train_examples),
+                    *_extract_all_file_uris(val_examples),
+                ]
+                if u
+            }
+        )
         unreachable = _find_unreachable_gcs_uris(
             storage_client,
             unique_uris,
@@ -267,7 +297,7 @@ def _check_duplicate_train_uris(
 ) -> list[str]:
     train_uris: list[str] = []
     for ex in train_examples:
-        train_uris.extend(_extract_file_uris(ex))
+        train_uris.append(_extract_target_file_uri(ex))
     seen: set[str] = set()
     for uri in train_uris:
         if uri and uri in seen:
@@ -277,6 +307,13 @@ def _check_duplicate_train_uris(
         if uri:
             seen.add(uri)
     return train_uris
+
+
+def _extract_all_file_uris(examples: list[dict[str, Any]]) -> list[str]:
+    uris: list[str] = []
+    for ex in examples:
+        uris.extend(_extract_file_uris(ex))
+    return uris
 
 
 def _load_and_check_val_split(
@@ -294,7 +331,7 @@ def _load_and_check_val_split(
         report.failures.append("Val JSONL is empty.")
     val_uris: list[str] = []
     for ex in val_examples:
-        val_uris.extend(_extract_file_uris(ex))
+        val_uris.append(_extract_target_file_uri(ex))
     overlap = {u for u in train_uris if u} & {u for u in val_uris if u}
     for uri in sorted(overlap):
         report.failures.append(

@@ -39,12 +39,14 @@ updated AS (
     SET last_processed_filename = $1,
         last_bookmark_time = COALESCE($5, feeds.last_bookmark_time),
         audit_revision = CASE
-            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL
+                THEN feeds.audit_revision + 1
             ELSE feeds.audit_revision
         END,
         failure_count = 0,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason_detail = NULL,
@@ -95,11 +97,13 @@ do_update AS (
     SET failure_count = 0,
         last_bookmark_time = GREATEST(feeds.last_bookmark_time, $4),
         audit_revision = CASE
-            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL
+                THEN feeds.audit_revision + 1
             ELSE feeds.audit_revision
         END,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason_detail = NULL,
@@ -112,7 +116,8 @@ do_update AS (
     RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT do_update.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    SELECT do_update.*, fp.source_feed_id,
+           COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM do_update
     JOIN feed_properties fp ON fp.feed_id = do_update.id
 ),
@@ -145,29 +150,65 @@ FROM current_state
 LEFT JOIN do_update ON current_state.id = do_update.id
 """
 
-RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
-WITH current_state AS (
-    SELECT id, worker_id, status, last_heartbeat
-    FROM feeds WHERE id = ANY($1::uuid[])
-    FOR UPDATE
+RENEW_GRANT_HEARTBEATS_SQL = """\
+WITH input AS MATERIALIZED (
+    SELECT
+        input_values.feed_id,
+        input_values.owner_worker_id,
+        input_values.requested_fencing_token,
+        input_values.caller_ordinal
+    FROM UNNEST(
+        $1::uuid[],
+        $2::uuid[],
+        $3::bigint[],
+        $4::bigint[]
+    ) AS input_values(
+        feed_id,
+        owner_worker_id,
+        requested_fencing_token,
+        caller_ordinal
+    )
 ),
-do_update AS (
-    UPDATE feeds SET last_heartbeat = NOW()
+current_state AS MATERIALIZED (
+    SELECT
+        input.caller_ordinal,
+        input.owner_worker_id,
+        input.requested_fencing_token,
+        feeds.id,
+        feeds.status,
+        feeds.worker_id,
+        feeds.fencing_token,
+        feeds.last_heartbeat
+    FROM input
+    JOIN feeds ON feeds.id = input.feed_id
+    ORDER BY feeds.id
+    FOR NO KEY UPDATE OF feeds
+),
+renewed AS (
+    UPDATE feeds
+    SET last_heartbeat = NOW()
     FROM current_state
     WHERE feeds.id = current_state.id
-      AND current_state.worker_id = $2
       AND current_state.status = 'active'::feed_status
-      AND (current_state.last_heartbeat IS NULL
-           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
-    RETURNING feeds.id
+      AND current_state.worker_id = current_state.owner_worker_id
+      AND current_state.fencing_token =
+          current_state.requested_fencing_token
+      AND (
+          current_state.last_heartbeat IS NULL
+          OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds'
+      )
 )
+-- A fresh exact grant is accepted without exposing whether a write occurred.
 SELECT
-    current_state.id,
-    current_state.worker_id AS current_worker,
-    current_state.status::text AS current_status,
-    (do_update.id IS NOT NULL) AS renewed
-FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
+    input.caller_ordinal,
+    input.feed_id,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token
+FROM input
+LEFT JOIN current_state
+  ON current_state.caller_ordinal = input.caller_ordinal
+ORDER BY input.caller_ordinal
 """
 
 RELEASE_FEED_SQL = """\
@@ -176,29 +217,6 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
-  AND status = 'active'::feed_status
-"""
-
-# SIGTERM drain: release every active lease still owned by this worker in
-# one UPDATE. Primary use is _shutdown_sequence — after cancelling all
-# feed tasks (whose CancelledError path skips the normal-completion
-# release_feed), this single statement is what flips active rows back to
-# unclaimed. Deactivated rows are terminal admin stops until reset, so
-# release must not make them claimable.
-#
-# WHERE worker_id = $1 is authoritative for both cases, and the active
-# status guard preserves operator deactivation if shutdown races a
-# manual lifecycle change. unclaimed_since = NOW() matches the
-# convention in RELEASE_FEED_SQL so the autoscaler's MIN(unclaimed_since)
-# signal stays accurate across scale-in. No last_heartbeat write —
-# heartbeat renewal is now the sole writer of that column (scaling plan
-# §6.1).
-RELEASE_FEEDS_BATCH_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    unclaimed_since = NOW()
-WHERE worker_id = $1
   AND status = 'active'::feed_status
 """
 
@@ -304,7 +322,8 @@ def _build_claim_query(
         f"    FROM {combined_cte_name}\n"
         f"    WHERE feeds.id = {combined_cte_name}.id\n"
         "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.last_processed_filename,\n"
+        "              feeds.last_bookmark_time,\n"
         "              feeds.fencing_token, feeds.failure_count,\n"
         "              feeds.status_reason\n"
         ")\n"
@@ -340,7 +359,8 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         branches.append(
             f"    {cte_name} AS MATERIALIZED (\n"
             f"        SELECT id FROM feeds\n"
-            f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
+            f"        WHERE source_type = '{t.value}'\n"
+            f"          AND status = 'unclaimed'::feed_status\n"
             f"        ORDER BY id\n"
             f"        LIMIT ${limit_param}\n"
             f"        FOR NO KEY UPDATE SKIP LOCKED\n"
@@ -383,9 +403,9 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # If either volume spikes (pg_cron paused, failure storm), this query
 # becomes an expensive seq/sort path.
 #
-# TODO(recovery-path-index): if recovery-path P99 exceeds 50 ms at  # noqa: TD003
-# production load OR the pg_cron sweep is paused for extended windows,
-# add migration:
+# TODO(recovery-path-index): if recovery-path P99 exceeds  # noqa: TD003
+# 50 ms at production load OR the pg_cron sweep is paused for extended
+# windows, add migration:
 #
 #   CREATE INDEX CONCURRENTLY idx_feeds_recovery
 #       ON feeds (retry_after, id)
@@ -426,8 +446,11 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}'\n"
             f"          AND (\n"
-            f"              (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))\n"
-            f"              OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)\n"
+            f"              (status = 'failing'::feed_status\n"
+            f"               AND (retry_after IS NULL\n"
+            f"                    OR retry_after <= NOW()))\n"
+            f"              OR (status = 'active'::feed_status\n"
+            f"                  AND last_heartbeat < NOW() - $2::interval)\n"
             f"          )\n"
             f"        ORDER BY retry_after ASC NULLS LAST, id\n"
             f"        LIMIT ${limit_param}\n"
@@ -461,15 +484,20 @@ updated AS (
         audit_revision = feeds.audit_revision + 1,
         failure_count = feeds.failure_count + 1,
         worker_id = NULL,
-        retry_after = CASE WHEN feeds.failure_count + 1 < $3
-                           THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                                $6 * INTERVAL '1 second' * POWER(2, feeds.failure_count))
-                                + (RANDOM() * INTERVAL '10 seconds')
-                           ELSE NULL END,
+        retry_after = CASE
+            WHEN feeds.failure_count + 1 < $3
+            THEN NOW() + LEAST(
+                $5 * INTERVAL '1 second',
+                $6 * INTERVAL '1 second' * POWER(2, feeds.failure_count)
+            ) + (RANDOM() * INTERVAL '10 seconds')
+            ELSE NULL
+        END,
         status_reason = COALESCE($7, 'system_unexpected_error'),
         status_reason_detail = $8,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
+            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(
+                $7, 'system_unexpected_error'
+            )
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
@@ -598,12 +626,89 @@ SELECT after_row.*,
 FROM after_row
 """
 
-GET_FEED_SQL = """\
+# Lease-aware health projection: SID members left-join their parent
+# Lease by primary key; other rows never match and keep their raw child
+# lifecycle as the effective one. The same expression drives returned
+# columns, list filtering, counts, and search options so the table
+# cannot display one status while filtering by another.
+_SID_MEMBER_PREDICATE_SQL = (
+    "fp.source_type = 'bcfy_calls' AND fp.bcfy_calls_is_trunked IS TRUE"
+)
+
+_FEED_LEASE_JOIN_SQL = f"""\
+LEFT JOIN ingestion_leases il
+  ON {_SID_MEMBER_PREDICATE_SQL}
+ AND il.source_type = fp.source_type
+ AND il.lease_key = fp.bcfy_calls_sid"""
+
+# Precedence: child terminal/error states win; a member with a missing
+# parent Lease row is a configuration error; otherwise the parent
+# lifecycle projects through.
+_EFFECTIVE_STATUS_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status
+           WHEN il.lease_key IS NULL THEN 'quarantined'::feed_status
+           ELSE il.status
+       END"""
+
+_EFFECTIVE_STATUS_REASON_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status_reason
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status_reason
+           WHEN il.lease_key IS NULL THEN 'system_configuration_invalid'
+           ELSE il.status_reason
+       END"""
+
+_EFFECTIVE_STATUS_REASON_DETAIL_SQL = f"""\
+CASE
+           WHEN f.status IN (
+               'deactivated'::feed_status,
+               'failing'::feed_status,
+               'quarantined'::feed_status
+           ) THEN f.status_reason_detail
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.status_reason_detail
+           WHEN il.lease_key IS NULL
+               THEN 'bcfy_calls SID parent lease row is missing'
+           ELSE il.status_reason_detail
+       END"""
+
+_EFFECTIVE_LAST_HEARTBEAT_SQL = f"""\
+CASE
+           WHEN NOT ({_SID_MEMBER_PREDICATE_SQL}) THEN f.last_heartbeat
+           ELSE il.last_heartbeat
+       END"""
+
+_LEASE_HEALTH_PROJECTION_SQL = f"""\
+fp.bcfy_calls_sid,
+       il.status AS lease_status,
+       il.last_heartbeat AS lease_last_heartbeat,
+       il.status_reason AS lease_status_reason,
+       {_EFFECTIVE_STATUS_SQL} AS effective_status,
+       {_EFFECTIVE_STATUS_REASON_SQL} AS effective_status_reason,
+       {_EFFECTIVE_STATUS_REASON_DETAIL_SQL}
+           AS effective_status_reason_detail,
+       {_EFFECTIVE_LAST_HEARTBEAT_SQL} AS effective_last_heartbeat"""
+
+_EFFECTIVE_STATUS_FILTER_SQL = (
+    f"($4::text[] IS NULL OR ({_EFFECTIVE_STATUS_SQL})::text = ANY($4))"
+)
+
+GET_FEED_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -614,15 +719,17 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE f.id = $1
 """
 
-LIST_FEEDS_DESC_SQL = """\
+LIST_FEEDS_DESC_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -633,21 +740,24 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
+{_FEED_LEASE_JOIN_SQL}
+WHERE ($1::timestamptz IS NULL OR f.created_at < $1
+       OR (f.created_at = $1 AND f.id < $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
-  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND {_EFFECTIVE_STATUS_FILTER_SQL}
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
   AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at DESC, f.id DESC
 LIMIT $7
 """
 
-LIST_FEEDS_ASC_SQL = """\
+LIST_FEEDS_ASC_SQL = f"""\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
+       {_LEASE_HEALTH_PROJECTION_SQL},
        (
            SELECT s.end_timestamp
            FROM audio_segments s
@@ -658,9 +768,11 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
+{_FEED_LEASE_JOIN_SQL}
+WHERE ($1::timestamptz IS NULL OR f.created_at > $1
+       OR (f.created_at = $1 AND f.id > $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
-  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND {_EFFECTIVE_STATUS_FILTER_SQL}
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
   AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at ASC, f.id ASC
@@ -699,7 +811,10 @@ after_row AS (
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
-        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
@@ -788,7 +903,8 @@ updated AS (
         last_heartbeat = NOW(),
         audit_revision = feeds.audit_revision + 1,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason = NULL
@@ -817,7 +933,10 @@ after_row AS (
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
-        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
@@ -888,7 +1007,10 @@ result_row AS (
         feed_revision_sql="updated_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=feed_audit_sql.audit_snapshot_sql("updated_row"),
-        from_sql="FROM before_row\n    JOIN updated_row ON updated_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN updated_row ON updated_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
@@ -906,12 +1028,13 @@ FROM result_row
 """
 
 
-COUNT_FEEDS_SQL = """\
+COUNT_FEEDS_SQL = f"""\
 SELECT COUNT(*)
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
 WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
-  AND ($2::text[] IS NULL OR f.status::text = ANY($2))
+  AND ($2::text[] IS NULL OR ({_EFFECTIVE_STATUS_SQL})::text = ANY($2))
   AND ($3::jsonb IS NULL OR fp.tags @> $3::jsonb)
   AND ($4::text IS NULL OR f.name ILIKE '%' || $4 || '%')
 """
@@ -951,4 +1074,26 @@ COUNT_FEED_AUDIT_EVENTS_SQL = """\
 SELECT COUNT(*)
 FROM feed_audit_events
 WHERE feed_id = $1
+"""
+
+GET_FEED_SEARCH_OPTIONS_TAGS_SQL = """\
+SELECT DISTINCT elem->>'key' AS key, elem->>'value' AS value
+FROM feed_properties, jsonb_array_elements(COALESCE(tags, '[]'::jsonb)) AS elem
+WHERE elem->>'key' IS NOT NULL AND elem->>'value' IS NOT NULL
+ORDER BY key, value;
+"""
+
+GET_FEED_SEARCH_OPTIONS_SOURCE_TYPES_SQL = """\
+SELECT DISTINCT source_type
+FROM feeds
+ORDER BY source_type;
+"""
+
+# Effective statuses, so filter options match what filtering uses.
+GET_FEED_SEARCH_OPTIONS_STATUSES_SQL = f"""\
+SELECT DISTINCT {_EFFECTIVE_STATUS_SQL} AS status
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+{_FEED_LEASE_JOIN_SQL}
+ORDER BY status;
 """

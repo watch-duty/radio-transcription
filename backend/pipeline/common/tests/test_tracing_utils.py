@@ -1,3 +1,5 @@
+import concurrent.futures
+import os
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
@@ -13,6 +15,7 @@ from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     get_current_traceparent,
     get_tracer,
+    propagate_context,
     setup_tracing,
     traced_to_thread,
     with_baggage_and_span,
@@ -44,6 +47,32 @@ class TestTracingUtils(unittest.TestCase):
         # Verify context is restored on exit
         span_after = get_current_span()
         self.assertFalse(span_after.get_span_context().is_valid)
+
+    def test_propagate_context_nests_span_in_worker_thread(self) -> None:
+        """A ThreadPoolExecutor task wrapped by propagate_context nests under
+        the submitting thread's span instead of starting a detached root span.
+        """
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+        def worker() -> tuple[bool, int]:
+            span = get_current_span()
+            ctx = span.get_span_context()
+            return ctx.is_valid, ctx.trace_id
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            with with_tracer_context(traceparent, "parent_span", __name__):
+                parent_trace_id = get_current_span().get_span_context().trace_id
+                # Wrapped: context captured here, on the submitting thread.
+                wrapped_valid, wrapped_trace_id = executor.submit(
+                    propagate_context(worker)
+                ).result()
+                # Unwrapped: worker runs with a fresh (root) context.
+                bare_valid, _ = executor.submit(worker).result()
+
+        assert wrapped_valid is True
+        assert wrapped_trace_id == parent_trace_id
+        # Without the wrapper the worker thread inherits no active span.
+        assert bare_valid is False
 
     def test_get_current_traceparent(self) -> None:
         """Verifies that get_current_traceparent returns a valid traceparent."""
@@ -347,6 +376,123 @@ class TestTracingUtils(unittest.TestCase):
 
         # Clean up
         tracing_utils._state.custom_provider = None
+
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.BatchSpanProcessor")
+    def test_setup_tracing_batch_processor_config(
+        self, mock_batch_processor, mock_exporter, mock_is_gcp, mock_set_global
+    ) -> None:
+        """Verifies setup_tracing configures BatchSpanProcessor using env overrides."""
+        tracing_utils._state.custom_provider = None
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GOOGLE_CLOUD_PROJECT": "test-project",
+                "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "256",
+                "OTEL_BSP_SCHEDULE_DELAY": "5000",
+            },
+        ):
+            setup_tracing(service_name="test_service", use_batch=True)
+
+        # Verify BatchSpanProcessor was instantiated with overrides
+        mock_batch_processor.assert_called_once_with(
+            mock_exporter.return_value,
+            max_export_batch_size=256,
+            schedule_delay_millis=5000.0,
+        )
+
+        tracing_utils._state.custom_provider = None
+
+
+class TestTracingForkSafety(unittest.TestCase):
+    def setUp(self) -> None:
+        # Reset state before each test
+        tracing_utils._state.custom_provider = None
+        tracing_utils._state.pid = None
+
+    def tearDown(self) -> None:
+        # Clean up state
+        if tracing_utils._state.custom_provider is not None:
+            tracing_utils._state.custom_provider = None
+        tracing_utils._state.pid = None
+
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    def test_fork_reinitializes_custom_provider(
+        self, mock_set_global, mock_exporter, mock_is_gcp
+    ) -> None:
+        """Verifies that setup_tracing reinitializes the provider when PID changes (fork)."""
+        with patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        first_provider = tracing_utils._state.custom_provider
+        self.assertIsNotNone(first_provider)
+        self.assertEqual(tracing_utils._state.pid, os.getpid())
+
+        # Simulate fork by patching os.getpid to return a different PID
+        new_pid = os.getpid() + 100
+        with (
+            patch("os.getpid", return_value=new_pid),
+            patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}),
+        ):
+            # Verify setup_tracing re-initializes
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        second_provider = tracing_utils._state.custom_provider
+        self.assertIsNotNone(second_provider)
+        self.assertNotEqual(first_provider, second_provider)
+        self.assertEqual(tracing_utils._state.pid, new_pid)
+
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    @patch("backend.pipeline.common.tracing_utils.telemetry_logger")
+    def test_fork_shutdown_resilient(
+        self, mock_logger, mock_set_global, mock_exporter, mock_is_gcp
+    ) -> None:
+        """Verifies that provider shutdown is invoked on fork, and exception is handled gracefully."""
+        # Initialize first provider
+        mock_first_provider = MagicMock()
+        tracing_utils._state.custom_provider = mock_first_provider
+        tracing_utils._state.pid = os.getpid()
+
+        # Mock shutdown to raise an exception
+        mock_first_provider.shutdown.side_effect = RuntimeError(
+            "Shutdown failed"
+        )
+
+        # Simulate fork PID change
+        new_pid = os.getpid() + 100
+        with (
+            patch("os.getpid", return_value=new_pid),
+            patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}),
+        ):
+            # Verify setup_tracing still completes successfully and handles the exception
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        # Assert shutdown was called on the stale provider
+        mock_first_provider.shutdown.assert_called_once()
+        # Assert exception was logged via telemetry_logger.exception
+        mock_logger.exception.assert_called_once_with(
+            "Failed to shutdown inherited tracer provider on fork reset"
+        )
+
+        # Verify a new provider was successfully initialized
+        self.assertIsNotNone(tracing_utils._state.custom_provider)
+        self.assertNotEqual(
+            tracing_utils._state.custom_provider, mock_first_provider
+        )
+        self.assertEqual(tracing_utils._state.pid, new_pid)
 
 
 class TestTracedToThread(unittest.IsolatedAsyncioTestCase):

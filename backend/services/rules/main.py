@@ -8,15 +8,24 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
+from backend.pipeline.common.actor_identity import (
+    is_well_formed_google_user_actor_id,
+)
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
-from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+from backend.pipeline.common.rules.models import (
+    Rule,
+    RuleCreate,
+    RuleUpdate,
+)
+from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
 from backend.pipeline.storage.rules_store import RulesStore
 
+from .dry_run import DryRunRequest, DryRunResponse, execute_dry_run
 from .service import AlloyRulesService, BaseRulesService
 
 
@@ -26,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await create_pool_with_retry()
     store = RulesStore(pool)
     app.state.rules_service = AlloyRulesService(store)
+    app.state.audio_segment_store = AudioSegmentStore(pool)
     yield
     await close_pool(pool)
 
@@ -42,9 +52,28 @@ app = FastAPI(
 setup_fastapi_tracing(app, service_name="rules-service")
 
 
+_INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
+
+
+def _resolve_admin_actor_id(request: Request) -> str:
+    """Resolve the BFF-provided human actor for admin mutations."""
+    actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
+    if actor_id is None or not is_well_formed_google_user_actor_id(actor_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trusted actor context required",
+        )
+    return actor_id
+
+
 def get_rules_service(request: Request) -> BaseRulesService:
     """Dependency that retrieves the rules service from application state."""
     return request.app.state.rules_service
+
+
+def get_audio_segment_store(request: Request) -> AudioSegmentStore:
+    """Get the audio segment store from application state."""
+    return request.app.state.audio_segment_store
 
 
 @app.post(
@@ -57,11 +86,12 @@ async def create_rule(
     rule_in: RuleCreate,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
     user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> Rule:
     """Create a new transcription rule."""
     # Assign the authenticated user's email to created_by
     rule_in.metadata.created_by = user.get("email")
-    return await service.create_rule(rule_in)
+    return await service.create_rule(rule_in, actor_id=actor_id)
 
 
 @app.get(
@@ -105,9 +135,10 @@ async def update_rule(
     rule_id: str,
     rule_in: RuleUpdate,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> Rule:
     """Fully update an existing transcription rule."""
-    rule = await service.update_rule(rule_id, rule_in)
+    rule = await service.update_rule(rule_id, rule_in, actor_id=actor_id)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -124,11 +155,25 @@ async def update_rule(
 async def delete_rule(
     rule_id: str,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    actor_id: Annotated[str, Depends(_resolve_admin_actor_id)],
 ) -> None:
     """Delete a transcription rule."""
-    success = await service.delete_rule(rule_id)
+    success = await service.delete_rule(rule_id, actor_id=actor_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Rule {rule_id} not found",
         )
+
+
+@app.post(
+    "/v1/rules/dry-run",
+    response_model=DryRunResponse,
+    tags=["rules"],
+)
+async def dry_run_rule(
+    request: DryRunRequest,
+    audio_store: Annotated[AudioSegmentStore, Depends(get_audio_segment_store)],
+) -> DryRunResponse:
+    """Test a prospective rule against recent historical transcripts."""
+    return await execute_dry_run(request, audio_store)

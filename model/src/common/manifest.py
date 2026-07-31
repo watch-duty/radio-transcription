@@ -8,8 +8,12 @@ Exports:
   is_scoreable_manifest_entry   — shared predicate for rows eligible for scoring
   validate_canonical_manifest   — strict Canonical Manifest validation
   require_canonical_manifest    — fail-loud strict validation wrapper
-  rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
-  load_manifest                 — load a JSON array or JSONL manifest from local disk
+  rows_from_manifest            — convert manifest dictionaries to typed rows
+  strict_canonical_rows_from_manifest — validate and convert strict rows
+  parse_manifest_text           — lenient JSON array/JSONL text parser
+  parse_manifest_text_strict    — fail-loud JSON array/JSONL text parser
+  load_manifest                 — lenient local JSON array/JSONL loader
+  load_manifest_strict          — fail-loud local manifest loader
   merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
 
@@ -27,13 +31,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CANONICAL_DATASET_KEYS = (
+    "name",
+    "family",
+)
+_CANONICAL_REQUIRED_STRING_FIELDS = (
+    "audio_filepath",
+    "text",
+    "example_id",
+    "segment_id",
+)
+
 
 @dataclass(frozen=True)
 class CanonicalRow:
-    """Canonical per-segment row — the single contract between dataset adapters and pipeline stages.
+    """Canonical per-segment contract shared by adapters and pipeline stages.
 
-    This is a fan-in dependency: SFT example builders, dataset adapters, and
-    the test suite all consume this exact shape.
+    Attributes:
+        audio_filepath: Model-ready GCS URI for the segment audio.
+        example_id: Logical example identifier.
+        segment_id: Logical segment identifier within the example.
+        offset: Segment offset in seconds.
+        duration: Segment duration in seconds.
+        text: Reference transcript for the segment.
+        split: Optional dataset split label.
+        dataset: Optional dataset metadata and extensions.
+        source_audio: Optional source-audio metadata and extensions.
     """
 
     audio_filepath: str  # gs:// URI to the segment audio
@@ -42,6 +65,9 @@ class CanonicalRow:
     offset: float
     duration: float
     text: str
+    split: str | None = None
+    dataset: dict[str, Any] | None = None
+    source_audio: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -61,7 +87,7 @@ class DatasetAdapter(Protocol):
 
 
 def is_scoreable_manifest_entry(entry: Mapping[str, Any]) -> bool:
-    """Return whether a raw manifest entry can enter JiWER scoring."""
+    """Return whether a row has the reference fields needed for scoring."""
     return bool(
         _stripped_string(entry.get("audio_filepath"))
         and _stripped_string(entry.get("text"))
@@ -102,9 +128,9 @@ def validate_canonical_manifest(
 ) -> list[CanonicalManifestIssue]:
     """Strictly validate Canonical Manifest rows.
 
-    This is the single strict semantic validation path. Exploratory parsing
-    through load_manifest() remains lenient, and rows_from_manifest() remains a
-    compatibility conversion boundary rather than a full strict validator.
+    This is the single strict semantic validation path for required core
+    fields and optional metadata semantics. Unknown row-level fields,
+    prediction fields, and unknown keys inside metadata objects are tolerated.
     """
     issues: list[CanonicalManifestIssue] = []
     if not rows:
@@ -183,7 +209,7 @@ def _validate_required_fields(
     row_index: int,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    for field in ("audio_filepath", "text", "example_id", "segment_id"):
+    for field in _CANONICAL_REQUIRED_STRING_FIELDS:
         if field not in row:
             _add_issue(
                 issues,
@@ -203,7 +229,20 @@ def _validate_required_fields(
                 field=field,
             )
 
-    audio_filepath = _stripped_string(row.get("audio_filepath"))
+    raw_audio_filepath = row.get("audio_filepath")
+    audio_filepath = _stripped_string(raw_audio_filepath)
+    if (
+        isinstance(raw_audio_filepath, str)
+        and audio_filepath is not None
+        and raw_audio_filepath != audio_filepath
+    ):
+        _add_issue(
+            issues,
+            "unstripped_audio_filepath",
+            "audio_filepath must not contain leading or trailing whitespace",
+            row_index=row_index,
+            field="audio_filepath",
+        )
     if audio_filepath and not _is_gcs_flac_uri(audio_filepath):
         _add_issue(
             issues,
@@ -221,11 +260,11 @@ def _validate_required_fields(
             row_index=row_index,
             field="offset",
         )
-    elif not _is_number(row["offset"]):
+    elif not _is_number(row["offset"]) or row["offset"] < 0:
         _add_issue(
             issues,
             "invalid_offset",
-            "offset must be numeric",
+            "offset must be numeric and non-negative",
             row_index=row_index,
             field="offset",
         )
@@ -254,7 +293,7 @@ def _validate_metadata(
     expected_split: str | None,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    if "split" in row:
+    if "split" in row and row["split"] is not None:
         split = _stripped_string(row["split"])
         if not split:
             _add_invalid_metadata(
@@ -264,25 +303,25 @@ def _validate_metadata(
                 "split must be a non-empty string",
             )
         elif expected_split is not None and split != expected_split:
+            hint = ""
+            if {split, expected_split} == {"eval", "validation"}:
+                hint = (
+                    " (validation manifests are built by sampling eval and "
+                    'relabeling split to "validation" -- see '
+                    "model/scripts/sft/build_validation_manifest_from_eval.py "
+                    "and docs/runbook.md's 'Build A Validation Manifest' "
+                    "section)"
+                )
             _add_issue(
                 issues,
                 "split_mismatch",
-                f"split {split!r} does not match {expected_split!r}",
+                f"split {split!r} does not match {expected_split!r}{hint}",
                 row_index=row_index,
                 field="split",
             )
 
-    if "lang" in row and not _stripped_string(row["lang"]):
-        _add_invalid_metadata(
-            issues,
-            row_index,
-            "lang",
-            "lang must be a non-empty string",
-        )
-
     _validate_dataset(row, row_index, issues)
     _validate_source_audio(row, row_index, issues)
-    _validate_audio_processing(row, row_index, issues)
 
 
 def _validate_dataset(
@@ -290,7 +329,7 @@ def _validate_dataset(
     row_index: int,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    if "dataset" not in row:
+    if "dataset" not in row or row["dataset"] is None:
         return
     dataset = row["dataset"]
     if not isinstance(dataset, dict):
@@ -301,13 +340,18 @@ def _validate_dataset(
             "dataset must be an object",
         )
         return
-    for key in ("name", "family"):
-        if key in dataset and not _stripped_string(dataset[key]):
+    for key in _CANONICAL_DATASET_KEYS:
+        field = f"dataset.{key}"
+        if (
+            key in dataset
+            and dataset[key] is not None
+            and not _stripped_string(dataset[key])
+        ):
             _add_invalid_metadata(
                 issues,
                 row_index,
-                f"dataset.{key}",
-                f"dataset.{key} must be a non-empty string",
+                field,
+                f"{field} must be a non-empty string",
             )
 
 
@@ -316,7 +360,7 @@ def _validate_source_audio(
     row_index: int,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    if "source_audio" not in row:
+    if "source_audio" not in row or row["source_audio"] is None:
         return
     source_audio = row["source_audio"]
     if not isinstance(source_audio, dict):
@@ -327,8 +371,10 @@ def _validate_source_audio(
             "source_audio must be an object",
         )
         return
-    if "audio_filepath" in source_audio and not _stripped_string(
-        source_audio["audio_filepath"]
+    if (
+        "audio_filepath" in source_audio
+        and source_audio["audio_filepath"] is not None
+        and not _stripped_string(source_audio["audio_filepath"])
     ):
         _add_invalid_metadata(
             issues,
@@ -336,8 +382,12 @@ def _validate_source_audio(
             "source_audio.audio_filepath",
             "source_audio.audio_filepath must be a non-empty string",
         )
-    if "offset" in source_audio and (
-        not _is_number(source_audio["offset"]) or source_audio["offset"] < 0
+    if (
+        "offset" in source_audio
+        and source_audio["offset"] is not None
+        and (
+            not _is_number(source_audio["offset"]) or source_audio["offset"] < 0
+        )
     ):
         _add_invalid_metadata(
             issues,
@@ -345,45 +395,19 @@ def _validate_source_audio(
             "source_audio.offset",
             "source_audio.offset must be numeric and non-negative",
         )
-    if "duration" in source_audio and (
-        not _is_number(source_audio["duration"])
-        or source_audio["duration"] <= 0
+    if (
+        "duration" in source_audio
+        and source_audio["duration"] is not None
+        and (
+            not _is_number(source_audio["duration"])
+            or source_audio["duration"] <= 0
+        )
     ):
         _add_invalid_metadata(
             issues,
             row_index,
             "source_audio.duration",
             "source_audio.duration must be numeric and greater than zero",
-        )
-
-
-def _validate_audio_processing(
-    row: dict[str, Any],
-    row_index: int,
-    issues: list[CanonicalManifestIssue],
-) -> None:
-    if "audio_processing" not in row:
-        return
-    audio_processing = row["audio_processing"]
-    if not isinstance(audio_processing, dict):
-        _add_invalid_metadata(
-            issues,
-            row_index,
-            "audio_processing",
-            "audio_processing must be an object",
-        )
-        return
-    if "masked_categories" not in audio_processing:
-        return
-    masked_categories = audio_processing["masked_categories"]
-    if not isinstance(masked_categories, list) or not all(
-        _stripped_string(value) for value in masked_categories
-    ):
-        _add_invalid_metadata(
-            issues,
-            row_index,
-            "audio_processing.masked_categories",
-            "audio_processing.masked_categories must contain non-empty strings",
         )
 
 
@@ -450,37 +474,42 @@ def _format_issue(issue: CanonicalManifestIssue) -> str:
 
 
 def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
-    """Convert raw manifest dicts to typed CanonicalRow instances.
+    """Convert manifest dicts to typed CanonicalRow instances.
 
-    Derives fields from the NeMo-style manifest schema (audio_filepath, text,
-    offset, duration). example_id and segment_id fall back to stable derived
-    values when absent from the manifest dict.
+    This is a compatibility conversion boundary for raw manifest rows:
+    ``example_id`` falls back to the audio filename stem, ``segment_id`` falls
+    back to ``"001"``, and a missing ``offset`` falls back to ``0.0``. The
+    normalized rows are still validated against the canonical contract before
+    conversion.
 
     Args:
-        manifest: List of raw manifest dicts (as returned by load_manifest).
+        manifest: List of canonical manifest dicts, as returned by
+            ``load_manifest``.
 
     Returns:
         List of CanonicalRow instances.
 
     Raises:
-        ValueError: If a row is missing audio_filepath or text, or either
-            value is blank.
+        ValueError: If the manifest violates the canonical contract.
     """
+    normalized_manifest = [
+        _normalize_manifest_entry(entry, row_index=i)
+        for i, entry in enumerate(manifest)
+    ]
+    require_canonical_manifest(normalized_manifest)
     rows: list[CanonicalRow] = []
-    for i, entry in enumerate(manifest):
+    for i, entry in enumerate(normalized_manifest):
         audio_filepath = _required_manifest_string(
             entry,
             "audio_filepath",
             row_index=i,
         )
         text = _required_manifest_string(entry, "text", row_index=i)
-        offset: float = float(entry.get("offset") or 0.0)
-        duration: float = float(entry.get("duration") or 0.0)
-        # Derive stable example_id / segment_id from the manifest or fallback to basename
-        example_id: str = str(
-            entry.get("example_id") or Path(audio_filepath).stem
-        )
-        segment_id: str = str(entry.get("segment_id", "001"))
+        example_id = _required_manifest_string(entry, "example_id", row_index=i)
+        segment_id = _required_manifest_string(entry, "segment_id", row_index=i)
+        split = _optional_manifest_string(entry, "split", row_index=i)
+        offset = float(entry["offset"])
+        duration = float(entry["duration"])
         rows.append(
             CanonicalRow(
                 audio_filepath=audio_filepath,
@@ -489,9 +518,88 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
                 offset=offset,
                 duration=duration,
                 text=text,
+                split=split,
+                dataset=_optional_dataset(entry, row_index=i),
+                source_audio=_optional_source_audio(entry, row_index=i),
             )
         )
     return rows
+
+
+def strict_canonical_rows_from_manifest(
+    manifest: list[dict[str, Any]],
+    *,
+    expected_split: str | None = None,
+    source: str = "manifest",
+) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
+    """Validate and convert manifest entries through the strict canonical API.
+
+    Args:
+        manifest: Raw manifest dictionaries to validate and convert.
+        expected_split: Optional split value required on rows that declare a
+            split.
+        source: Human-readable source name included in conversion errors.
+
+    Returns:
+        The original manifest dictionaries and their aligned canonical rows.
+
+    Raises:
+        ValueError: If strict validation or conversion fails, or if conversion
+            does not preserve the row count.
+    """
+    require_canonical_manifest(manifest, expected_split=expected_split)
+    rows = rows_from_manifest(manifest)
+    if len(rows) != len(manifest):
+        msg = (
+            f"{source}: converted {len(rows)} canonical rows from "
+            f"{len(manifest)} manifest entries"
+        )
+        raise ValueError(msg)
+    return manifest, rows
+
+
+def _normalize_manifest_entry(
+    entry: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, Any]:
+    audio_filepath = _required_manifest_string(
+        entry,
+        "audio_filepath",
+        row_index=row_index,
+    )
+    text = _required_manifest_string(entry, "text", row_index=row_index)
+
+    normalized = dict(entry)
+    normalized["audio_filepath"] = audio_filepath
+    normalized["text"] = text
+    normalized["example_id"] = _optional_identity_string(
+        entry,
+        "example_id",
+        default=Path(audio_filepath).stem,
+        row_index=row_index,
+    )
+    normalized["segment_id"] = _optional_identity_string(
+        entry,
+        "segment_id",
+        default="001",
+        row_index=row_index,
+    )
+    if "offset" not in normalized or normalized["offset"] is None:
+        normalized["offset"] = 0.0
+    return normalized
+
+
+def _optional_identity_string(
+    row: dict[str, Any],
+    field: str,
+    *,
+    default: str,
+    row_index: int,
+) -> str:
+    if field not in row or row[field] is None:
+        return default
+    return _required_manifest_string(row, field, row_index=row_index)
 
 
 def _required_manifest_string(
@@ -499,75 +607,274 @@ def _required_manifest_string(
     field: str,
     *,
     row_index: int,
+    prefix: str = "",
 ) -> str:
     value = row.get(field)
-    text = "" if value is None else str(value)
-    stripped = text.strip()
+    if value is None:
+        msg = f"manifest row {row_index} missing or blank {prefix}{field}"
+        raise ValueError(msg)
+    if not isinstance(value, str):
+        msg = (
+            f"manifest row {row_index} field {prefix}{field} must be a "
+            f"string, got {type(value).__name__}"
+        )
+        raise ValueError(msg)  # noqa: TRY004
+    stripped = value.strip()
     if not stripped:
-        msg = f"manifest row {row_index} missing or blank {field}"
+        msg = f"manifest row {row_index} missing or blank {prefix}{field}"
         raise ValueError(msg)
     return stripped
 
 
+def _optional_manifest_string(
+    row: dict[str, Any],
+    field: str,
+    *,
+    row_index: int,
+    prefix: str = "",
+) -> str | None:
+    if field not in row or row[field] is None:
+        return None
+    value = row[field]
+    if not isinstance(value, str):
+        msg = (
+            f"manifest row {row_index} field {prefix}{field} must be a "
+            f"string, got {type(value).__name__}"
+        )
+        raise ValueError(msg)  # noqa: TRY004
+    stripped = value.strip()
+    if not stripped:
+        msg = f"manifest row {row_index} has blank {prefix}{field}"
+        raise ValueError(msg)
+    return stripped
+
+
+def _optional_dataset(
+    row: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, Any] | None:
+    dataset = row.get("dataset")
+    if not isinstance(dataset, dict):
+        return None
+    dataset_row = {
+        key: value
+        for key, value in dataset.items()
+        if key not in _CANONICAL_DATASET_KEYS or value is not None
+    }
+    for key in _CANONICAL_DATASET_KEYS:
+        value = _optional_manifest_string(
+            dataset, key, row_index=row_index, prefix="dataset."
+        )
+        if value is not None:
+            dataset_row[key] = value
+    return dataset_row or None
+
+
+def _optional_source_audio(
+    row: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, Any] | None:
+    source_audio = row.get("source_audio")
+    if not isinstance(source_audio, dict):
+        return None
+    canonical_source_audio_keys = {"audio_filepath", "offset", "duration"}
+    source_audio_row = {
+        key: value
+        for key, value in source_audio.items()
+        if key not in canonical_source_audio_keys or value is not None
+    }
+    audio_filepath = _optional_manifest_string(
+        source_audio,
+        "audio_filepath",
+        row_index=row_index,
+        prefix="source_audio.",
+    )
+    if audio_filepath is not None:
+        source_audio_row["audio_filepath"] = audio_filepath
+    for field in ("offset", "duration"):
+        if field in source_audio and source_audio[field] is not None:
+            source_audio_row[field] = float(source_audio[field])
+    return source_audio_row or None
+
+
+def parse_manifest_text(
+    content: str,
+    *,
+    source: str = "manifest",
+) -> list[dict[str, Any]]:
+    """Parse JSON array or JSONL text through the explicitly lenient API.
+
+    Malformed JSONL rows and non-object rows are skipped, while malformed JSON
+    arrays return an empty list. Strict workflow boundaries should use
+    ``parse_manifest_text_strict`` instead.
+
+    Args:
+        content: JSON array or JSONL manifest text.
+        source: Human-readable source name used in log messages.
+
+    Returns:
+        Parsed and normalized object rows, omitting invalid rows.
+    """
+    data: list[dict[str, Any]] = []
+    content = content.removeprefix("\ufeff").strip()
+    if not content:
+        return data
+
+    if content.startswith("["):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.exception(
+                "Failed to parse JSON array from %s: %s", source, exc
+            )
+            return []
+        if not isinstance(parsed, list) or not all(
+            isinstance(row, dict) for row in parsed
+        ):
+            logger.error(
+                "Expected a JSON array of objects in %r, got unexpected shape",
+                source,
+            )
+            return []
+        data = parsed
+    else:
+        for line_number, line in enumerate(content.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                parsed_row = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Skipping malformed JSON at line %s in %s",
+                    line_number,
+                    source,
+                )
+                continue
+            if not isinstance(parsed_row, dict):
+                logger.warning(
+                    "Skipping non-object JSON at line %s in %s",
+                    line_number,
+                    source,
+                )
+                continue
+            data.append(parsed_row)
+
+    return _normalize_manifest_rows(data, coerce_non_string_text=True)
+
+
+def parse_manifest_text_strict(
+    content: str,
+    *,
+    source: str = "manifest",
+) -> list[dict[str, Any]]:
+    """Parse JSON array or JSONL text without skipping invalid rows.
+
+    Args:
+        content: JSON array or JSONL manifest text.
+        source: Human-readable source name included in parse errors.
+
+    Returns:
+        Parsed and normalized object rows, or an empty list for empty input.
+
+    Raises:
+        ValueError: If JSON is malformed or any parsed row is not an object.
+    """
+    content = content.removeprefix("\ufeff")
+    stripped = content.strip()
+    if not stripped:
+        return []
+
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            msg = f"{source}: malformed JSON array: {exc}"
+            raise ValueError(msg) from exc
+        if not isinstance(parsed, list) or not all(
+            isinstance(row, dict) for row in parsed
+        ):
+            msg = f"{source}: expected JSON array of objects"
+            raise ValueError(msg)
+        return _normalize_manifest_rows(
+            parsed,
+            coerce_non_string_text=False,
+        )
+
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed_row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            msg = f"{source}: malformed JSON at line {line_number}: {exc}"
+            raise ValueError(msg) from exc
+        if not isinstance(parsed_row, dict):
+            msg = f"{source}: expected JSON object at line {line_number}"
+            raise ValueError(msg)  # noqa: TRY004
+        rows.append(parsed_row)
+    return _normalize_manifest_rows(rows, coerce_non_string_text=False)
+
+
+def _normalize_manifest_rows(
+    rows: list[dict[str, Any]],
+    *,
+    coerce_non_string_text: bool,
+) -> list[dict[str, Any]]:
+    """Normalize transcript line breaks without masking strict type errors."""
+    for row in rows:
+        if "text" not in row:
+            continue
+        raw = row["text"]
+        if isinstance(raw, str):
+            text = raw
+        elif coerce_non_string_text:
+            text = "" if raw is None else str(raw)
+        else:
+            continue
+        row["text"] = text.replace("\n", " ").replace("\r", " ")
+    return rows
+
+
 def load_manifest(path: str) -> list[dict[str, Any]]:
-    """Loads a manifest file (JSON array or JSONL) from the local filesystem.
+    """Leniently load a local JSON array or JSONL manifest.
 
     Args:
         path: Local filesystem path to a .json (array) or .jsonl manifest.
 
     Returns:
-        List of row dicts; an empty list if the path is missing, unreadable,
-        or unparseable.
+        Parsed and normalized object rows. Invalid rows are skipped. Missing
+        or unreadable files produce an empty list.
     """
-    data: list[dict[str, Any]] = []
+    manifest_path = Path(path)
     try:
-        if not Path(path).exists():
-            logger.error(f"Manifest path not found: {path}")
+        if not manifest_path.exists():
+            logger.error("Manifest path not found: %s", path)
             return []
-        with open(path, encoding="utf-8") as f:
-            content = f.read().strip()
-    except OSError as e:
-        # Path.exists() can raise (not just return False) when a parent
-        # directory denies search/execute permission — and open() can raise
-        # on an unreadable file. Either way, soft-fail to [] rather than
-        # crashing the caller.
-        logger.exception(f"Could not read manifest {path}: {e}")
+        content = manifest_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        logger.exception("Could not read manifest %s: %s", path, exc)
         return []
-    if content.startswith("["):
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.exception(f"Failed to parse JSON array: {e}")
-            return []
-        if not isinstance(data, list) or not all(
-            isinstance(row, dict) for row in data
-        ):
-            logger.error(
-                f"Expected a JSON array of objects in {path!r}, got unexpected shape"
-            )
-            return []
-    else:
-        for i, obj_str in enumerate(content.splitlines(), start=1):
-            if not obj_str.strip():
-                continue
-            try:
-                obj = json.loads(obj_str)
-            except json.JSONDecodeError:
-                logger.warning(f"Skipping malformed JSON at line {i}")
-                continue
-            if not isinstance(obj, dict):
-                logger.warning(f"Skipping non-object JSON at line {i}")
-                continue
-            data.append(obj)
-    for row in data:
-        if "text" in row:
-            # Coerce a non-string text field (None / int / bool in a malformed
-            # manifest) to a string so a downstream .strip()/.lower() never
-            # raises; a null text becomes "" rather than the literal "None".
-            raw = row["text"]
-            text = "" if raw is None else str(raw)
-            row["text"] = text.replace("\n", " ").replace("\r", " ")
-    return data
+    return parse_manifest_text(content, source=path)
+
+
+def load_manifest_strict(path: str) -> list[dict[str, Any]]:
+    """Load and normalize a local manifest without skipping invalid rows.
+
+    Args:
+        path: Local filesystem path to a JSON array or JSONL manifest.
+
+    Returns:
+        Parsed and normalized object rows, or an empty list for an empty file.
+
+    Raises:
+        OSError: If ``path`` cannot be read.
+        ValueError: If JSON is malformed or any parsed row is not an object.
+    """
+    content = Path(path).read_text(encoding="utf-8-sig")
+    return parse_manifest_text_strict(content, source=path)
 
 
 def merge_predictions_to_manifest(
@@ -586,7 +893,8 @@ def merge_predictions_to_manifest(
     without predictions remain allowed.
 
     Args:
-        ground_truth: List of ground-truth manifest dicts (NeMo-style schema).
+        ground_truth: List of ground-truth rows with audio_filepath, offset,
+            and reference text.
         predictions: List of prediction dicts, each with audio_filepath, offset, text.
         model_key: Short model identifier used as the field suffix (e.g. "gemini").
         offset_tolerance: Absolute offset difference (seconds) within which two
@@ -604,6 +912,9 @@ def merge_predictions_to_manifest(
         ValueError: If required prediction or ground-truth keys are missing,
             malformed, or any prediction row cannot be matched.
     """
+    if offset_tolerance < 0:
+        msg = "offset_tolerance must be non-negative"
+        raise ValueError(msg)
     pred_index = _prediction_index(predictions)
     gt_by_file = _ground_truth_index(ground_truth)
 
@@ -649,8 +960,12 @@ def _prediction_index(
 ) -> dict[str, list[_PredictionCandidate]]:
     pred_index: dict[str, list[_PredictionCandidate]] = {}
     for i, pred in enumerate(predictions):
-        audio_fp = str(_required_key(pred, "audio_filepath", "prediction"))
-        p_offset = _required_float(pred, "offset", "prediction")
+        audio_fp = _required_stripped_string(
+            pred,
+            "audio_filepath",
+            "prediction",
+        )
+        p_offset = _required_offset(pred, "prediction")
         raw_text = pred.get("text")
         p_text = "" if raw_text is None else str(raw_text)
         pred_index.setdefault(audio_fp, []).append(
@@ -670,14 +985,16 @@ def _ground_truth_index(
 ) -> dict[str, list[_GroundTruthCandidate]]:
     gt_by_file: dict[str, list[_GroundTruthCandidate]] = {}
     for i, gt_row in enumerate(ground_truth):
-        audio_fp = str(
-            _required_key(gt_row, "audio_filepath", "ground truth row")
+        audio_fp = _required_stripped_string(
+            gt_row,
+            "audio_filepath",
+            "ground truth row",
         )
         gt_by_file.setdefault(audio_fp, []).append(
             _GroundTruthCandidate(
                 index=i,
                 audio_filepath=audio_fp,
-                offset=_required_float(gt_row, "offset", "ground truth row"),
+                offset=_required_offset(gt_row, "ground truth row"),
                 identity=_optional_identity(gt_row),
             )
         )
@@ -700,13 +1017,50 @@ def _required_key(row: dict[str, Any], key: str, row_kind: str) -> Any:
     raise ValueError(msg)
 
 
-def _required_float(row: dict[str, Any], key: str, row_kind: str) -> float:
+def _required_stripped_string(
+    row: dict[str, Any],
+    key: str,
+    row_kind: str,
+) -> str:
     value = _required_key(row, key, row_kind)
+    stripped = _stripped_string(value)
+    if stripped is not None:
+        return stripped
+    msg = f"{row_kind} missing or blank '{key}': {row!r}"
+    raise ValueError(msg)
+
+
+def _required_offset(row: dict[str, Any], row_kind: str) -> float:
+    """Parse a required finite, non-negative offset.
+
+    Args:
+        row: Prediction or ground-truth row containing the offset.
+        row_kind: Human-readable row kind used in error messages.
+
+    Returns:
+        The parsed offset.
+
+    Raises:
+        ValueError: If the offset is absent, non-numeric, non-finite, or
+            negative.
+    """
+    key = "offset"
+    value = _required_key(row, key, row_kind)
+    if isinstance(value, bool):
+        msg = f"{row_kind} has non-numeric '{key}': {row!r}"
+        raise ValueError(msg)  # noqa: TRY004
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError) as exc:
         msg = f"{row_kind} has non-numeric '{key}': {row!r}"
         raise ValueError(msg) from exc
+    if not math.isfinite(parsed):
+        msg = f"{row_kind} has non-finite '{key}': {row!r}"
+        raise ValueError(msg)
+    if parsed < 0:
+        msg = f"{row_kind} has negative '{key}': {row!r}"
+        raise ValueError(msg)
+    return parsed
 
 
 def _merge_file_predictions(

@@ -185,6 +185,14 @@ class CapturedChunk:
             - Broadcastify Calls: Full source audio URL (e.g. "https://calls.broadcastify.com/.../123456.mp3").
             - Fire Notifications: Composite S3 file UUID and human-readable filename (e.g. "c1465213-2998-4ed7-a6a2-bf16ebf67265|SAN-JOSE-DISP 2026-06-09 18-38-41.mp3").
             - Broadcastify Feeds: Not applicable (omitted).
+        stream_interval_lag_sec: Optional seconds this segment's finalization
+            exceeded a healthy inter-segment interval, measured against the
+            previous segment's receipt_time (not a fixed session-start
+            anchor, which would conflate real backlog with ordinary
+            long-session source-clock drift). ``None`` when there is no
+            prior segment to compare against, or the collector doesn't
+            support the measurement. In the Icecast collector, this lag also
+            drives timeline re-anchoring when it exceeds the drift threshold.
     """
 
     audio_bytes: bytes
@@ -195,6 +203,7 @@ class CapturedChunk:
     mime_type: AudioMimeType | None = None
     resume_position: datetime.datetime | None = None
     external_audio_segment_id: str | None = None
+    stream_interval_lag_sec: float | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -164,7 +164,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -172,13 +172,9 @@ jobs:
           fetch-depth: 100
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
-      - name: Terraform fmt check
-        run: terraform fmt -check -recursive terraform/
-      - name: Terraform validate
-        working-directory: terraform/modules/alloydb
-        run: |
-          terraform init -backend=false
-          terraform validate
+      - name: Validate Terraform
+        run: mise run lint:terraform
+
 
   run-backend-tests:
     needs: [setup]
@@ -317,6 +313,11 @@ jobs:
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
             python -c "import backend.pipeline.ingestion.main"
+      - name: Verify VM Health agent import
+        run: |
+          docker run --rm \
+            ingestion-smoke-test \
+            python -c "import backend.pipeline.ingestion.vm_health_agent"
       - name: Verify ingestion settings instantiation
         run: |
           docker run --rm \
@@ -331,12 +332,10 @@ jobs:
             ingestion-smoke-test \
             python -c "from backend.pipeline.ingestion.settings import CollectorSettings; CollectorSettings()"
 
-  # Applies the ingestion DDL (sql/ingestion/*.sql, excluding *pg_cron* files
-  # which require an extension not shipped with postgres:16-alpine) to a
-  # disposable Postgres 16 service, then runs the HOT-protection guard at
-  # sql/ci/hot_protection_check.sql. Fails the build if any index on the
-  # feeds table references a mutated hot-path column. This prevents future
-  # migrations from silently defeating HOT updates and bloating the table.
+  # Applies the ingestion DDL twice to a disposable PostgreSQL 16 service,
+  # runs a small behavior smoke check, then verifies the existing HOT-update
+  # invariant. Replaying the real migrations catches idempotency problems
+  # without duplicating their schema definitions in CI.
   alloydb-hot-protection-check:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
@@ -357,7 +356,7 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Apply ingestion SQL migrations (excluding pg_cron jobs)
+      - name: Apply ingestion SQL migrations twice (excluding pg_cron jobs)
         env:
           PGHOST: localhost
           PGPORT: "5432"
@@ -370,15 +369,27 @@ jobs:
           # Bash expands globs alphabetically in the current locale, so no
           # explicit sort is needed (and parsing `ls` is fragile with odd
           # filenames).
-          for f in *.sql; do
-            case "$f" in
-              *pg_cron*)
-                echo "Skipping $f (pg_cron extension not installed in CI)";
-                continue;;
-            esac
-            echo "Applying $f..."
-            psql -v ON_ERROR_STOP=1 -f "$f"
+          for pass in 1 2; do
+            for f in *.sql; do
+              case "$f" in
+                *pg_cron*)
+                  echo "Pass $pass: skipping $f (pg_cron extension not installed in CI)";
+                  continue;;
+              esac
+              echo "Pass $pass: applying $f..."
+              psql -v ON_ERROR_STOP=1 -f "$f"
+            done
           done
+      - name: Run Phase 1 behavior smoke check
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: >-
+          psql -v ON_ERROR_STOP=1
+          -f terraform/modules/alloydb/sql/ci/ingestion_leases_behavior_check.sql
       - name: Run HOT-protection guard
         env:
           PGHOST: localhost
@@ -449,3 +460,69 @@ jobs:
 
           assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."
+
+  # The unit suite mocks asyncpg. Exercise the dormant fenced storage
+  # contracts against every supported PostgreSQL major so SQL behavior and
+  # fence transitions are proven before the runtime consumes these APIs.
+  ingestion-lease-lifecycle-postgres:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ["15", "16", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mise and project tools
+        uses: jdx/mise-action@v3
+      - name: Install dependencies
+        run: uv sync
+      - name: Apply ingestion migrations twice
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        working-directory: terraform/modules/alloydb/sql/ingestion
+        run: |
+          set -euo pipefail
+          for pass in 1 2; do
+            for migration in *.sql; do
+              case "$migration" in
+                *pg_cron*)
+                  echo "Pass $pass: skipping $migration (pg_cron unavailable)"
+                  continue;;
+              esac
+              echo "Pass $pass: applying $migration"
+              psql -v ON_ERROR_STOP=1 -f "$migration"
+            done
+          done
+      - name: Prove fenced ingestion storage
+        env:
+          INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED: "1"
+          INGESTION_FEED_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_FEED_EXTERNAL_POSTGRES_REQUIRED: "1"
+          EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
+        run: >-
+          uv run python -m pytest
+          integration_tests/storage/test_ingestion_lease_store_integration.py
+          integration_tests/storage/test_feed_grant_heartbeat_integration.py
+          -q -n 0

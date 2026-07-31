@@ -1,6 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatDuration, getRelativeTimeString } from './timeUtils';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
+
+import {
+  formatDuration,
+  getLiveEdgeMs,
+  getRelativeTimeString,
+} from './timeUtils';
+
+function makeSegment(startMs: number, endMs: number): AudioSegment {
+  return {
+    id: `s-${startMs}`,
+    feedId: 'feed-1',
+    classification: AudioClassification.SPEECH,
+    startTimestamp: new Date(startMs).toISOString(),
+    endTimestamp: new Date(endMs).toISOString(),
+    missingPriorContext: false,
+    missingPostContext: false,
+    sourceAudioUris: [],
+    createdAt: new Date(startMs).toISOString(),
+    annotations: [],
+  };
+}
 
 describe('timeUtils', () => {
   describe('getRelativeTimeString', () => {
@@ -93,6 +114,28 @@ describe('timeUtils', () => {
     });
   });
 
+  describe('getLiveEdgeMs', () => {
+    it('returns null with no segments', () => {
+      expect(getLiveEdgeMs([])).toBeNull();
+    });
+
+    it('returns the newest segment end', () => {
+      const t = new Date('2026-06-20T12:00:00.000Z').getTime();
+      expect(getLiveEdgeMs([makeSegment(t, t + 5000)])).toBe(t + 5000);
+    });
+
+    it('picks the max end even when it is not the first/last segment', () => {
+      // Sorted by start, but an earlier-starting long clip ends latest.
+      const t = new Date('2026-06-20T12:00:00.000Z').getTime();
+      const segments = [
+        makeSegment(t + 10_000, t + 12_000),
+        makeSegment(t, t + 60_000), // starts first, ends last
+        makeSegment(t + 5000, t + 6000),
+      ];
+      expect(getLiveEdgeMs(segments)).toBe(t + 60_000);
+    });
+  });
+
   describe('formatDuration', () => {
     it('formats durations under 60 seconds directly in seconds', () => {
       expect(formatDuration(45)).toBe('45 sec');
@@ -121,6 +164,22 @@ describe('timeUtils', () => {
       expect(formatDuration(0.1)).toBe('<1 sec');
       expect(formatDuration(0.5)).toBe('<1 sec');
       expect(formatDuration(0.9)).toBe('<1 sec');
+    });
+
+    it('formats durations over 60 minutes with hours, minutes, and seconds', () => {
+      expect(formatDuration(3600)).toBe('1 hr');
+      expect(formatDuration(3660)).toBe('1 hr 1 min');
+      expect(formatDuration(3665)).toBe('1 hr 1 min 5 sec');
+      expect(formatDuration(34780)).toBe('9 hr 39 min 40 sec');
+      expect(formatDuration(86411)).toBe('24 hr 11 sec');
+    });
+
+    it('formats durations cleanly without seconds when showSeconds is false', () => {
+      expect(formatDuration(45, false)).toBe('<1 min');
+      expect(formatDuration(120, false)).toBe('2 min');
+      expect(formatDuration(3665, false)).toBe('1 hr 1 min');
+      expect(formatDuration(34780, false)).toBe('9 hr 39 min');
+      expect(formatDuration(86411, false)).toBe('24 hr');
     });
   });
 });

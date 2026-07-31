@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from google.cloud import storage
 
 from backend.pipeline.common.actor_identity import (
     is_well_formed_google_user_actor_id,
@@ -30,15 +32,19 @@ from backend.pipeline.storage.feed_store import (
 )
 from backend.pipeline.storage.pagination_utils import SortOrder
 
+from .echo_client import EchoClient
 from .models import (
     Feed,
     FeedCreate,
+    FeedSearchOptionsResponse,
     FeedUpdate,
     ListFeedHistoryResponse,
     ListFeedsResponse,
     Tag,
 )
 from .service import FeedService
+
+logger = logging.getLogger(__name__)
 
 _INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
 
@@ -48,7 +54,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
     pool = await create_pool_with_retry()
     store = FeedStore(pool)
-    app.state.feed_service = FeedService(store)
+
+    echo_client = None
+    try:
+        storage_client = storage.Client()
+        echo_client = EchoClient(storage_client)
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize GCS client for Echo verification. "
+            "Echo validation will be disabled. Error: %s",
+            e,
+        )
+
+    app.state.feed_service = FeedService(store, echo_client=echo_client)
     yield
     await close_pool(pool)
 
@@ -108,6 +126,19 @@ async def create_feed(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
+
+
+@app.get(
+    "/v1/feeds/search-options",
+    response_model=FeedSearchOptionsResponse,
+    tags=["feeds"],
+)
+async def get_feed_search_options(
+    request: Request,
+) -> FeedSearchOptionsResponse:
+    """Get precomputed search filter options for feeds."""
+    service: FeedService = request.app.state.feed_service
+    return await service.get_feed_search_options()
 
 
 @app.get(

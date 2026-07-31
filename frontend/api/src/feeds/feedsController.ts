@@ -1,9 +1,13 @@
 import type {
+  AuditTrailValues,
   BackendFeedStatus,
   BackendFeedStatusReason,
   Feed,
   FeedCreate,
+  FeedHistoryEvent,
+  FeedSearchOptionsResponse,
   FeedUpdate,
+  ListFeedHistoryResponse,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
@@ -30,11 +34,17 @@ import {
   Tags,
 } from 'tsoa';
 
-import { feedMutationActorHeaders } from './actorHeaders.js';
-
+import { mutationActorHeaders } from '../actorHeaders.js';
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  parseTimestamp,
+  toCamel,
+  toSnake,
+} from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -50,6 +60,14 @@ interface FeedBackend extends BaseFeedBackend {
   status_reason_detail?: string | null;
   status_reason: BackendFeedStatusReason | null;
   last_speech_segment_timestamp: string | null;
+  bcfy_calls_sid?: string | null;
+  lease_status?: BackendFeedStatus | null;
+  lease_last_heartbeat?: string | null;
+  lease_status_reason?: string | null;
+  effective_status?: BackendFeedStatus | null;
+  effective_status_reason?: string | null;
+  effective_status_reason_detail?: string | null;
+  effective_last_heartbeat?: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -76,10 +94,45 @@ export class ListFeedsQueryParams {
   name?: string;
 }
 
+export class ListFeedHistoryQueryParams {
+  /**
+   * @isInt
+   */
+  limit: number = 100;
+  nextToken?: string;
+  order?: 'asc' | 'desc';
+}
+
 interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
   total: number;
+}
+
+interface FeedHistoryEventBackend {
+  id: string;
+  feed_id: string;
+  action: string;
+  actor: string;
+  occurred_at: string;
+  feed_revision_num: number;
+  before_values: AuditTrailValues;
+  after_values: AuditTrailValues;
+}
+
+function convertFeedHistoryEventBackend(
+  response: FeedHistoryEventBackend
+): FeedHistoryEvent {
+  return {
+    id: response.id,
+    feedId: response.feed_id,
+    action: response.action,
+    actor: response.actor,
+    occurredAt: parseTimestamp(response.occurred_at) ?? 0,
+    feedRevision: response.feed_revision_num,
+    beforeValues: toCamel(response.before_values),
+    afterValues: toCamel(response.after_values),
+  };
 }
 
 function getSourceUrl(
@@ -95,7 +148,7 @@ function getSourceUrl(
     case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
     case SourceType.ECHO:
-      return undefined;
+      return `https://storage.googleapis.com/wd-echo-recordings-prod/index.html#${sourceFeedId}/`;
     case SourceType.FIRE_NOTIFICATIONS: {
       const cleanSourceId = sourceFeedId.startsWith('/')
         ? sourceFeedId.slice(1)
@@ -135,13 +188,18 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
-  const lastHeartbeatParsed = response.last_heartbeat
-    ? Date.parse(response.last_heartbeat)
-    : undefined;
-  const lastSpeechParsed = response.last_speech_segment_timestamp
-    ? Date.parse(response.last_speech_segment_timestamp)
-    : undefined;
-
+  // Without effective fields, the feed's own lifecycle is effective.
+  const hasEffective = response.effective_status != null;
+  const effectiveStatus = response.effective_status ?? response.status;
+  const effectiveReason = hasEffective
+    ? response.effective_status_reason
+    : response.status_reason;
+  const effectiveReasonDetail = hasEffective
+    ? response.effective_status_reason_detail
+    : response.status_reason_detail;
+  const effectiveHeartbeat = hasEffective
+    ? (response.effective_last_heartbeat ?? null)
+    : response.last_heartbeat;
   return {
     id: response.id,
     name: response.name,
@@ -149,13 +207,20 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceFeedId: response.source_feed_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
-    status: convertFeedStatusBackend(response.status),
-    substatus: response.status,
-    lastHeartbeat: lastHeartbeatParsed,
+    status: convertFeedStatusBackend(effectiveStatus),
+    substatus: effectiveStatus,
+    childStatus: response.status,
+    lastHeartbeat: parseTimestamp(effectiveHeartbeat),
     tags: response.tags,
-    statusReasonDetail: response.status_reason_detail ?? undefined,
-    statusReason: convertFeedStatusReason(response.status_reason),
-    lastSpeechSegmentTimestamp: lastSpeechParsed,
+    statusReasonDetail: effectiveReasonDetail ?? undefined,
+    statusReason: convertFeedStatusReason(effectiveReason),
+    lastSpeechSegmentTimestamp: parseTimestamp(
+      response.last_speech_segment_timestamp
+    ),
+    bcfyCallsSid: response.bcfy_calls_sid ?? undefined,
+    leaseStatus: response.lease_status ?? undefined,
+    leaseLastHeartbeat: parseTimestamp(response.lease_last_heartbeat ?? null),
+    leaseStatusReason: convertFeedStatusReason(response.lease_status_reason),
   };
 }
 
@@ -173,19 +238,11 @@ function appendTagFilters(queryParams: URLSearchParams, tags: string[]): void {
 }
 
 function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
-  return {
-    name: create.name,
-    source_type: create.sourceType,
-    source_feed_id: create.sourceFeedId,
-    tags: create.tags,
-  };
+  return toSnake<FeedCreateBackend>(create);
 }
 
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
-  return {
-    name: update.name,
-    tags: update.tags,
-  };
+  return toSnake<FeedUpdateBackend>(update);
 }
 
 @Route('api/v1/feeds')
@@ -244,6 +301,39 @@ export class FeedsController extends Controller {
     }
   }
 
+  @Get('search-options')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getFeedSearchOptions(): Promise<FeedSearchOptionsResponse> {
+    try {
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
+      const response = await client.request<{
+        source_types: SourceType[];
+        statuses: string[];
+        tags: Tag[];
+      }>({
+        url: `${FEEDS_STORE_API_URL}/search-options`,
+        method: 'GET',
+      });
+      const data = response.data;
+      return {
+        sourceTypes: data.source_types,
+        statuses: data.statuses,
+        tags: data.tags,
+      };
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
+      const { status, message } = handleBackendError(
+        error,
+        'fetching feed search options'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
   @Get('{feedId}')
   @Security('google_id_token')
   @Response<{ message: string }>(401, 'Unauthorized')
@@ -268,6 +358,49 @@ export class FeedsController extends Controller {
     }
   }
 
+  @Get('{feedId}/history')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async listFeedHistory(
+    @Request() request: AuthenticatedRequest,
+    @Path() feedId: string,
+    @Queries() query: ListFeedHistoryQueryParams
+  ): Promise<ListFeedHistoryResponse> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (query.limit) queryParams.append('limit', query.limit.toString());
+      if (query.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query.order) queryParams.append('order', query.order);
+
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
+      const response = await client.request<{
+        history_events: FeedHistoryEventBackend[];
+        next_token?: string;
+        total: number;
+      }>({
+        url: `${FEEDS_STORE_API_URL}/${feedId}/history?${queryParams.toString()}`,
+        method: 'GET',
+      });
+
+      const data = response.data;
+      return {
+        historyEvents: data.history_events.map(convertFeedHistoryEventBackend),
+        nextToken: data.next_token,
+        total: data.total,
+      };
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `fetching history for feed ${feedId}`
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
   @Post('')
   @Security('google_id_token')
   @SuccessResponse('201', 'Created')
@@ -284,7 +417,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -321,7 +454,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -356,7 +489,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -394,7 +527,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
@@ -432,7 +565,7 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const actorHeaders = mutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
