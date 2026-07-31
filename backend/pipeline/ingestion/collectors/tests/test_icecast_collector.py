@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import io
+import itertools
 import os
 import tempfile
 import time
@@ -1472,7 +1473,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             seconds=CHUNK_DURATION_SECONDS - 5
         )
         # 2nd value feeds receipt_time stamp; subsequent values feed min() clamp and extra telemetry calls.
-        mock_now_utc.side_effect = [fixed_anchor] + [clamp_time] * 10
+        mock_now_utc.side_effect = itertools.chain(
+            [fixed_anchor], itertools.repeat(clamp_time)
+        )
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
