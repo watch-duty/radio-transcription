@@ -180,6 +180,7 @@ known-first-party = ["backend", "local_dev"]
 "model/**/*.py" = ["E501"]
 "model/scripts/sft/build_validation_manifest_from_eval.py" = ["INP001"]
 "model/colabs/**/*.ipynb" = [
+  "A004",    # `from IPython.display import display` shadows the notebook builtin
   "ANN001",  # Missing type annotations
   "ANN201",  # Missing return type annotations
   "B018",    # Interactive output expressions
@@ -218,7 +219,6 @@ known-first-party = ["backend", "local_dev"]
 "model/colabs/gemini_agent_session/create_inference_manifest_masked_audio.ipynb" = ["ALL"]
 "model/colabs/gemini_agent_session/transcribe_masked_audio.ipynb" = ["ALL"]
 "model/colabs/segmentation/export_ulunas_sequence_onnx.ipynb" = ["ALL"]
-"model/colabs/segmentation/silero_and_ul_unas_wet_dry_VAD_mixture.ipynb" = ["ALL"]
 "local_dev/**/*.py" = [
   "ANN001",
   "ANN201",
