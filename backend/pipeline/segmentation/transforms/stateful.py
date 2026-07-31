@@ -301,6 +301,7 @@ def _manage_out_of_order_timers(
     is_backfill: bool,
     old_expected_ts: int | None,
     new_expected_next_ts: int | None,
+    oldest_chunk_ts_sec: float | None = None,
 ) -> bool:
     """Manages scheduling and clearing of out-of-order restoration timers.
 
@@ -326,21 +327,32 @@ def _manage_out_of_order_timers(
     """
     if has_buffer_elements:
         if clamped:
-            emitted_duration_ms = (
-                (new_expected_next_ts - old_expected_ts)
-                if (
-                    old_expected_ts is not None
-                    and new_expected_next_ts is not None
+            if oldest_chunk_ts_sec is not None:
+                deadline_watermark = max(
+                    timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    Timestamp(seconds=oldest_chunk_ts_sec),
                 )
-                else 0
-            )
-            advance_sec = max(
-                WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                float(emitted_duration_ms)
-                / float(common_constants.MS_PER_SECOND),
-            )
-            deadline_watermark = timestamp + advance_sec
-            deadline_proc = time.time() + advance_sec
+                advance_sec = max(
+                    WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    oldest_chunk_ts_sec - float(timestamp),
+                )
+                deadline_proc = time.time() + advance_sec
+            else:
+                emitted_duration_ms = (
+                    (new_expected_next_ts - old_expected_ts)
+                    if (
+                        old_expected_ts is not None
+                        and new_expected_next_ts is not None
+                    )
+                    else 0
+                )
+                advance_sec = max(
+                    WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    float(emitted_duration_ms)
+                    / float(common_constants.MS_PER_SECOND),
+                )
+                deadline_watermark = timestamp + advance_sec
+                deadline_proc = time.time() + advance_sec
             gap_timer_event.set(deadline_watermark)
             if is_backfill:
                 gap_timer_proc.clear()
@@ -414,6 +426,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
     difference = current_ts_ms - expected_next_ts
 
     to_emit = []
+    remaining_elements: list[datatypes.BufferedChunk] = []
     was_late = False
     was_buffered = False
 
@@ -511,6 +524,12 @@ def process_ordering(  # noqa: PLR0912, PLR0915
 
     # Update context
     old_expected_ts = curr_context.expected_next_chunk_start_ms
+    oldest_chunk_ts_sec = (
+        float(remaining_elements[0].timestamp_ms)
+        / float(common_constants.MS_PER_SECOND)
+        if remaining_elements
+        else None
+    )
 
     new_timer_active = _manage_out_of_order_timers(
         gap_timer_event=gap_timer_event,
@@ -523,6 +542,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
         is_backfill=is_backfill,
         old_expected_ts=old_expected_ts,
         new_expected_next_ts=expected_next_ts,
+        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
     )
 
     curr_context = replace(
@@ -564,20 +584,36 @@ def _reschedule_gap_timeout(
     is_backfill: bool,
     new_expected: int | None,
     new_expected_next_ts: int | None,
+    oldest_chunk_ts_sec: float | None = None,
 ) -> bool:
     """Reschedules out-of-order restoration timers after a timeout drain."""
     if clamped:
-        emitted_duration_ms = (
-            (new_expected_next_ts - new_expected)
-            if (new_expected is not None and new_expected_next_ts is not None)
-            else 0
-        )
-        advance_sec = max(
-            WINDMILL_TIMER_MIN_ADVANCE_SECS,
-            float(emitted_duration_ms) / float(common_constants.MS_PER_SECOND),
-        )
-        deadline_watermark = timestamp + advance_sec
-        deadline_proc = time.time() + advance_sec
+        if oldest_chunk_ts_sec is not None:
+            deadline_watermark = max(
+                timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                oldest_chunk_ts_sec - float(timestamp),
+            )
+            deadline_proc = time.time() + advance_sec
+        else:
+            emitted_duration_ms = (
+                (new_expected_next_ts - new_expected)
+                if (
+                    new_expected is not None
+                    and new_expected_next_ts is not None
+                )
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            deadline_watermark = timestamp + advance_sec
+            deadline_proc = time.time() + advance_sec
     else:
         timeout_sec = order_config.out_of_order_timeout_ms / float(
             common_constants.MS_PER_SECOND

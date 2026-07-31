@@ -4999,3 +4999,21 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         gap_timer_event.set.assert_called_once_with(
             Timestamp(100.0 + WINDMILL_TIMER_MIN_ADVANCE_SECS)
         )
+
+        # Scenario 3: oldest_chunk_ts_sec provided -> leaps directly to oldest chunk timestamp
+        gap_timer_event.reset_mock()
+        _manage_out_of_order_timers(
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            order_config=order_config,
+            timestamp=Timestamp(100.0),
+            clamped=True,
+            has_buffer_elements=True,
+            order_timer_active=False,
+            is_backfill=False,
+            old_expected_ts=100000,
+            new_expected_next_ts=150000,
+            oldest_chunk_ts_sec=180.0,
+        )
+
+        gap_timer_event.set.assert_called_once_with(Timestamp(180.0))
