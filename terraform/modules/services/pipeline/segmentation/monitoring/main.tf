@@ -87,3 +87,77 @@ resource "google_monitoring_alert_policy" "dataflow_input_backpressure_alert" {
     subsystem = "dataflow"
   }
 }
+
+resource "google_monitoring_alert_policy" "segmentation_dlq" {
+  project      = local.project_id
+  display_name = "Segmentation DLQ (${var.environment})"
+  combiner     = "OR"
+  enabled      = true
+
+  notification_channels = var.notification_channel_id != null ? [var.notification_channel_id] : []
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      Segmentation routed audio to the DLQ: each message is a permanently lost
+      audio segment. Inspect `segmented-audio-claims-dlq-subscription-${var.environment}` (7-day retention --
+      messages expire unrecoverably after that) and the segmentation worker logs
+      for the failing `gcs_uri`. Payload fields: feed_id, gcs_uri, session_id,
+      error_message.
+    EOT
+  }
+
+  conditions {
+    display_name = "New DLQ messages published"
+
+    condition_threshold {
+      comparison      = "COMPARISON_GT"
+      duration        = "0s"
+      threshold_value = 0
+
+      filter = "resource.type=\"pubsub_topic\" AND metric.type=\"pubsub.googleapis.com/topic/send_request_count\" AND resource.labels.topic_id=\"segmented-audio-claims-dlq-${var.environment}\""
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_DELTA"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  conditions {
+    display_name = "DLQ backlog undrained > 50"
+
+    condition_threshold {
+      comparison      = "COMPARISON_GT"
+      duration        = "3600s"
+      threshold_value = 50
+
+      filter = "resource.type=\"pubsub_subscription\" AND metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" AND resource.labels.subscription_id=\"segmented-audio-claims-dlq-subscription-${var.environment}\""
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_MAX"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  user_labels = {
+    severity  = "warning"
+    subsystem = "segmentation"
+  }
+}
+
