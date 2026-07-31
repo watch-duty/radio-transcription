@@ -151,7 +151,8 @@ async def test_rule_tags_round_trip(store: RulesStore) -> None:
     created = await store.create_rule(
         _create_sample_rule_in(
             "Tagged Rule", tags=[Tag(key="geo_event_type", value="flooding")]
-        )
+        ),
+        actor_id="user:google:test@example.com",
     )
     assert created.tags == [Tag(key="geo_event_type", value="flooding")]
 
@@ -209,3 +210,52 @@ async def test_invalid_uuid_returns_none_or_false(store: RulesStore) -> None:
         )
         is False
     )
+
+
+async def test_rule_mutations_create_audit_events(
+    store: RulesStore, db_pool: asyncpg.Pool
+) -> None:
+    """Verify that creating, updating, and deleting a rule inserts the correct audit events."""
+    # 1. Create
+    actor = "user:google:audit-test@example.com"
+    created = await store.create_rule(
+        _create_sample_rule_in("Audit Rule"), actor_id=actor
+    )
+
+    # Verify insert event
+    row = await db_pool.fetchrow(
+        "SELECT action, actor_id, rule_revision FROM rule_audit_events WHERE rule_id = $1",
+        uuid.UUID(created.rule_id),
+    )
+    assert row is not None
+    assert row["action"] == "rule.created"
+    assert row["actor_id"] == actor
+    assert row["rule_revision"] == 1
+
+    # 2. Update
+    await store.update_rule(
+        created.rule_id,
+        RuleUpdate(rule_name="Audit Rule Updated"),
+        actor_id=actor,
+    )
+
+    # Verify update event
+    rows = await db_pool.fetch(
+        "SELECT action, actor_id, rule_revision FROM rule_audit_events WHERE rule_id = $1 ORDER BY rule_revision ASC",
+        uuid.UUID(created.rule_id),
+    )
+    assert len(rows) == 2
+    assert rows[1]["action"] == "rule.updated"
+    assert rows[1]["rule_revision"] == 2
+
+    # 3. Delete
+    await store.delete_rule(created.rule_id, actor_id=actor)
+
+    # Verify delete event
+    rows = await db_pool.fetch(
+        "SELECT action, actor_id, rule_revision FROM rule_audit_events WHERE rule_id = $1 ORDER BY rule_revision ASC",
+        uuid.UUID(created.rule_id),
+    )
+    assert len(rows) == 3
+    assert rows[2]["action"] == "rule.deleted"
+    assert rows[2]["rule_revision"] == 3
