@@ -56,6 +56,7 @@ from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
     _manage_out_of_order_timers,
+    _reschedule_gap_timeout,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -5017,3 +5018,42 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         )
 
         gap_timer_event.set.assert_called_once_with(Timestamp(180.0))
+
+    def test_reschedule_gap_timeout_clamped_advancement(self) -> None:
+        """Verifies that _reschedule_gap_timeout leaps to oldest_chunk_ts_sec or emitted duration when clamped."""
+        gap_timer_event = MagicMock()
+        gap_timer_proc = MagicMock()
+        order_config = OrderRestorerConfig()
+
+        # Scenario 1: oldest_chunk_ts_sec provided -> leaps directly to oldest chunk timestamp
+        timestamp = Timestamp(100.0)
+        result = _reschedule_gap_timeout(
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            order_config=order_config,
+            timestamp=timestamp,
+            clamped=True,
+            is_backfill=False,
+            new_expected=100000,
+            new_expected_next_ts=150000,
+            oldest_chunk_ts_sec=180.0,
+        )
+
+        self.assertTrue(result)
+        gap_timer_event.set.assert_called_once_with(Timestamp(180.0))
+
+        # Scenario 2: oldest_chunk_ts_sec is None -> falls back to emitted duration
+        gap_timer_event.reset_mock()
+        _reschedule_gap_timeout(
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            order_config=order_config,
+            timestamp=timestamp,
+            clamped=True,
+            is_backfill=False,
+            new_expected=100000,
+            new_expected_next_ts=150000,
+            oldest_chunk_ts_sec=None,
+        )
+
+        gap_timer_event.set.assert_called_once_with(Timestamp(150.0))
