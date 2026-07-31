@@ -852,22 +852,11 @@ class OrderedStitchAudioFn(beam.DoFn):
         new_buffer_elements: list[datatypes.BufferedChunk],
         task_logger: std_logging.LoggerAdapter,
     ) -> None:
-        """Flags a deferred drain that found nothing ready while chunks remain buffered.
+        """Records a metric and warning when a deferred drain finds nothing ready while chunks remain buffered.
 
-        Not a guaranteed wedge: this invocation was specifically scheduled to
-        check the buffer and found nothing ready to drain -- the oldest chunk
-        is still waiting on a predecessor that hasn't arrived. A single
-        occurrence is normal; the gap-timeout path re-armed by the caller is
-        expected to resolve it within one out_of_order_timeout_ms window,
-        either by the predecessor arriving or by forcibly advancing past it.
-        A *sustained* rate of this counter for the same feed without the
-        buffer ever clearing is the signal that indicates a wedge (i.e. finding #6,
-        where a deferred drain execution left an out-of-order gap unresolved
-        without re-arming a timer to check again, causing the buffer to remain
-        stuck indefinitely until a new chunk arrived).
+        A single occurrence is normal while waiting for missing predecessors to arrive (which the re-armed
+        gap timeout will resolve). A sustained rate for the same feed without clearing indicates a buffer wedge.
         """
-        # A wedge candidate occurs when nothing was ready to emit (elements_to_emit is empty),
-        # but chunks still remain buffered waiting for predecessors.
         if not elements_to_emit and new_buffer_elements:
             self.deferred_drain_empty_while_buffered.inc()
             task_logger.warning(
