@@ -289,6 +289,19 @@ def _handle_session_transition(
     return curr_context, False
 
 
+def _set_gap_timer_proc(
+    gap_timer_proc: RuntimeTimer,
+    deadline_proc: float,
+    *,
+    is_backfill: bool,
+) -> None:
+    """Sets or clears the processing-time gap timer depending on backfill mode."""
+    if is_backfill:
+        gap_timer_proc.clear()
+    else:
+        gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+
+
 def _manage_out_of_order_timers(
     gap_timer_event: RuntimeTimer,
     gap_timer_proc: RuntimeTimer,
@@ -325,63 +338,57 @@ def _manage_out_of_order_timers(
 
     Returns the new state of order_timer_active.
     """
-    if has_buffer_elements:
-        if clamped:
-            if oldest_chunk_ts_sec is not None:
-                deadline_watermark = max(
-                    timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    Timestamp(seconds=oldest_chunk_ts_sec),
-                )
-                advance_sec = max(
-                    WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    oldest_chunk_ts_sec - float(timestamp),
-                )
-                deadline_proc = time.time() + advance_sec
-            else:
-                emitted_duration_ms = (
-                    (new_expected_next_ts - old_expected_ts)
-                    if (
-                        old_expected_ts is not None
-                        and new_expected_next_ts is not None
-                    )
-                    else 0
-                )
-                advance_sec = max(
-                    WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    float(emitted_duration_ms)
-                    / float(common_constants.MS_PER_SECOND),
-                )
-                deadline_watermark = timestamp + advance_sec
-                deadline_proc = time.time() + advance_sec
-            gap_timer_event.set(deadline_watermark)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                gap_timer_proc.set(Timestamp(seconds=deadline_proc))
-            return True
-
-        if not order_timer_active:
-            deadline_watermark = timestamp + (
-                order_config.out_of_order_timeout_ms
-                / float(common_constants.MS_PER_SECOND)
-            )
-            gap_timer_event.set(deadline_watermark)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                deadline_proc = time.time() + (
-                    order_config.out_of_order_timeout_ms
-                    / float(common_constants.MS_PER_SECOND)
-                )
-                gap_timer_proc.set(Timestamp(seconds=deadline_proc))
-            return True
-
-        return order_timer_active
-
-    if order_timer_active:
-        gap_timer_event.clear()
-        gap_timer_proc.clear()
+    if not has_buffer_elements:
+        if order_timer_active:
+            gap_timer_event.clear()
+            gap_timer_proc.clear()
         return False
+
+    if clamped:
+        if oldest_chunk_ts_sec is not None:
+            deadline_watermark = max(
+                timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                oldest_chunk_ts_sec - float(timestamp),
+            )
+            deadline_proc = time.time() + advance_sec
+        else:
+            emitted_duration_ms = (
+                (new_expected_next_ts - old_expected_ts)
+                if (
+                    old_expected_ts is not None
+                    and new_expected_next_ts is not None
+                )
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            deadline_watermark = timestamp + advance_sec
+            deadline_proc = time.time() + advance_sec
+
+        gap_timer_event.set(deadline_watermark)
+        _set_gap_timer_proc(
+            gap_timer_proc, deadline_proc, is_backfill=is_backfill
+        )
+        return True
+
+    if not order_timer_active:
+        timeout_sec = order_config.out_of_order_timeout_ms / float(
+            common_constants.MS_PER_SECOND
+        )
+        gap_timer_event.set(timestamp + timeout_sec)
+        _set_gap_timer_proc(
+            gap_timer_proc,
+            time.time() + timeout_sec,
+            is_backfill=is_backfill,
+        )
+        return True
 
     return order_timer_active
 
