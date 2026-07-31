@@ -390,3 +390,12 @@ resource "google_monitoring_alert_policy" "transcription_other_error_rate" {
   }
 }
 
+resource "google_monitoring_dashboard" "system_health_overview" {
+  project = local.project_id
+  dashboard_json = templatefile("${path.module}/dashboards/system_health_overview.json.tftpl", {
+    environment             = var.environment
+    e2e_latency_metric_name = google_logging_metric.transcription_e2e_latency_ms.name
+  })
+}
+
+
