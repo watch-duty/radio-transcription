@@ -1212,11 +1212,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                     out_of_order_buffer_state.add(remaining_chunk)
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
+                oldest_chunk_ts_sec = float(chunk.timestamp_ms) / float(
+                    common_constants.MS_PER_SECOND
+                )
                 next_deadline: Timestamp | None = None
                 if deferred_drain_timer is not None and timestamp is not None:
-                    oldest_chunk_ts_sec = (
-                        chunk.timestamp_ms / common_constants.MS_PER_SECOND
-                    )
                     next_deadline = max(
                         timestamp
                         + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
@@ -1273,6 +1273,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         is_backfill=is_backfill,
                         new_expected=original_expected_ts,
                         new_expected_next_ts=previous_expected_ts,
+                        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
                     )
                 _write_transmission_context(
                     transmission_context_state,
@@ -1497,6 +1498,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
                 if new_buffer_elements:
+                    oldest_chunk_ts_sec = float(
+                        new_buffer_elements[0].timestamp_ms
+                    ) / float(common_constants.MS_PER_SECOND)
                     timer_active = _reschedule_gap_timeout(
                         gap_timer_event=gap_timer_event,
                         gap_timer_proc=gap_timer_proc,
@@ -1506,6 +1510,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         is_backfill=is_backfill,
                         new_expected=new_expected,
                         new_expected_next_ts=new_expected_next_ts,
+                        oldest_chunk_ts_sec=oldest_chunk_ts_sec,
                     )
                     curr_context = replace(
                         curr_context, order_timer_active=timer_active
