@@ -36,6 +36,7 @@ from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
     VAD_DEFAULT_PRIMING_SEC,
+    WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.datatypes import (
     ActiveStitchingState,
@@ -54,6 +55,7 @@ from backend.pipeline.segmentation.storage import UNIVERSAL_GCS_SHARED_HANDLE
 from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
+    _manage_out_of_order_timers,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -4949,3 +4951,51 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
             _, kwargs = engine.processor.download_audio_and_detect.call_args
             self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
+
+    def test_manage_out_of_order_timers_clamped_advancement(self) -> None:
+        """Verifies that _manage_out_of_order_timers advances timers by physical audio duration when clamped."""
+        gap_timer_event = MagicMock()
+        gap_timer_proc = MagicMock()
+        order_config = OrderRestorerConfig()
+
+        # Scenario 1: 50 seconds of audio emitted during clamped drain -> advances by 50 seconds
+        old_expected_ts = 100000
+        new_expected_next_ts = 150000  # 50,000 ms = 50.0 seconds
+        timestamp = Timestamp(100.0)
+
+        result = _manage_out_of_order_timers(
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            order_config=order_config,
+            timestamp=timestamp,
+            clamped=True,
+            has_buffer_elements=True,
+            order_timer_active=False,
+            is_backfill=False,
+            old_expected_ts=old_expected_ts,
+            new_expected_next_ts=new_expected_next_ts,
+        )
+
+        self.assertTrue(result)
+        gap_timer_event.set.assert_called_once_with(
+            Timestamp(150.0)
+        )  # 100.0s + 50.0s
+
+        # Scenario 2: 0 duration emitted during clamped drain -> falls back to WINDMILL_TIMER_MIN_ADVANCE_SECS
+        gap_timer_event.reset_mock()
+        _manage_out_of_order_timers(
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            order_config=order_config,
+            timestamp=timestamp,
+            clamped=True,
+            has_buffer_elements=True,
+            order_timer_active=False,
+            is_backfill=False,
+            old_expected_ts=100000,
+            new_expected_next_ts=100000,
+        )
+
+        gap_timer_event.set.assert_called_once_with(
+            Timestamp(100.0 + WINDMILL_TIMER_MIN_ADVANCE_SECS)
+        )
