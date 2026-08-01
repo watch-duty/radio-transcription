@@ -5191,7 +5191,9 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_buf_state.add.assert_called_once_with((2, item2))
         mock_timer.set.assert_called_once()
 
-    def test_pubsub_order_restorer_fn_discards_late_duplicate(self) -> None:
+    def test_pubsub_order_restorer_fn_emits_late_segment_for_zero_loss(
+        self,
+    ) -> None:
         fn = PubSubOrderRestorerFn()
         mock_seq_state = MagicMock()
         mock_seq_state.read.return_value = 3
@@ -5201,7 +5203,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
 
         late_item = {
             "data": b"msg1",
-            "attributes": {},
+            "attributes": {"k": "v"},
             "ordering_key": "feed-1",
             "is_tombstone": False,
         }
@@ -5213,7 +5215,8 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 gap_timer=mock_timer,
             )
         )
-        self.assertEqual(len(res), 0)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].data, b"msg1")
         mock_buf_state.add.assert_not_called()
 
     def test_pubsub_order_restorer_fn_gap_timeout_advances_queue(

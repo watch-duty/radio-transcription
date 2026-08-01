@@ -1973,14 +1973,19 @@ class PubSubOrderRestorerFn(beam.DoFn):
             buffer_state.add((seq_num, item_dict))
             # Set a 30-second processing-time gap timer to prevent missing sequences from wedging state
             gap_timer.set(beam.utils.timestamp.Timestamp(time.time() + 30.0))
-        else:
-            # Late or duplicate element whose sequence has already been emitted or tombstoned.
-            # MUST NOT be emitted again to prevent Pub/Sub ordering key corruption.
-            logger.warning(
-                "Discarding late or duplicate segment seq=%d (expected=%d) for feed_id=%s",
+        # Late or out-of-order element whose sequence arrived after expected_seq had advanced.
+        # MUST be emitted to Pub/Sub to guarantee 100% segment processing and zero data loss.
+        elif not item_dict.get("is_tombstone", False):
+            logger.info(
+                "Emitting late segment seq=%d (expected=%d) for feed_id=%s to guarantee zero segment loss",
                 seq_num,
                 expected_seq,
                 item_dict.get("ordering_key", ""),
+            )
+            yield PubsubMessage(
+                data=item_dict["data"],
+                attributes=item_dict["attributes"],
+                ordering_key=item_dict["ordering_key"],
             )
 
     @on_timer(ORDER_RESTORE_GAP_TIMER)
