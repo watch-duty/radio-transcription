@@ -1,7 +1,7 @@
 data "google_project" "project" {}
 
 locals {
-  project_id        = data.google_project.project.project_id
+  project_id = data.google_project.project.project_id
   deployer_iam_enabled = (
     var.deployer_sa_email != null
     && trimspace(var.deployer_sa_email) != ""
