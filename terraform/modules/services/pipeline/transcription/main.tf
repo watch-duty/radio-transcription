@@ -236,5 +236,5 @@ module "monitoring" {
   source = "./monitoring"
 
   environment             = var.environment
+  notification_channel_id = var.notification_channel_id
 }
-
