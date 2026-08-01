@@ -97,6 +97,7 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
+from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
@@ -1885,3 +1886,89 @@ class OrderedStitchAudioFn(beam.DoFn):
     def audio_processor(self, val: Any) -> None:
         if hasattr(self, "engine"):
             self.engine.processor = val
+
+
+SEQUENCE_NUMBER_STATE = ReadModifyWriteStateSpec(
+    "sequence_number_state", beam.coders.VarIntCoder()
+)
+
+
+@beam.typehints.with_input_types(tuple[str, datatypes.FlushRequest])
+@beam.typehints.with_output_types(
+    tuple[str, tuple[int, datatypes.FlushRequest]]
+)
+class TagSequenceNumberFn(beam.DoFn):
+    """Assigns an incremental sequence number (1, 2, 3...) per feed_id while still in sequential key order."""
+
+    @override
+    def process(
+        self,
+        element: tuple[str, datatypes.FlushRequest],
+        seq_state: ReadModifyWriteRuntimeState = SEQUENCE_NUMBER_STATE,  # type: ignore
+    ) -> Iterator[tuple[str, tuple[int, datatypes.FlushRequest]]]:
+        _key, req = element
+        feed_id = req.feed_id
+        curr_seq = seq_state.read() or 1
+        seq_state.write(curr_seq + 1)
+        yield (feed_id, (curr_seq, req))
+
+
+EXPECTED_PUB_SEQ_STATE = ReadModifyWriteStateSpec(
+    "expected_pub_seq_state", beam.coders.VarIntCoder()
+)
+OUT_OF_ORDER_PUB_BAG = BagStateSpec(
+    "out_of_order_pub_bag", beam.coders.FastPrimitivesCoder()
+)
+
+
+@beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
+@beam.typehints.with_output_types(PubsubMessage)
+class PubSubOrderRestorerFn(beam.DoFn):
+    """Lightweight stateful restorer to ensure strict chronological Pub/Sub publishing order per feed_id."""
+
+    @override
+    def process(
+        self,
+        element: tuple[str, tuple[int, dict[str, Any]]],
+        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
+        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+    ) -> Iterator[PubsubMessage]:
+        _feed_id, (seq_num, item_dict) = element
+        expected_seq = expected_seq_state.read() or 1
+
+        buffered_items = list(buffer_state.read())
+
+        if seq_num == expected_seq:
+            if not item_dict.get("is_tombstone", False):
+                yield PubsubMessage(
+                    data=item_dict["data"],
+                    attributes=item_dict["attributes"],
+                    ordering_key=item_dict["ordering_key"],
+                )
+            expected_seq += 1
+
+            buffer_map = {item[0]: item[1] for item in buffered_items}
+            while expected_seq in buffer_map:
+                next_item = buffer_map.pop(expected_seq)
+                if not next_item.get("is_tombstone", False):
+                    yield PubsubMessage(
+                        data=next_item["data"],
+                        attributes=next_item["attributes"],
+                        ordering_key=next_item["ordering_key"],
+                    )
+                expected_seq += 1
+
+            buffer_state.clear()
+            for s_num, d in buffered_items:
+                if s_num in buffer_map:
+                    buffer_state.add((s_num, d))
+
+            expected_seq_state.write(expected_seq)
+        elif seq_num > expected_seq:
+            buffer_state.add((seq_num, item_dict))
+        elif not item_dict.get("is_tombstone", False):
+            yield PubsubMessage(
+                data=item_dict["data"],
+                attributes=item_dict["attributes"],
+                ordering_key=item_dict["ordering_key"],
+            )

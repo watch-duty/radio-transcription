@@ -256,8 +256,8 @@ class ParseAndKeyFn(beam.DoFn):
         yield from outputs
 
 
-@beam.typehints.with_input_types(tuple[str, FlushRequest])
-@beam.typehints.with_output_types(PubsubMessage)
+@beam.typehints.with_input_types(tuple[str, tuple[int, FlushRequest]])
+@beam.typehints.with_output_types(tuple[str, tuple[int, dict[str, Any]]])
 class UploadRawSegmentFn(beam.DoFn):
     """Stateless DoFn to upload PCM audio bytes as a raw WAV file to the GCS staging bucket
     and yield a SegmentedAudio claim-check protobuf message.
@@ -583,9 +583,12 @@ class UploadRawSegmentFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, FlushRequest],
-    ) -> Iterator[PubsubMessage | SegmentationDlqOutput]:
-        feed_id, request = element
+        element: tuple[str, tuple[int, FlushRequest]],
+    ) -> Iterator[
+        tuple[str, tuple[int, dict[str, Any]]] | SegmentationDlqOutput
+    ]:
+        _key, (seq_num, request) = element
+        feed_id = request.feed_id
         trace_attrs: dict[str, str] = {}
         if request.traceparent:
             trace_attrs["traceparent"] = request.traceparent
@@ -612,10 +615,17 @@ class UploadRawSegmentFn(beam.DoFn):
                 pubsub_attributes: dict[str, str] = {}
                 inject_otel_context(pubsub_attributes)
 
-                yield PubsubMessage(
-                    data=segmented_audio_pb.SerializeToString(),
-                    attributes=pubsub_attributes,
-                    ordering_key=request.feed_id,
+                yield (
+                    request.feed_id,
+                    (
+                        seq_num,
+                        {
+                            "data": segmented_audio_pb.SerializeToString(),
+                            "attributes": pubsub_attributes,
+                            "ordering_key": request.feed_id,
+                            "is_tombstone": False,
+                        },
+                    ),
                 )
                 self.segmentation_success.inc()
 
@@ -625,6 +635,18 @@ class UploadRawSegmentFn(beam.DoFn):
                 feed_id,
             )
             self.segmentation_error.inc()
+            yield (
+                feed_id,
+                (
+                    seq_num,
+                    {
+                        "data": b"",
+                        "attributes": {},
+                        "ordering_key": feed_id,
+                        "is_tombstone": True,
+                    },
+                ),
+            )
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
                 {"error": str(e), "feed_id": feed_id},

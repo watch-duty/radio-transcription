@@ -54,6 +54,8 @@ from backend.pipeline.segmentation.storage import UNIVERSAL_GCS_SHARED_HANDLE
 from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
+    PubSubOrderRestorerFn,
+    TagSequenceNumberFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -4749,7 +4751,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         )
 
         # Execute the process generator
-        list(fn.process(element=("test-feed", request)))
+        list(fn.process(element=("test-feed", (1, request))))
 
         # Verify that with_tracer_context was called with the correct extracted attributes
         mock_with_tracer_context.assert_called_once_with(
@@ -4810,10 +4812,13 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         decoded_request = coder.decode(coder.encode(request))
 
         # Execute the process generator and convert to list
-        results = list(fn.process(element=("test-feed", decoded_request)))
+        results = list(fn.process(element=("test-feed", (1, decoded_request))))
 
         self.assertEqual(len(results), 1)
-        self.assertIsInstance(results[0], PubsubMessage)
+        self.assertEqual(results[0][0], "test-feed")
+        seq_num, pubsub_dict = results[0][1]
+        self.assertEqual(seq_num, 1)
+        self.assertFalse(pubsub_dict["is_tombstone"])
 
     @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
     def test_upload_raw_audio_executes_stateless_stitching(
@@ -5114,3 +5119,48 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
             _, kwargs = engine.processor.download_audio_and_detect.call_args
             self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
+
+
+class SequenceAndOrderRestorerTest(unittest.TestCase):
+    """Unit tests for TagSequenceNumberFn and PubSubOrderRestorerFn."""
+
+    def test_tag_sequence_number_fn(self) -> None:
+        fn = TagSequenceNumberFn()
+        req1 = MagicMock(spec=FlushRequest, feed_id="feed-1")
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = None
+
+        res1 = list(
+            fn.process(element=("feed-1", req1), seq_state=mock_seq_state)
+        )
+        self.assertEqual(len(res1), 1)
+        self.assertEqual(res1[0][0], "feed-1")
+        self.assertEqual(res1[0][1][0], 1)
+        self.assertEqual(res1[0][1][1], req1)
+        mock_seq_state.write.assert_called_once_with(2)
+
+    def test_pubsub_order_restorer_fn_in_order(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+
+        item1 = {
+            "data": b"msg1",
+            "attributes": {"k": "v"},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1", (1, item1)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+            )
+        )
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].data, b"msg1")
+        self.assertEqual(res[0].attributes, {"k": "v"})
+        self.assertEqual(res[0].ordering_key, "feed-1")
+        mock_seq_state.write.assert_called_once_with(2)

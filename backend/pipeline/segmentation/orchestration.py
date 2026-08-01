@@ -5,6 +5,7 @@ It is separated from the CLI entry point to improve testability and modularity.
 """
 
 import json
+import uuid
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import (
@@ -36,6 +37,8 @@ from backend.pipeline.segmentation.datatypes import (
 from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
+    PubSubOrderRestorerFn,
+    TagSequenceNumberFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -139,8 +142,19 @@ def get_pipeline(
 
     stitching_main = stitching.main
 
+    tagged_requests = stitching_main | "TagSequenceNumber" >> beam.ParDo(
+        TagSequenceNumberFn()
+    )
+
+    stateless_input = (
+        tagged_requests
+        | "RandomizeKeyForStage3"
+        >> beam.Map(lambda kv: (f"{kv[0]}#{uuid.uuid4().hex}", kv[1]))
+        | "ReshuffleStage3" >> beam.Reshuffle()
+    )
+
     # Statelessly upload the raw PCM buffer as a WAV file and produce SegmentedAudio claim-check
-    uploaded_segments = stitching_main | "UploadRawSegment" >> beam.ParDo(
+    uploaded_segments = stateless_input | "UploadRawSegment" >> beam.ParDo(
         UploadRawSegmentFn(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
@@ -149,7 +163,12 @@ def get_pipeline(
         DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
     )
 
-    uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
+    ordered_pubsub = (
+        uploaded_segments.main
+        | "RestorePubSubOrder" >> beam.ParDo(PubSubOrderRestorerFn())
+    )
+
+    ordered_pubsub | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
         publish_with_ordering_key=True,
