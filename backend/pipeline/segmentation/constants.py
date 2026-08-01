@@ -50,17 +50,26 @@ DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
-# PubSubOrderRestorerFn fallback drain.
-#
-# Mirrors the gap timeout the stitcher already applies to chunks
-# (DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS): wait for a missing sequence
-# number, then advance past it rather than blocking the feed forever. Skipped
+# PubSubOrderRestorerFn fallback drain: how long to wait for a missing sequence
+# number before advancing past it rather than blocking the feed forever. Skipped
 # numbers are retained so a late arrival still publishes.
 #
-# Note this is the second skip-ahead timeout in the pipeline, applied one stage
-# after the stitcher's, so worst-case publish latency is the sum of the two.
-# Tune them together.
-DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_SEC: Final = 30
+# This value is NOT the stitcher's DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
+# despite currently matching it. The stitcher waits on an audio chunk from the
+# collector, so its timeout is anchored to the 15s chunk cadence and runs on
+# both watermark and processing time. This one waits on a segment's GCS upload
+# to finish relative to its successors, so it is governed by Stage 3 upload
+# skew across workers -- a distribution with no relation to chunk cadence,
+# widened deliberately by the Stage 3 fanout and worst during autoscaling.
+# Tune the two independently, against different evidence.
+#
+# Set this comfortably above the observed p99.9 of
+# pubsub_order_gap_resolution_seconds. Erring long is cheap: the fallback only
+# arms when a gap exists, so a long timeout costs no latency in the normal path,
+# and overshooting merely delays recovery of a wedged feed (loudly, via
+# pubsub_order_stall_warnings). Erring short publishes out of order when nothing
+# is actually wrong, which is silent.
+DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS: Final = 30000
 
 # Upper bound on skipped sequence numbers retained per key. An entry is dropped
 # only when its segment finally arrives, so a segment that never arrives -- the

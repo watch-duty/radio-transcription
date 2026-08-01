@@ -8,6 +8,9 @@ from apache_beam.pipeline import AppliedPTransform, PipelineVisitor
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
 
+from backend.pipeline.segmentation.constants import (
+    DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS,
+)
 from backend.pipeline.segmentation.datatypes import FlushRequest
 from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.orchestration import get_pipeline
@@ -196,3 +199,70 @@ def test_pipeline_session_keying_sequence_isolation() -> None:
                 ]
             ),
         )
+
+
+def _restorer_from_pipeline(extra_flags: list[str] | None = None):
+    """Builds the real DAG and returns the PubSubOrderRestorerFn instance in it."""
+    options = SegmentationOptions(
+        flags=[
+            "--project",
+            "test-project",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
+            "--output_topic",
+            "projects/test-project/topics/out",
+            "--dlq_topic",
+            "projects/test-project/topics/dlq",
+            "--staging_audio_bucket",
+            "test-staging-bucket",
+            *(extra_flags or []),
+        ]
+    )
+    pipeline = get_pipeline(options)
+
+    class _Collector(PipelineVisitor):
+        def __init__(self) -> None:
+            self.nodes: list[AppliedPTransform] = []
+
+        def visit_transform(self, transform_node: AppliedPTransform) -> None:
+            self.nodes.append(transform_node)
+
+    collector = _Collector()
+    pipeline.visit(collector)
+    restorers = [
+        n
+        for n in collector.nodes
+        if n.full_label.endswith("RestorePubSubOrder")
+    ]
+    assert len(restorers) == 1, (
+        "expected exactly one RestorePubSubOrder transform"
+    )
+    transform = restorers[0].transform
+    assert transform is not None
+    return transform.fn
+
+
+def test_fallback_drain_timeout_defaults_from_constants() -> None:
+    assert (
+        _restorer_from_pipeline().timeout_ms
+        == DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS
+    )
+
+
+def test_fallback_drain_timeout_is_overridable_at_launch() -> None:
+    """Production is the only place upload skew is observable, so this must be
+    tunable without a code change.
+    """
+    fn = _restorer_from_pipeline(
+        ["--pubsub_fallback_drain_timeout_ms", "180000"]
+    )
+    assert fn.timeout_ms == 180000
+
+
+def test_non_positive_fallback_drain_timeout_is_rejected() -> None:
+    """Zero would force-drain out of order the instant any gap appeared."""
+    with pytest.raises(
+        ValueError,
+        match=r"pubsub_fallback_drain_timeout_ms .* must be positive",
+    ):
+        _restorer_from_pipeline(["--pubsub_fallback_drain_timeout_ms", "0"])

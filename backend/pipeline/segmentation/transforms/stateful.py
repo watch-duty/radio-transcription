@@ -1973,6 +1973,15 @@ PUBSUB_ORDER_LATE_ARRIVALS_EMITTED = Metrics.counter(
 PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED = Metrics.counter(
     "PubSubOrderRestorerFn", "pubsub_order_skipped_seqs_abandoned"
 )
+# Seconds a gap stayed open before the missing segment arrived and closed it.
+# This is the Stage 3 upload-skew distribution the fallback timeout has to clear,
+# measured directly rather than inferred from whether the fallback fired. Only
+# gaps that resolve on their own are sampled: one the fallback gave up on has no
+# resolution time, and counting it as timeout_ms would bias the distribution
+# toward whatever value is already configured.
+PUBSUB_ORDER_GAP_RESOLUTION_SECONDS = Metrics.distribution(
+    "PubSubOrderRestorerFn", "pubsub_order_gap_resolution_seconds"
+)
 
 SKIPPED_SEQS_SPEC = BagStateSpec("skipped_seqs_bag", beam.coders.VarIntCoder())
 SKIPPED_SEQS_BAG = beam.DoFn.StateParam(SKIPPED_SEQS_SPEC)
@@ -1989,7 +1998,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
     """Restores per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
 
     Ordering is best-effort with a bounded delay, not a guarantee. While a
-    missing sequence number arrives within timeout_sec, segments for a given
+    missing sequence number arrives within timeout_ms, segments for a given
     feed_id#session_id publish in the order their numbers were assigned. Past
     that, a fallback timer advances over the gap so the feed cannot wedge, and
     the skipped numbers are retained so a late arrival still publishes -- after
@@ -2006,10 +2015,44 @@ class PubSubOrderRestorerFn(beam.DoFn):
 
     def __init__(
         self,
-        timeout_sec: int = trans_constants.DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_SEC,
+        timeout_ms: int = trans_constants.DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS,
     ) -> None:
         super().__init__()
-        self.timeout_sec = timeout_sec
+        self.timeout_ms = timeout_ms
+
+    def _fallback_deadline(self) -> Timestamp:
+        """Returns the processing-time deadline for the next fallback drain.
+
+        Single conversion site for timeout_ms, which is carried in milliseconds
+        to match every other timeout in this pipeline while the timer itself
+        needs seconds.
+        """
+        return Timestamp(
+            seconds=time.time()
+            + (self.timeout_ms / common_constants.MS_PER_SECOND)
+        )
+
+    def _record_gap_resolution(
+        self, stall_since_state: ReadModifyWriteRuntimeState
+    ) -> None:
+        """Samples how long a gap stayed open, for tuning the fallback timeout.
+
+        The clock restarts on every advance of expected_seq, so for consecutive
+        gaps this measures time-since-last-progress rather than since the very
+        first buffered segment. That is the quantity the timeout actually has to
+        clear, since the fallback timer is re-armed on the same events.
+
+        Args:
+            stall_since_state: Wall-clock ms marking the start of the blocked interval.
+        """
+        stalled_since_ms = stall_since_state.read()
+        if not stalled_since_ms:
+            return
+        now_ms = int(time.time() * common_constants.MS_PER_SECOND)
+        resolution_ms = max(0, now_ms - stalled_since_ms)
+        PUBSUB_ORDER_GAP_RESOLUTION_SECONDS.update(
+            int(resolution_ms / common_constants.MS_PER_SECOND)
+        )
 
     def _record_skipped_seqs(
         self,
@@ -2093,6 +2136,13 @@ class PubSubOrderRestorerFn(beam.DoFn):
         stall_since_state: ReadModifyWriteRuntimeState,
         stall_probe_timer: RuntimeTimer,
     ) -> Iterator[PubsubMessage]:
+        # Segments were waiting on precisely this sequence number, so its
+        # arrival is the moment the gap closed. Sampling here rather than on the
+        # fallback path keeps the distribution to gaps that resolved by
+        # themselves, which is the upload skew the timeout has to clear.
+        if buffered_items:
+            self._record_gap_resolution(stall_since_state)
+
         if not item_dict.get("is_tombstone", False):
             yield PubsubMessage(
                 data=item_dict["data"],
@@ -2121,9 +2171,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffer_map))
 
         if buffer_map:
-            fallback_drain_timer.set(
-                Timestamp(seconds=time.time() + self.timeout_sec)
-            )
+            fallback_drain_timer.set(self._fallback_deadline())
             self._arm_stall_probe(
                 stall_since_state,
                 stall_probe_timer,
@@ -2149,9 +2197,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
             buffer_state.add((seq_num, item_dict))
             PUBSUB_ORDER_BUFFER_DEPTH.update(len(existing_seqs) + 1)
             if not existing_seqs:
-                fallback_drain_timer.set(
-                    Timestamp(seconds=time.time() + self.timeout_sec)
-                )
+                fallback_drain_timer.set(self._fallback_deadline())
             self._arm_stall_probe(
                 stall_since_state,
                 stall_probe_timer,
@@ -2278,9 +2324,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         )
 
         warn_threshold_ms = (
-            self.timeout_sec
-            * common_constants.MS_PER_SECOND
-            * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
+            self.timeout_ms * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
         )
         if stalled_ms >= warn_threshold_ms:
             PUBSUB_ORDER_STALL_WARNINGS.inc()
@@ -2296,7 +2340,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 len(buffered_items),
                 oldest_buffered_seq,
                 trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE,
-                self.timeout_sec,
+                int(self.timeout_ms / common_constants.MS_PER_SECOND),
             )
 
         stall_probe_timer.set(
@@ -2317,7 +2361,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
         stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
     ) -> Iterator[PubsubMessage]:
-        """Force-drains buffered out-of-order segments if a missing sequence number is delayed past timeout_sec.
+        """Force-drains buffered out-of-order segments if a missing sequence number is delayed past timeout_ms.
 
         Prevents permanent pipeline wedging while ensuring zero audio segments are dropped.
         Skipped sequence numbers are recorded in skipped_seqs_bag so they emit if they arrive later.
@@ -2364,16 +2408,14 @@ class PubSubOrderRestorerFn(beam.DoFn):
             "[PubSub Order] Fallback timeout (%ds) expired waiting for seq=%d on key=%s; "
             "force-drained buffered segment(s), advancing expected_seq to %d. "
             "Skipped sequences recorded for late-arrival emission.",
-            self.timeout_sec,
+            int(self.timeout_ms / common_constants.MS_PER_SECOND),
             expected_seq,
             key,
             curr_seq,
         )
 
         if buffer_map:
-            fallback_drain_timer.set(
-                Timestamp(seconds=time.time() + self.timeout_sec)
-            )
+            fallback_drain_timer.set(self._fallback_deadline())
             self._arm_stall_probe(
                 stall_since_state,
                 stall_probe_timer,

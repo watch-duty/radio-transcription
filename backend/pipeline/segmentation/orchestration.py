@@ -26,6 +26,7 @@ from backend.pipeline.segmentation.constants import (
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_MIN_RAM_RESOURCE_HINT,
+    DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
@@ -80,6 +81,20 @@ def get_pipeline(
     )
 
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+
+    fallback_drain_timeout = (
+        options.pubsub_fallback_drain_timeout_ms
+        if options.pubsub_fallback_drain_timeout_ms is not None
+        else DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS
+    )
+
+    if fallback_drain_timeout <= 0:
+        err_msg = (
+            f"Invalid pipeline configuration: pubsub_fallback_drain_timeout_ms "
+            f"({fallback_drain_timeout}) must be positive. A non-positive value would "
+            f"force-drain buffered segments out of order the moment any gap appears."
+        )
+        raise ValueError(err_msg)
 
     if not options.staging_audio_bucket:
         err_msg = (
@@ -173,7 +188,8 @@ def get_pipeline(
 
     ordered_pubsub = (
         uploaded_segments.main
-        | "RestorePubSubOrder" >> beam.ParDo(PubSubOrderRestorerFn())
+        | "RestorePubSubOrder"
+        >> beam.ParDo(PubSubOrderRestorerFn(timeout_ms=fallback_drain_timeout))
     )
 
     ordered_pubsub | "WriteToPubSub" >> WriteToPubSub(

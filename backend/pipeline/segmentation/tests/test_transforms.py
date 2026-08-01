@@ -5178,7 +5178,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=mock_buf_state,
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5208,7 +5208,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=mock_buf_state,
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5237,7 +5237,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                     buffer_state=fake_buf_state,
                     skipped_seqs_bag=_FakeBagState(),  # type: ignore
                     fallback_drain_timer=MagicMock(),
-                    stall_since_state=MagicMock(),
+                    stall_since_state=_FakeValueState(),  # type: ignore
                     stall_probe_timer=MagicMock(),
                 )
             )
@@ -5266,7 +5266,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=mock_buf_state,
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5299,7 +5299,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=mock_buf_state,
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5337,7 +5337,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=buf_state_b,
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5350,7 +5350,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self,
     ) -> None:
         """Verifies fallback timer force-drains out-of-order items and late arrivals emit without loss."""
-        fn = PubSubOrderRestorerFn(timeout_sec=30)
+        fn = PubSubOrderRestorerFn(timeout_ms=30_000)
         seq_state = _FakeValueState(2)  # Waiting on seq=2
         buf_state: Any = _FakeBagState()
         skipped_state: Any = _FakeBagState()
@@ -5372,7 +5372,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=buf_state,
                 skipped_seqs_bag=skipped_state,
                 fallback_drain_timer=fallback_timer,
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5395,7 +5395,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 buffer_state=buf_state,
                 skipped_seqs_bag=skipped_state,
                 fallback_drain_timer=fallback_timer,
-                stall_since_state=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
         )
@@ -5525,9 +5525,7 @@ class PubSubStallProbeTest(unittest.TestCase):
         fn = PubSubOrderRestorerFn()
         timer = MagicMock()
         stalled_ms = (
-            fn.timeout_sec
-            * MS_PER_SECOND
-            * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
+            fn.timeout_ms * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
         ) + 60_000
         started_at = int(time.time() * MS_PER_SECOND) - stalled_ms
         mock_seq = MagicMock()
@@ -5676,3 +5674,91 @@ class PubSubSkippedSeqRetentionTest(unittest.TestCase):
         )
 
         self.assertEqual(bag.read(), [7])
+
+
+class PubSubGapResolutionMetricTest(unittest.TestCase):
+    """Covers the measurement used to tune the fallback drain timeout.
+
+    The timeout has to clear real Stage 3 upload skew, which cannot be observed
+    in a dev environment. Sampling how long self-resolving gaps stay open turns
+    that from a guess into a reading.
+    """
+
+    @staticmethod
+    def _item(seq: int) -> dict[str, Any]:
+        return {
+            "data": f"msg{seq}".encode(),
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+
+    def _process(
+        self, seq: int, buffered: list[Any], stall_since: Any
+    ) -> list[Any]:
+        fn = PubSubOrderRestorerFn()
+        return list(
+            fn.process(
+                element=("feed-1#session-a", (seq, self._item(seq))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState(buffered),  # type: ignore
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,
+                stall_probe_timer=MagicMock(),
+            )
+        )
+
+    def test_closing_a_gap_samples_how_long_it_was_open(self) -> None:
+        opened_at = int(time.time() * MS_PER_SECOND) - 12_000
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [(2, self._item(2))], _FakeValueState(opened_at))
+
+        mock_dist.update.assert_called_once()
+        (recorded,), _ = mock_dist.update.call_args
+        self.assertGreaterEqual(recorded, 11)
+        self.assertLessEqual(recorded, 14)
+
+    def test_no_gap_records_nothing(self) -> None:
+        """An in-order arrival with an empty buffer never blocked on anything."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [], _FakeValueState(None))
+
+        mock_dist.update.assert_not_called()
+
+    def test_unset_clock_records_nothing(self) -> None:
+        """Without a start time there is no interval to report; do not report zero."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [(2, self._item(2))], _FakeValueState(None))
+
+        mock_dist.update.assert_not_called()
+
+    def test_fallback_drain_does_not_sample_resolution(self) -> None:
+        """A gap the fallback gave up on has no resolution time; sampling it would
+        bias the distribution toward the configured timeout.
+        """
+        fn = PubSubOrderRestorerFn()
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            list(
+                fn.fallback_drain_timer_fired(
+                    key="feed-1#session-a",
+                    expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                    buffer_state=_FakeBagState([(3, self._item(3))]),  # type: ignore
+                    skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                    fallback_drain_timer=MagicMock(),
+                    stall_since_state=_FakeValueState(1_000_000),  # type: ignore
+                    stall_probe_timer=MagicMock(),
+                )
+            )
+
+        mock_dist.update.assert_not_called()
