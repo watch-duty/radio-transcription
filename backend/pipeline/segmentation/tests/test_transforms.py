@@ -4815,7 +4815,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         results = list(fn.process(element=("test-feed", (1, decoded_request))))
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0][0], "test-feed")
+        self.assertEqual(results[0][0], "test-feed#test-session")
         seq_num, pubsub_dict = results[0][1]
         self.assertEqual(seq_num, 1)
         self.assertFalse(pubsub_dict["is_tombstone"])
@@ -5121,6 +5121,20 @@ class UploadRawSegmentFnTest(unittest.TestCase):
             self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
 
 
+class _FakeBagState:
+    def __init__(self, items: list[Any] | None = None) -> None:
+        self._items = list(items or [])
+
+    def read(self):
+        return list(self._items)
+
+    def clear(self):
+        self._items = []
+
+    def add(self, item):
+        self._items.append(item)
+
+
 class SequenceAndOrderRestorerTest(unittest.TestCase):
     """Unit tests for TagSequenceNumberFn and PubSubOrderRestorerFn."""
 
@@ -5131,10 +5145,12 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_seq_state.read.return_value = None
 
         res1 = list(
-            fn.process(element=("feed-1", req1), seq_state=mock_seq_state)
+            fn.process(
+                element=("feed-1#session-a", req1), seq_state=mock_seq_state
+            )
         )
         self.assertEqual(len(res1), 1)
-        self.assertEqual(res1[0][0], "feed-1")
+        self.assertEqual(res1[0][0], "feed-1#session-a")
         self.assertEqual(res1[0][1][0], 1)
         self.assertEqual(res1[0][1][1], req1)
         mock_seq_state.write.assert_called_once_with(2)
@@ -5154,7 +5170,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         }
         res = list(
             fn.process(
-                element=("feed-1", (1, item1)),
+                element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
             )
@@ -5180,13 +5196,40 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         }
         res = list(
             fn.process(
-                element=("feed-1", (2, item2)),
+                element=("feed-1#session-a", (2, item2)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
             )
         )
         self.assertEqual(len(res), 0)
         mock_buf_state.add.assert_called_once_with((2, item2))
+
+    def test_pubsub_order_restorer_fn_deduplicates_future_retries_in_buffer(
+        self,
+    ) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        fake_buf_state: Any = _FakeBagState()
+
+        item2 = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        for _ in range(3):
+            res = list(
+                fn.process(
+                    element=("feed-1#session-a", (2, item2)),
+                    expected_seq_state=mock_seq_state,
+                    buffer_state=fake_buf_state,
+                )
+            )
+            self.assertEqual(len(res), 0)
+
+        self.assertEqual(len(fake_buf_state._items), 1)
+        self.assertEqual(fake_buf_state._items[0], (2, item2))
 
     def test_pubsub_order_restorer_fn_ignores_duplicate_retries(self) -> None:
         fn = PubSubOrderRestorerFn()
@@ -5203,7 +5246,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         }
         res = list(
             fn.process(
-                element=("feed-1", (1, duplicate_item)),
+                element=("feed-1#session-a", (1, duplicate_item)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
             )
@@ -5232,7 +5275,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         }
         res = list(
             fn.process(
-                element=("feed-1", (1, item1)),
+                element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
             )
@@ -5241,3 +5284,37 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self.assertEqual(res[0].data, b"msg1")
         self.assertEqual(res[1].data, b"msg2")
         mock_seq_state.write.assert_called_once_with(3)
+
+    def test_pubsub_order_restorer_fn_session_isolation_on_handover(
+        self,
+    ) -> None:
+        """Verifies a stalled collector on session-a cannot block a healthy collector on session-b."""
+        fn = PubSubOrderRestorerFn()
+        seq_state_a = MagicMock()
+        seq_state_a.read.return_value = (
+            2  # Session A is waiting on seq=2 (stalled)
+        )
+
+        seq_state_b = MagicMock()
+        seq_state_b.read.return_value = (
+            1  # Session B took over lease, starting at seq=1
+        )
+        buf_state_b: Any = _FakeBagState()
+
+        item_b1 = {
+            "data": b"msg_b1",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res_b = list(
+            fn.process(
+                element=("feed-1#session-b", (1, item_b1)),
+                expected_seq_state=seq_state_b,
+                buffer_state=buf_state_b,
+            )
+        )
+        self.assertEqual(len(res_b), 1)
+        self.assertEqual(res_b[0].data, b"msg_b1")
+        self.assertEqual(res_b[0].ordering_key, "feed-1")
+        seq_state_b.write.assert_called_once_with(2)

@@ -1888,8 +1888,20 @@ class OrderedStitchAudioFn(beam.DoFn):
             self.engine.processor = val
 
 
-SEQUENCE_NUMBER_STATE = ReadModifyWriteStateSpec(
+SEQUENCE_NUMBER_SPEC = ReadModifyWriteStateSpec(
     "sequence_number_state", beam.coders.VarIntCoder()
+)
+SEQUENCE_NUMBER_STATE = beam.DoFn.StateParam(SEQUENCE_NUMBER_SPEC)
+
+
+PUBSUB_ORDER_BUFFER_DEPTH = Metrics.distribution(
+    "PubSubOrderRestorerFn", "pubsub_order_buffer_depth"
+)
+PUBSUB_ORDER_FUTURE_RETRIES_SUPPRESSED = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_future_retries_suppressed"
+)
+PUBSUB_ORDER_POST_PUBLISH_RETRIES_SUPPRESSED = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_post_publish_retries_suppressed"
 )
 
 
@@ -1898,7 +1910,11 @@ SEQUENCE_NUMBER_STATE = ReadModifyWriteStateSpec(
     tuple[str, tuple[int, datatypes.FlushRequest]]
 )
 class TagSequenceNumberFn(beam.DoFn):
-    """Assigns an incremental sequence number (1, 2, 3...) per feed_id while still in sequential key order."""
+    """Assigns an incremental sequence number (1, 2, 3...) per feed_id#session_id.
+
+    Keyed per session so a stalled collector cannot block a healthy collector
+    that has taken over the same feed's lease.
+    """
 
     @override
     def process(
@@ -1906,25 +1922,33 @@ class TagSequenceNumberFn(beam.DoFn):
         element: tuple[str, datatypes.FlushRequest],
         seq_state: ReadModifyWriteRuntimeState = SEQUENCE_NUMBER_STATE,  # type: ignore
     ) -> Iterator[tuple[str, tuple[int, datatypes.FlushRequest]]]:
-        _key, req = element
-        feed_id = req.feed_id
+        session_key, req = element
         curr_seq = seq_state.read() or 1
         seq_state.write(curr_seq + 1)
-        yield (feed_id, (curr_seq, req))
+        yield (session_key, (curr_seq, req))
 
 
-EXPECTED_PUB_SEQ_STATE = ReadModifyWriteStateSpec(
+EXPECTED_PUB_SEQ_SPEC = ReadModifyWriteStateSpec(
     "expected_pub_seq_state", beam.coders.VarIntCoder()
 )
-OUT_OF_ORDER_PUB_BAG = BagStateSpec(
+EXPECTED_PUB_SEQ_STATE = beam.DoFn.StateParam(EXPECTED_PUB_SEQ_SPEC)
+OUT_OF_ORDER_PUB_SPEC = BagStateSpec(
     "out_of_order_pub_bag", beam.coders.FastPrimitivesCoder()
 )
+OUT_OF_ORDER_PUB_BAG = beam.DoFn.StateParam(OUT_OF_ORDER_PUB_SPEC)
 
 
 @beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
 @beam.typehints.with_output_types(PubsubMessage)
 class PubSubOrderRestorerFn(beam.DoFn):
-    """Lightweight stateful restorer to ensure 100% strict chronological Pub/Sub publishing order per feed_id."""
+    """Restores stable per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
+
+    Guarantees that segments for a given feed_id#session_id are published in the
+    order their sequence numbers were assigned. This is arrival order at
+    TagSequenceNumberFn, not audio-timestamp order: two collectors on the same feed
+    during a lease handover interleave nondeterministically, matching the ordering
+    semantics that existed before the Stage 3 parallelization.
+    """
 
     @override
     def process(
@@ -1964,14 +1988,26 @@ class PubSubOrderRestorerFn(beam.DoFn):
                     buffer_state.add((s_num, d))
 
             expected_seq_state.write(expected_seq)
+            PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffer_map))
         elif seq_num > expected_seq:
             # Future segment arrived early due to parallel Stage 3 execution.
-            # Buffer in state until expected_seq arrives to guarantee strict chronological Pub/Sub order.
-            buffer_state.add((seq_num, item_dict))
+            # Deduplicate by sequence number to prevent unbounded BagState growth on Windmill retries.
+            existing_seqs = {item[0] for item in buffered_items}
+            if seq_num not in existing_seqs:
+                buffer_state.add((seq_num, item_dict))
+                PUBSUB_ORDER_BUFFER_DEPTH.update(len(existing_seqs) + 1)
+            else:
+                PUBSUB_ORDER_FUTURE_RETRIES_SUPPRESSED.inc()
+                logger.debug(
+                    "Deduplicated future segment retry seq=%d for feed_id=%s already in buffer",
+                    seq_num,
+                    item_dict.get("ordering_key", ""),
+                )
         else:
             # seq_num < expected_seq: This sequence was ALREADY emitted (or tombstoned) when expected_seq
             # was at that number. This is a duplicate retry from Dataflow Windmill.
             # Ignoring it prevents duplicate Pub/Sub messages while preserving strict chronological order.
+            PUBSUB_ORDER_POST_PUBLISH_RETRIES_SUPPRESSED.inc()
             logger.debug(
                 "Ignoring duplicate retry segment seq=%d (already emitted, expected=%d) for feed_id=%s",
                 seq_num,

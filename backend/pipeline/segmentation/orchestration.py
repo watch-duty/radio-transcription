@@ -142,7 +142,15 @@ def get_pipeline(
 
     stitching_main = stitching.main
 
-    tagged_requests = stitching_main | "TagSequenceNumber" >> beam.ParDo(
+    # Re-key to feed_id#session_id BEFORE the stateful tagger. Beam partitions
+    # stateful DoFn state by the *input* key, so this is what makes the sequence
+    # counter per-session rather than per-feed, keeping a stalled collector from
+    # blocking a healthy one that took over its lease.
+    session_keyed = stitching_main | "KeyBySession" >> beam.Map(
+        lambda kv: (f"{kv[1].feed_id}#{kv[1].session_id}", kv[1])
+    )
+
+    tagged_requests = session_keyed | "TagSequenceNumber" >> beam.ParDo(
         TagSequenceNumberFn()
     )
 

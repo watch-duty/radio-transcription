@@ -589,6 +589,7 @@ class UploadRawSegmentFn(beam.DoFn):
     ]:
         _key, (seq_num, request) = element
         feed_id = request.feed_id
+        session_key = f"{feed_id}#{request.session_id}"
         trace_attrs: dict[str, str] = {}
         if request.traceparent:
             trace_attrs["traceparent"] = request.traceparent
@@ -616,7 +617,7 @@ class UploadRawSegmentFn(beam.DoFn):
                 inject_otel_context(pubsub_attributes)
 
                 yield (
-                    request.feed_id,
+                    session_key,
                     (
                         seq_num,
                         {
@@ -636,7 +637,7 @@ class UploadRawSegmentFn(beam.DoFn):
             )
             self.segmentation_error.inc()
             yield (
-                feed_id,
+                session_key,
                 (
                     seq_num,
                     {
