@@ -50,23 +50,37 @@ DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
-# PubSubOrderRestorerFn liveness probe.
+# PubSubOrderRestorerFn fallback drain.
 #
-# The restorer deliberately has no drain timeout: it blocks until the missing
-# sequence number arrives so that no audio segment is ever dropped. That makes a
-# permanently blocked feed indistinguishable from an idle one, because both
-# buffer-depth and duplicate-suppression metrics are only emitted when an
-# element arrives. A feed that falls silent while holding a gap therefore
-# retains BagState forever and reports nothing at all.
+# Mirrors the gap timeout the stitcher already applies to chunks
+# (DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS): wait for a missing sequence
+# number, then advance past it rather than blocking the feed forever. Skipped
+# numbers are retained so a late arrival still publishes.
+#
+# Note this is the second skip-ahead timeout in the pipeline, applied one stage
+# after the stitcher's, so worst-case publish latency is the sum of the two.
+# Tune them together.
+DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_SEC: Final = 30
+
+# Upper bound on skipped sequence numbers retained per key. An entry is dropped
+# only when its segment finally arrives, so a segment that never arrives -- the
+# case the fallback exists for -- would otherwise pin its entry for the life of
+# the job. When the cap is exceeded the lowest (oldest, least likely to still
+# arrive) entries are abandoned and counted.
+MAX_TRACKED_SKIPPED_SEQS: Final = 512
+
+# PubSubOrderRestorerFn liveness probe.
 #
 # The probe is a processing-time timer that only observes: it emits telemetry
 # and re-arms while the buffer is non-empty, and never drops or skips a
 # buffered segment.
 PUBSUB_STALL_PROBE_INTERVAL_SEC: Final = 60.0
-# Routine out-of-order arrival resolves in seconds, so only a gap outstanding
-# well beyond that is worth paging on. Below this, the probe still records the
-# stall distributions but does not increment the alertable counter.
-PUBSUB_STALL_WARN_THRESHOLD_MS: Final = 300000
+# The fallback drain bounds a stall at roughly one timeout, so a stall lasting
+# several multiples of it means the fallback itself is not firing. The probe is
+# therefore a watchdog on the fallback rather than on ordinary reordering: a
+# fixed threshold above the fallback timeout would never trip, and one below it
+# would fire on every routine drain.
+PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE: Final = 3
 
 
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(

@@ -1967,6 +1967,12 @@ PUBSUB_ORDER_FALLBACK_DRAINS = Metrics.counter(
 PUBSUB_ORDER_LATE_ARRIVALS_EMITTED = Metrics.counter(
     "PubSubOrderRestorerFn", "pubsub_order_late_arrivals_emitted"
 )
+# Skipped sequence numbers evicted without ever arriving. Unlike a fallback
+# drain, which is recoverable, this is the point at which a segment is
+# definitively gone -- the only signal that audio was actually lost.
+PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_skipped_seqs_abandoned"
+)
 
 SKIPPED_SEQS_SPEC = BagStateSpec("skipped_seqs_bag", beam.coders.VarIntCoder())
 SKIPPED_SEQS_BAG = beam.DoFn.StateParam(SKIPPED_SEQS_SPEC)
@@ -1980,19 +1986,77 @@ FALLBACK_DRAIN_TIMER = beam.DoFn.TimerParam(FALLBACK_DRAIN_SPEC)
 @beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
 @beam.typehints.with_output_types(PubsubMessage)
 class PubSubOrderRestorerFn(beam.DoFn):
-    """Restores stable per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
+    """Restores per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
 
-    Guarantees that segments for a given feed_id#session_id are published in the
-    order their sequence numbers were assigned. Under normal operation, strict
-    chronological delivery is enforced. If a missing sequence number is delayed
-    past timeout_sec (default 30s), a fallback timer force-drains buffered segments
-    out-of-order to prevent feed wedging, while recording skipped numbers so any
-    late arrival is still published with zero audio loss.
+    Ordering is best-effort with a bounded delay, not a guarantee. While a
+    missing sequence number arrives within timeout_sec, segments for a given
+    feed_id#session_id publish in the order their numbers were assigned. Past
+    that, a fallback timer advances over the gap so the feed cannot wedge, and
+    the skipped numbers are retained so a late arrival still publishes -- after
+    the segments that overtook it.
+
+    Publishing a late segment behind newer ones is the same trade the stitcher
+    already makes for chunks (see the LATE PATH in process_ordering, reached via
+    the gap timeout in _handle_gap_timeout_common), so consumers of this topic
+    already have to tolerate a segment whose start_timestamp precedes its
+    predecessor's. No audio is dropped while a skipped number is still tracked;
+    eviction past MAX_TRACKED_SKIPPED_SEQS is the only path that discards one,
+    and it is counted.
     """
 
-    def __init__(self, timeout_sec: int = 30) -> None:
+    def __init__(
+        self,
+        timeout_sec: int = trans_constants.DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_SEC,
+    ) -> None:
         super().__init__()
         self.timeout_sec = timeout_sec
+
+    def _record_skipped_seqs(
+        self,
+        *,
+        newly_skipped: range,
+        skipped_seqs_bag: BagRuntimeState,
+        key: str,
+    ) -> None:
+        """Records skipped sequence numbers for late-arrival emission, bounding how many are retained.
+
+        An entry leaves the bag only when its segment finally arrives, so a
+        segment that never arrives would pin its entry for the life of the job.
+        Once the cap is exceeded the lowest numbers are abandoned first: they are
+        the oldest, and a segment that has not arrived after this many later ones
+        have is not going to.
+
+        Args:
+            newly_skipped: Sequence numbers passed over by this fallback drain.
+            skipped_seqs_bag: Bag of numbers whose late arrival should still publish.
+            key: feed_id#session_id, for diagnostics.
+        """
+        if not newly_skipped:
+            return
+
+        retained = sorted(set(skipped_seqs_bag.read()) | set(newly_skipped))
+        overflow = len(retained) - trans_constants.MAX_TRACKED_SKIPPED_SEQS
+        abandoned: list[int] = []
+        if overflow > 0:
+            abandoned = retained[:overflow]
+            retained = retained[overflow:]
+
+        skipped_seqs_bag.clear()
+        for seq in retained:
+            skipped_seqs_bag.add(seq)
+
+        if abandoned:
+            PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED.inc(len(abandoned))
+            logger.warning(
+                "[PubSub Order] Abandoned %d skipped sequence number(s) on key=%s "
+                "(oldest=%d, newest=%d) after exceeding the %d-entry retention cap. "
+                "Those segments will be dropped if they ever arrive.",
+                len(abandoned),
+                key,
+                abandoned[0],
+                abandoned[-1],
+                trans_constants.MAX_TRACKED_SKIPPED_SEQS,
+            )
 
     def _arm_stall_probe(
         self,
@@ -2192,9 +2256,11 @@ class PubSubOrderRestorerFn(beam.DoFn):
     ) -> None:
         """Reports how long this key has been blocked, without touching the buffered segments.
 
-        Emits nothing downstream. Publishing here would break the ordering
-        guarantee, and skipping the missing sequence number would drop audio, so
-        the probe's only job is to make an otherwise silent stall visible.
+        Emits nothing downstream: advancing over the gap is the fallback timer's
+        job, and doing it here too would race with it. The probe exists to make
+        an otherwise silent stall visible, and now also acts as a watchdog on the
+        fallback -- the fallback bounds a stall at roughly one timeout, so a
+        stall lasting several multiples of it means the fallback is not firing.
         """
         buffered_items = list(buffer_state.read())
         if not buffered_items:
@@ -2211,19 +2277,26 @@ class PubSubOrderRestorerFn(beam.DoFn):
             int(stalled_ms / common_constants.MS_PER_SECOND)
         )
 
-        if stalled_ms >= trans_constants.PUBSUB_STALL_WARN_THRESHOLD_MS:
+        warn_threshold_ms = (
+            self.timeout_sec
+            * common_constants.MS_PER_SECOND
+            * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
+        )
+        if stalled_ms >= warn_threshold_ms:
             PUBSUB_ORDER_STALL_WARNINGS.inc()
             oldest_buffered_seq = min(item[0] for item in buffered_items)
             logger.warning(
                 "[PubSub Order] Publishing blocked for %ds on key=%s: waiting for "
                 "seq=%d with %d segment(s) buffered (oldest buffered seq=%d). "
-                "Segments are retained, not dropped; this resolves when the "
-                "missing sequence arrives.",
+                "This is past %dx the %ds fallback drain timeout, so the fallback "
+                "timer is not firing; segments are retained, not dropped.",
                 int(stalled_ms / common_constants.MS_PER_SECOND),
                 key,
                 expected_seq_state.read() or 1,
                 len(buffered_items),
                 oldest_buffered_seq,
+                trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE,
+                self.timeout_sec,
             )
 
         stall_probe_timer.set(
@@ -2260,8 +2333,11 @@ class PubSubOrderRestorerFn(beam.DoFn):
 
         # Record any missing sequence numbers between expected_seq and min_buf_seq as skipped
         # so that if they arrive late, they emit immediately rather than getting ignored.
-        for s in range(expected_seq, min_buf_seq):
-            skipped_seqs_bag.add(s)
+        self._record_skipped_seqs(
+            newly_skipped=range(expected_seq, min_buf_seq),
+            skipped_seqs_bag=skipped_seqs_bag,
+            key=key,
+        )
 
         curr_seq = min_buf_seq
         buffer_map = {item[0]: item[1] for item in buffered_items}
