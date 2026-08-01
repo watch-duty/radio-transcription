@@ -5176,7 +5176,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=MagicMock(),
                 stall_probe_timer=MagicMock(),
@@ -5206,7 +5206,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (2, item2)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=MagicMock(),
                 stall_probe_timer=MagicMock(),
@@ -5235,7 +5235,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                     element=("feed-1#session-a", (2, item2)),
                     expected_seq_state=mock_seq_state,
                     buffer_state=fake_buf_state,
-                    skipped_seqs_bag=_FakeBagState(),
+                    skipped_seqs_bag=_FakeBagState(),  # type: ignore
                     fallback_drain_timer=MagicMock(),
                     stall_since_state=MagicMock(),
                     stall_probe_timer=MagicMock(),
@@ -5264,7 +5264,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, duplicate_item)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=MagicMock(),
                 stall_probe_timer=MagicMock(),
@@ -5297,7 +5297,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=MagicMock(),
                 stall_probe_timer=MagicMock(),
@@ -5335,7 +5335,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-b", (1, item_b1)),
                 expected_seq_state=seq_state_b,
                 buffer_state=buf_state_b,
-                skipped_seqs_bag=_FakeBagState(),
+                skipped_seqs_bag=_FakeBagState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=MagicMock(),
                 stall_probe_timer=MagicMock(),
@@ -5448,7 +5448,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState(),  # type: ignore
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
-                fallback_drain_timer=MagicMock(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
             )
@@ -5469,7 +5469,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
-                fallback_drain_timer=MagicMock(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=MagicMock(),
             )
@@ -5488,7 +5488,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
-                fallback_drain_timer=MagicMock(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
             )
@@ -5510,7 +5510,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(5, self._item(5))]),  # type: ignore
                 skipped_seqs_bag=_FakeBagState(),  # type: ignore
-                fallback_drain_timer=MagicMock(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
             )
@@ -5622,7 +5622,7 @@ class PubSubSkippedSeqRetentionTest(unittest.TestCase):
 
         fn._record_skipped_seqs(
             newly_skipped=range(3, 6),
-            skipped_seqs_bag=bag,
+            skipped_seqs_bag=bag,  # type: ignore
             key="feed-1#session-a",
         )
 
@@ -5637,7 +5637,7 @@ class PubSubSkippedSeqRetentionTest(unittest.TestCase):
         for start in range(0, (cap * 3), 3):
             fn._record_skipped_seqs(
                 newly_skipped=range(start, start + 3),
-                skipped_seqs_bag=bag,
+                skipped_seqs_bag=bag,  # type: ignore
                 key="feed-1#session-a",
             )
 
@@ -5653,7 +5653,7 @@ class PubSubSkippedSeqRetentionTest(unittest.TestCase):
         ) as mock_abandoned:
             fn._record_skipped_seqs(
                 newly_skipped=range(cap, cap + 5),
-                skipped_seqs_bag=bag,
+                skipped_seqs_bag=bag,  # type: ignore
                 key="feed-1#session-a",
             )
 
@@ -5671,7 +5671,7 @@ class PubSubSkippedSeqRetentionTest(unittest.TestCase):
 
         fn._record_skipped_seqs(
             newly_skipped=range(5, 5),
-            skipped_seqs_bag=bag,
+            skipped_seqs_bag=bag,  # type: ignore
             key="feed-1#session-a",
         )
 
