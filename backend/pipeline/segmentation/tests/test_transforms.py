@@ -5164,3 +5164,80 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self.assertEqual(res[0].attributes, {"k": "v"})
         self.assertEqual(res[0].ordering_key, "feed-1")
         mock_seq_state.write.assert_called_once_with(2)
+
+    def test_pubsub_order_restorer_fn_out_of_order_buffers(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+        mock_timer = MagicMock()
+
+        item2 = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1", (2, item2)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                gap_timer=mock_timer,
+            )
+        )
+        self.assertEqual(len(res), 0)
+        mock_buf_state.add.assert_called_once_with((2, item2))
+        mock_timer.set.assert_called_once()
+
+    def test_pubsub_order_restorer_fn_discards_late_duplicate(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 3
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+        mock_timer = MagicMock()
+
+        late_item = {
+            "data": b"msg1",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1", (1, late_item)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                gap_timer=mock_timer,
+            )
+        )
+        self.assertEqual(len(res), 0)
+        mock_buf_state.add.assert_not_called()
+
+    def test_pubsub_order_restorer_fn_gap_timeout_advances_queue(
+        self,
+    ) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        item3 = {
+            "data": b"msg3",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        mock_buf_state.read.return_value = [(3, item3)]
+
+        res = list(
+            fn.handle_gap_timeout(
+                key="feed-1",
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+            )
+        )
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].data, b"msg3")
+        mock_seq_state.write.assert_called_once_with(4)

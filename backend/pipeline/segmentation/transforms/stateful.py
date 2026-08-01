@@ -1919,6 +1919,10 @@ EXPECTED_PUB_SEQ_STATE = ReadModifyWriteStateSpec(
 OUT_OF_ORDER_PUB_BAG = BagStateSpec(
     "out_of_order_pub_bag", beam.coders.FastPrimitivesCoder()
 )
+ORDER_RESTORE_GAP_TIMER = TimerSpec(
+    "order_restore_gap_timer",
+    beam.TimeDomain.REAL_TIME,
+)
 
 
 @beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
@@ -1932,6 +1936,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         element: tuple[str, tuple[int, dict[str, Any]]],
         expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
         buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+        gap_timer: RuntimeTimer = ORDER_RESTORE_GAP_TIMER,  # type: ignore
     ) -> Iterator[PubsubMessage]:
         _feed_id, (seq_num, item_dict) = element
         expected_seq = expected_seq_state.read() or 1
@@ -1966,9 +1971,62 @@ class PubSubOrderRestorerFn(beam.DoFn):
             expected_seq_state.write(expected_seq)
         elif seq_num > expected_seq:
             buffer_state.add((seq_num, item_dict))
-        elif not item_dict.get("is_tombstone", False):
-            yield PubsubMessage(
-                data=item_dict["data"],
-                attributes=item_dict["attributes"],
-                ordering_key=item_dict["ordering_key"],
+            # Set a 30-second processing-time gap timer to prevent missing sequences from wedging state
+            gap_timer.set(beam.utils.timestamp.Timestamp(time.time() + 30.0))
+        else:
+            # Late or duplicate element whose sequence has already been emitted or tombstoned.
+            # MUST NOT be emitted again to prevent Pub/Sub ordering key corruption.
+            logger.warning(
+                "Discarding late or duplicate segment seq=%d (expected=%d) for feed_id=%s",
+                seq_num,
+                expected_seq,
+                item_dict.get("ordering_key", ""),
             )
+
+    @on_timer(ORDER_RESTORE_GAP_TIMER)
+    def handle_gap_timeout(
+        self,
+        key: str = beam.DoFn.KeyParam,  # type: ignore
+        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
+        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+    ) -> Iterator[PubsubMessage]:
+        """Fires if a sequence gap persists for 30s, advancing expected_seq to prevent state wedging."""
+        expected_seq = expected_seq_state.read() or 1
+        buffered_items = list(buffer_state.read())
+        if not buffered_items:
+            return
+
+        valid_seqs = [
+            s_num for s_num, _ in buffered_items if s_num >= expected_seq
+        ]
+        if not valid_seqs:
+            buffer_state.clear()
+            return
+
+        min_seq = min(valid_seqs)
+        if min_seq > expected_seq:
+            logger.warning(
+                "Sequence gap detected for feed=%s: expected seq=%d missing after 30s timeout; jumping to seq=%d",
+                key,
+                expected_seq,
+                min_seq,
+            )
+            expected_seq = min_seq
+
+        buffer_map = {item[0]: item[1] for item in buffered_items}
+        while expected_seq in buffer_map:
+            next_item = buffer_map.pop(expected_seq)
+            if not next_item.get("is_tombstone", False):
+                yield PubsubMessage(
+                    data=next_item["data"],
+                    attributes=next_item["attributes"],
+                    ordering_key=next_item["ordering_key"],
+                )
+            expected_seq += 1
+
+        buffer_state.clear()
+        for s_num, d in buffered_items:
+            if s_num in buffer_map:
+                buffer_state.add((s_num, d))
+
+        expected_seq_state.write(expected_seq)
