@@ -50,6 +50,24 @@ DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
+# PubSubOrderRestorerFn liveness probe.
+#
+# The restorer deliberately has no drain timeout: it blocks until the missing
+# sequence number arrives so that no audio segment is ever dropped. That makes a
+# permanently blocked feed indistinguishable from an idle one, because both
+# buffer-depth and duplicate-suppression metrics are only emitted when an
+# element arrives. A feed that falls silent while holding a gap therefore
+# retains BagState forever and reports nothing at all.
+#
+# The probe is a processing-time timer that only observes: it emits telemetry
+# and re-arms while the buffer is non-empty, and never drops or skips a
+# buffered segment.
+PUBSUB_STALL_PROBE_INTERVAL_SEC: Final = 60.0
+# Routine out-of-order arrival resolves in seconds, so only a gap outstanding
+# well beyond that is worth paging on. Below this, the probe still records the
+# stall distributions but does not increment the alertable counter.
+PUBSUB_STALL_WARN_THRESHOLD_MS: Final = 300000
+
 
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(
     "SEGMENTATION_DOWNLOAD_POOL_SIZE"

@@ -1937,6 +1937,45 @@ OUT_OF_ORDER_PUB_SPEC = BagStateSpec(
 )
 OUT_OF_ORDER_PUB_BAG = beam.DoFn.StateParam(OUT_OF_ORDER_PUB_SPEC)
 
+# Wall-clock ms at which the current blocked interval began, cleared whenever
+# expected_seq advances. This measures time-since-progress rather than
+# time-since-buffering: a feed under heavy but healthy reordering keeps
+# publishing, so its clock keeps resetting and it never looks stalled.
+PUB_STALL_SINCE_SPEC = ReadModifyWriteStateSpec(
+    "pubsub_stall_since_ms", beam.coders.VarIntCoder()
+)
+PUB_STALL_SINCE_STATE = beam.DoFn.StateParam(PUB_STALL_SINCE_SPEC)
+
+PUB_STALL_PROBE_SPEC = TimerSpec(
+    "pubsub_stall_probe", beam.TimeDomain.REAL_TIME
+)
+PUB_STALL_PROBE_TIMER = beam.DoFn.TimerParam(PUB_STALL_PROBE_SPEC)
+
+# Seconds a feed has been blocked without publishing, sampled once per probe.
+PUBSUB_ORDER_STALLED_SECONDS = Metrics.distribution(
+    "PubSubOrderRestorerFn", "pubsub_order_stalled_seconds"
+)
+# Probes that observed a stall past PUBSUB_STALL_WARN_THRESHOLD_MS. This is the
+# alertable series: it is zero for healthy feeds, including ones that go idle
+# with an empty buffer, and climbs steadily for a genuinely wedged one.
+PUBSUB_ORDER_STALL_WARNINGS = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_stall_warnings"
+)
+PUBSUB_ORDER_FALLBACK_DRAINS = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_fallback_drains"
+)
+PUBSUB_ORDER_LATE_ARRIVALS_EMITTED = Metrics.counter(
+    "PubSubOrderRestorerFn", "pubsub_order_late_arrivals_emitted"
+)
+
+SKIPPED_SEQS_SPEC = BagStateSpec("skipped_seqs_bag", beam.coders.VarIntCoder())
+SKIPPED_SEQS_BAG = beam.DoFn.StateParam(SKIPPED_SEQS_SPEC)
+
+FALLBACK_DRAIN_SPEC = TimerSpec(
+    "fallback_drain_timer", beam.TimeDomain.REAL_TIME
+)
+FALLBACK_DRAIN_TIMER = beam.DoFn.TimerParam(FALLBACK_DRAIN_SPEC)
+
 
 @beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
 @beam.typehints.with_output_types(PubsubMessage)
@@ -1944,69 +1983,151 @@ class PubSubOrderRestorerFn(beam.DoFn):
     """Restores stable per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
 
     Guarantees that segments for a given feed_id#session_id are published in the
-    order their sequence numbers were assigned. This is arrival order at
-    TagSequenceNumberFn, not audio-timestamp order: two collectors on the same feed
-    during a lease handover interleave nondeterministically, matching the ordering
-    semantics that existed before the Stage 3 parallelization.
+    order their sequence numbers were assigned. Under normal operation, strict
+    chronological delivery is enforced. If a missing sequence number is delayed
+    past timeout_sec (default 30s), a fallback timer force-drains buffered segments
+    out-of-order to prevent feed wedging, while recording skipped numbers so any
+    late arrival is still published with zero audio loss.
     """
 
-    @override
-    def process(
+    def __init__(self, timeout_sec: int = 30) -> None:
+        super().__init__()
+        self.timeout_sec = timeout_sec
+
+    def _arm_stall_probe(
         self,
-        element: tuple[str, tuple[int, dict[str, Any]]],
-        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
-        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+        stall_since_state: ReadModifyWriteRuntimeState,
+        stall_probe_timer: RuntimeTimer,
+        *,
+        restart_clock: bool,
+    ) -> None:
+        """Starts or re-arms the liveness probe for a feed that is holding buffered segments.
+
+        Args:
+            stall_since_state: Wall-clock ms marking the start of the current blocked interval.
+            stall_probe_timer: Processing-time timer that re-reports the stall while it persists.
+            restart_clock: True when expected_seq just advanced, so the blocked interval restarts from now.
+        """
+        now_ms = int(time.time() * common_constants.MS_PER_SECOND)
+        if restart_clock or not stall_since_state.read():
+            stall_since_state.write(now_ms)
+        stall_probe_timer.set(
+            Timestamp(
+                seconds=time.time()
+                + trans_constants.PUBSUB_STALL_PROBE_INTERVAL_SEC
+            )
+        )
+
+    def _process_in_order(
+        self,
+        item_dict: dict[str, Any],
+        expected_seq: int,
+        buffered_items: list[tuple[int, dict[str, Any]]],
+        expected_seq_state: ReadModifyWriteRuntimeState,
+        buffer_state: BagRuntimeState,
+        fallback_drain_timer: RuntimeTimer,
+        stall_since_state: ReadModifyWriteRuntimeState,
+        stall_probe_timer: RuntimeTimer,
     ) -> Iterator[PubsubMessage]:
-        _feed_id, (seq_num, item_dict) = element
-        expected_seq = expected_seq_state.read() or 1
+        if not item_dict.get("is_tombstone", False):
+            yield PubsubMessage(
+                data=item_dict["data"],
+                attributes=item_dict["attributes"],
+                ordering_key=item_dict["ordering_key"],
+            )
+        expected_seq += 1
 
-        buffered_items = list(buffer_state.read())
+        buffer_map = {item[0]: item[1] for item in buffered_items}
+        while expected_seq in buffer_map:
+            next_item = buffer_map.pop(expected_seq)
+            if not next_item.get("is_tombstone", False):
+                yield PubsubMessage(
+                    data=next_item["data"],
+                    attributes=next_item["attributes"],
+                    ordering_key=next_item["ordering_key"],
+                )
+            expected_seq += 1
 
-        if seq_num == expected_seq:
+        buffer_state.clear()
+        for s_num, d in buffered_items:
+            if s_num in buffer_map:
+                buffer_state.add((s_num, d))
+
+        expected_seq_state.write(expected_seq)
+        PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffer_map))
+
+        if buffer_map:
+            fallback_drain_timer.set(
+                Timestamp(seconds=time.time() + self.timeout_sec)
+            )
+            self._arm_stall_probe(
+                stall_since_state,
+                stall_probe_timer,
+                restart_clock=True,
+            )
+        else:
+            fallback_drain_timer.clear()
+            stall_since_state.clear()
+            stall_probe_timer.clear()
+
+    def _process_future(
+        self,
+        seq_num: int,
+        item_dict: dict[str, Any],
+        buffered_items: list[tuple[int, dict[str, Any]]],
+        buffer_state: BagRuntimeState,
+        fallback_drain_timer: RuntimeTimer,
+        stall_since_state: ReadModifyWriteRuntimeState,
+        stall_probe_timer: RuntimeTimer,
+    ) -> None:
+        existing_seqs = {item[0] for item in buffered_items}
+        if seq_num not in existing_seqs:
+            buffer_state.add((seq_num, item_dict))
+            PUBSUB_ORDER_BUFFER_DEPTH.update(len(existing_seqs) + 1)
+            if not existing_seqs:
+                fallback_drain_timer.set(
+                    Timestamp(seconds=time.time() + self.timeout_sec)
+                )
+            self._arm_stall_probe(
+                stall_since_state,
+                stall_probe_timer,
+                restart_clock=False,
+            )
+        else:
+            PUBSUB_ORDER_FUTURE_RETRIES_SUPPRESSED.inc()
+            logger.debug(
+                "Deduplicated future segment retry seq=%d for feed_id=%s already in buffer",
+                seq_num,
+                item_dict.get("ordering_key", ""),
+            )
+
+    def _process_late_or_duplicate(
+        self,
+        seq_num: int,
+        feed_id: str,
+        item_dict: dict[str, Any],
+        expected_seq: int,
+        skipped_seqs_bag: BagRuntimeState,
+    ) -> Iterator[PubsubMessage]:
+        skipped_seqs = list(skipped_seqs_bag.read())
+        if seq_num in skipped_seqs:
             if not item_dict.get("is_tombstone", False):
                 yield PubsubMessage(
                     data=item_dict["data"],
                     attributes=item_dict["attributes"],
                     ordering_key=item_dict["ordering_key"],
                 )
-            expected_seq += 1
-
-            buffer_map = {item[0]: item[1] for item in buffered_items}
-            while expected_seq in buffer_map:
-                next_item = buffer_map.pop(expected_seq)
-                if not next_item.get("is_tombstone", False):
-                    yield PubsubMessage(
-                        data=next_item["data"],
-                        attributes=next_item["attributes"],
-                        ordering_key=next_item["ordering_key"],
-                    )
-                expected_seq += 1
-
-            buffer_state.clear()
-            for s_num, d in buffered_items:
-                if s_num in buffer_map:
-                    buffer_state.add((s_num, d))
-
-            expected_seq_state.write(expected_seq)
-            PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffer_map))
-        elif seq_num > expected_seq:
-            # Future segment arrived early due to parallel Stage 3 execution.
-            # Deduplicate by sequence number to prevent unbounded BagState growth on Windmill retries.
-            existing_seqs = {item[0] for item in buffered_items}
-            if seq_num not in existing_seqs:
-                buffer_state.add((seq_num, item_dict))
-                PUBSUB_ORDER_BUFFER_DEPTH.update(len(existing_seqs) + 1)
-            else:
-                PUBSUB_ORDER_FUTURE_RETRIES_SUPPRESSED.inc()
-                logger.debug(
-                    "Deduplicated future segment retry seq=%d for feed_id=%s already in buffer",
-                    seq_num,
-                    item_dict.get("ordering_key", ""),
-                )
+            skipped_seqs_bag.clear()
+            for s in skipped_seqs:
+                if s != seq_num:
+                    skipped_seqs_bag.add(s)
+            PUBSUB_ORDER_LATE_ARRIVALS_EMITTED.inc()
+            logger.info(
+                "[PubSub Order] Emitted late segment seq=%d for key=%s (skipped by fallback timer earlier)",
+                seq_num,
+                feed_id,
+            )
         else:
-            # seq_num < expected_seq: This sequence was ALREADY emitted (or tombstoned) when expected_seq
-            # was at that number. This is a duplicate retry from Dataflow Windmill.
-            # Ignoring it prevents duplicate Pub/Sub messages while preserving strict chronological order.
             PUBSUB_ORDER_POST_PUBLISH_RETRIES_SUPPRESSED.inc()
             logger.debug(
                 "Ignoring duplicate retry segment seq=%d (already emitted, expected=%d) for feed_id=%s",
@@ -2014,3 +2135,175 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 expected_seq,
                 item_dict.get("ordering_key", ""),
             )
+
+    @override
+    def process(
+        self,
+        element: tuple[str, tuple[int, dict[str, Any]]],
+        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
+        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+        skipped_seqs_bag: BagRuntimeState = SKIPPED_SEQS_BAG,  # type: ignore
+        fallback_drain_timer: RuntimeTimer = FALLBACK_DRAIN_TIMER,  # type: ignore
+        stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
+        stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
+    ) -> Iterator[PubsubMessage]:
+        _feed_id, (seq_num, item_dict) = element
+        expected_seq = expected_seq_state.read() or 1
+        buffered_items = list(buffer_state.read())
+
+        if seq_num == expected_seq:
+            yield from self._process_in_order(
+                item_dict,
+                expected_seq,
+                buffered_items,
+                expected_seq_state,
+                buffer_state,
+                fallback_drain_timer,
+                stall_since_state,
+                stall_probe_timer,
+            )
+        elif seq_num > expected_seq:
+            self._process_future(
+                seq_num,
+                item_dict,
+                buffered_items,
+                buffer_state,
+                fallback_drain_timer,
+                stall_since_state,
+                stall_probe_timer,
+            )
+        else:
+            yield from self._process_late_or_duplicate(
+                seq_num,
+                _feed_id,
+                item_dict,
+                expected_seq,
+                skipped_seqs_bag,
+            )
+
+    @on_timer(PUB_STALL_PROBE_SPEC)
+    def probe_publish_stall(
+        self,
+        key: str = beam.DoFn.KeyParam,  # type: ignore
+        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
+        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+        stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
+        stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
+    ) -> None:
+        """Reports how long this key has been blocked, without touching the buffered segments.
+
+        Emits nothing downstream. Publishing here would break the ordering
+        guarantee, and skipping the missing sequence number would drop audio, so
+        the probe's only job is to make an otherwise silent stall visible.
+        """
+        buffered_items = list(buffer_state.read())
+        if not buffered_items:
+            # Gap resolved between the arm and the fire; stand down.
+            stall_since_state.clear()
+            return
+
+        now_ms = int(time.time() * common_constants.MS_PER_SECOND)
+        stalled_since_ms = stall_since_state.read() or now_ms
+        stalled_ms = max(0, now_ms - stalled_since_ms)
+
+        PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffered_items))
+        PUBSUB_ORDER_STALLED_SECONDS.update(
+            int(stalled_ms / common_constants.MS_PER_SECOND)
+        )
+
+        if stalled_ms >= trans_constants.PUBSUB_STALL_WARN_THRESHOLD_MS:
+            PUBSUB_ORDER_STALL_WARNINGS.inc()
+            oldest_buffered_seq = min(item[0] for item in buffered_items)
+            logger.warning(
+                "[PubSub Order] Publishing blocked for %ds on key=%s: waiting for "
+                "seq=%d with %d segment(s) buffered (oldest buffered seq=%d). "
+                "Segments are retained, not dropped; this resolves when the "
+                "missing sequence arrives.",
+                int(stalled_ms / common_constants.MS_PER_SECOND),
+                key,
+                expected_seq_state.read() or 1,
+                len(buffered_items),
+                oldest_buffered_seq,
+            )
+
+        stall_probe_timer.set(
+            Timestamp(
+                seconds=time.time()
+                + trans_constants.PUBSUB_STALL_PROBE_INTERVAL_SEC
+            )
+        )
+
+    @on_timer(FALLBACK_DRAIN_SPEC)
+    def fallback_drain_timer_fired(
+        self,
+        key: str = beam.DoFn.KeyParam,  # type: ignore
+        expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
+        buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
+        skipped_seqs_bag: BagRuntimeState = SKIPPED_SEQS_BAG,  # type: ignore
+        fallback_drain_timer: RuntimeTimer = FALLBACK_DRAIN_TIMER,  # type: ignore
+        stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
+        stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
+    ) -> Iterator[PubsubMessage]:
+        """Force-drains buffered out-of-order segments if a missing sequence number is delayed past timeout_sec.
+
+        Prevents permanent pipeline wedging while ensuring zero audio segments are dropped.
+        Skipped sequence numbers are recorded in skipped_seqs_bag so they emit if they arrive later.
+        """
+        buffered_items = list(buffer_state.read())
+        if not buffered_items:
+            fallback_drain_timer.clear()
+            return
+
+        expected_seq = expected_seq_state.read() or 1
+        buffered_items.sort(key=lambda x: x[0])
+        min_buf_seq = buffered_items[0][0]
+
+        # Record any missing sequence numbers between expected_seq and min_buf_seq as skipped
+        # so that if they arrive late, they emit immediately rather than getting ignored.
+        for s in range(expected_seq, min_buf_seq):
+            skipped_seqs_bag.add(s)
+
+        curr_seq = min_buf_seq
+        buffer_map = {item[0]: item[1] for item in buffered_items}
+        while curr_seq in buffer_map:
+            next_item = buffer_map.pop(curr_seq)
+            if not next_item.get("is_tombstone", False):
+                yield PubsubMessage(
+                    data=next_item["data"],
+                    attributes=next_item["attributes"],
+                    ordering_key=next_item["ordering_key"],
+                )
+            curr_seq += 1
+
+        buffer_state.clear()
+        for s_num, d in buffered_items:
+            if s_num in buffer_map:
+                buffer_state.add((s_num, d))
+
+        expected_seq_state.write(curr_seq)
+        PUBSUB_ORDER_BUFFER_DEPTH.update(len(buffer_map))
+        PUBSUB_ORDER_FALLBACK_DRAINS.inc()
+
+        logger.warning(
+            "[PubSub Order] Fallback timeout (%ds) expired waiting for seq=%d on key=%s; "
+            "force-drained buffered segment(s), advancing expected_seq to %d. "
+            "Skipped sequences recorded for late-arrival emission.",
+            self.timeout_sec,
+            expected_seq,
+            key,
+            curr_seq,
+        )
+
+        if buffer_map:
+            fallback_drain_timer.set(
+                Timestamp(seconds=time.time() + self.timeout_sec)
+            )
+            self._arm_stall_probe(
+                stall_since_state,
+                stall_probe_timer,
+                restart_clock=True,
+            )
+        else:
+            fallback_drain_timer.clear()
+            stall_since_state.clear()
+            stall_probe_timer.clear()
