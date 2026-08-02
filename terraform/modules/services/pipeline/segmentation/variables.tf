@@ -21,3 +21,9 @@ variable "notification_channel_id" {
   default     = null
 }
 
+variable "dataflow_staging_bucket_name" {
+  type        = string
+  description = "Name of the GCS staging bucket used by Dataflow flex templates."
+}
+
+
