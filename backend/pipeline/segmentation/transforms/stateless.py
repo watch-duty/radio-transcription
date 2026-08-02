@@ -38,6 +38,7 @@ import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
+from apache_beam.metrics.metric import Counter, Distribution
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -264,8 +265,12 @@ class UploadRawSegmentFn(beam.DoFn):
     """
 
     SHARED_GCS_HANDLE = Shared()
-    segmentation_success: Any
-    segmentation_error: Any
+    segmentation_success: Counter
+    segmentation_error: Counter
+    gcs_chunks_downloaded: Counter
+    stitched_segments_uploaded: Counter
+    download_latency_ms: Distribution
+    stitch_latency_ms: Distribution
 
     def __init__(
         self, staging_audio_bucket: str | None, project_id: str
