@@ -87,6 +87,7 @@ from backend.pipeline.segmentation.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
+    PendingPubSubMessage,
     SegmentationDlqOutput,
 )
 from backend.pipeline.segmentation.options import (
@@ -273,7 +274,7 @@ class ParseAndKeyFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, tuple[int, FlushRequest]])
-@beam.typehints.with_output_types(tuple[str, tuple[int, dict[str, Any]]])
+@beam.typehints.with_output_types(tuple[str, tuple[int, PendingPubSubMessage]])
 class UploadRawSegmentFn(beam.DoFn):
     """Stateless DoFn to upload PCM audio bytes as a raw WAV file to the GCS staging bucket
     and yield a SegmentedAudio claim-check protobuf message.
@@ -605,7 +606,7 @@ class UploadRawSegmentFn(beam.DoFn):
         self,
         element: tuple[str, tuple[int, FlushRequest]],
     ) -> Iterator[
-        tuple[str, tuple[int, dict[str, Any]]] | SegmentationDlqOutput
+        tuple[str, tuple[int, PendingPubSubMessage]] | SegmentationDlqOutput
     ]:
         _key, (seq_num, request) = element
         feed_id = request.feed_id

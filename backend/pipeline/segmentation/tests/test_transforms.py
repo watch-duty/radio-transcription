@@ -49,6 +49,7 @@ from backend.pipeline.segmentation.datatypes import (
     FlushRequest,
     IdleFeedState,
     OrderRestorerConfig,
+    PendingPubSubMessage,
     StitchAudioConfig,
     TimeRange,
 )
@@ -5165,7 +5166,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_buf_state = MagicMock()
         mock_buf_state.read.return_value = []
 
-        item1 = {
+        item1: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {"k": "v"},
             "ordering_key": "feed-1",
@@ -5195,7 +5196,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_buf_state = MagicMock()
         mock_buf_state.read.return_value = []
 
-        item2 = {
+        item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5223,7 +5224,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_seq_state.read.return_value = 1
         fake_buf_state: Any = _FakeBagState()
 
-        item2 = {
+        item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5253,7 +5254,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_buf_state = MagicMock()
         mock_buf_state.read.return_value = []
 
-        duplicate_item = {
+        duplicate_item: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {"k": "v"},
             "ordering_key": "feed-1",
@@ -5278,7 +5279,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         mock_seq_state = MagicMock()
         mock_seq_state.read.return_value = 1
         mock_buf_state = MagicMock()
-        item2 = {
+        item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5286,7 +5287,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         }
         mock_buf_state.read.return_value = [(2, item2)]
 
-        item1 = {
+        item1: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5324,7 +5325,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         )
         buf_state_b: Any = _FakeBagState()
 
-        item_b1 = {
+        item_b1: PendingPubSubMessage = {
             "data": b"msg_b1",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5382,7 +5383,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self.assertEqual(skipped_state.read(), [2])
 
         # 2. Later, delayed seq=2 arrives (seq_num=2 < expected_seq=4). It should emit out of order rather than be dropped!
-        item2 = {
+        item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
             "ordering_key": "feed-1",
@@ -5429,7 +5430,7 @@ class PubSubStallProbeTest(unittest.TestCase):
     """
 
     @staticmethod
-    def _item(seq: int) -> dict[str, Any]:
+    def _item(seq: int) -> PendingPubSubMessage:
         return {
             "data": f"msg{seq}".encode(),
             "attributes": {},
@@ -5685,7 +5686,7 @@ class PubSubGapResolutionMetricTest(unittest.TestCase):
     """
 
     @staticmethod
-    def _item(seq: int) -> dict[str, Any]:
+    def _item(seq: int) -> PendingPubSubMessage:
         return {
             "data": f"msg{seq}".encode(),
             "attributes": {},

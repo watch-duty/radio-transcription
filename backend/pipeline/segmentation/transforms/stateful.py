@@ -1998,7 +1998,9 @@ FALLBACK_DRAIN_SPEC = TimerSpec(
 FALLBACK_DRAIN_TIMER = beam.DoFn.TimerParam(FALLBACK_DRAIN_SPEC)
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[int, dict[str, Any]]])
+@beam.typehints.with_input_types(
+    tuple[str, tuple[int, datatypes.PendingPubSubMessage]]
+)
 @beam.typehints.with_output_types(PubsubMessage)
 class PubSubOrderRestorerFn(beam.DoFn):
     """Restores per-session publish order, undoing the reordering introduced by the parallel Stage 3 fanout.
@@ -2132,9 +2134,9 @@ class PubSubOrderRestorerFn(beam.DoFn):
 
     def _process_in_order(
         self,
-        item_dict: dict[str, Any],
+        item_dict: datatypes.PendingPubSubMessage,
         expected_seq: int,
-        buffered_items: list[tuple[int, dict[str, Any]]],
+        buffered_items: list[tuple[int, datatypes.PendingPubSubMessage]],
         expected_seq_state: ReadModifyWriteRuntimeState,
         buffer_state: BagRuntimeState,
         fallback_drain_timer: RuntimeTimer,
@@ -2190,8 +2192,8 @@ class PubSubOrderRestorerFn(beam.DoFn):
     def _process_future(
         self,
         seq_num: int,
-        item_dict: dict[str, Any],
-        buffered_items: list[tuple[int, dict[str, Any]]],
+        item_dict: datatypes.PendingPubSubMessage,
+        buffered_items: list[tuple[int, datatypes.PendingPubSubMessage]],
         buffer_state: BagRuntimeState,
         fallback_drain_timer: RuntimeTimer,
         stall_since_state: ReadModifyWriteRuntimeState,
@@ -2220,7 +2222,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         self,
         seq_num: int,
         feed_id: str,
-        item_dict: dict[str, Any],
+        item_dict: datatypes.PendingPubSubMessage,
         expected_seq: int,
         skipped_seqs_state: ReadModifyWriteRuntimeState,
     ) -> Iterator[PubsubMessage]:
@@ -2251,7 +2253,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, tuple[int, dict[str, Any]]],
+        element: tuple[str, tuple[int, datatypes.PendingPubSubMessage]],
         expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
         buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
         skipped_seqs_state: ReadModifyWriteRuntimeState = SKIPPED_SEQS_STATE,  # type: ignore

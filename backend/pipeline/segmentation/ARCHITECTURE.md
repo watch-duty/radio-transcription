@@ -88,3 +88,39 @@ Parallel Stage 3 execution causes segments to finish out of order. Before publis
 * **Late Arrival Recovery (`SKIPPED_SEQS_STATE`)**: If a skipped sequence number arrives late after the fallback timer has fired, `PubSubOrderRestorerFn` checks `SKIPPED_SEQS_STATE`. Recognizing it as a late arrival rather than a duplicate retry, it publishes the late segment immediately — behind the segments that overtook it. Retention is capped at `MAX_TRACKED_SKIPPED_SEQS`; eviction past that cap is the one path that discards a segment, and it increments `pubsub_order_skipped_seqs_abandoned`. That counter is the only signal distinguishing audio genuinely lost from audio merely delayed.
 * **Deferred Session Key GC**: Because deployment updates use drain-and-relaunch (which starts with empty state on every release) and continuous Icecast feeds (`bcfy_feeds`) create only ~150–400 new session keys per day, dead session key accumulation is negligible (~1–2 MB between releases). Explicit timer-based key cleanup is deferred to avoid data loss on long disaster recovery backfills (max lag observed across all collector types: 13 hours; not yet re-scoped to `bcfy_feeds`). If it is ever added, note that `TagSequenceNumberFn` must not be cleared before `PubSubOrderRestorerFn`: a reset sequence counter feeding a restorer that still expects a higher number causes late segments to be silently dropped as duplicates.
 
+
+---
+
+## 6. Operating This Pipeline
+
+### Deployment requires drain-and-relaunch, not an in-place update
+
+Stages 2-4 add stateful DoFns, a `beam.Reshuffle()`, and new `StateSpec`/`TimerSpec` declarations mid-graph. Dataflow's in-place `--update` compatibility check is expected to reject that, so releases drain the running job and launch a fresh one.
+
+Two consequences worth planning around:
+* **Rollback is not instant.** Reverting means another drain-and-relaunch, not a flag flip.
+* **All Beam state starts empty on every release.** This is why explicit session-key garbage collection is deferred (see §5C) — each deploy already reclaims it.
+
+### What to watch
+
+`PubSubOrderRestorerFn` emits these under the `PubSubOrderRestorerFn` metrics namespace. They are not interchangeable; each answers a different question.
+
+| Metric | Healthy value | What a non-zero value means |
+|---|---|---|
+| `pubsub_order_skipped_seqs_abandoned` | **0** | **Audio was actually lost.** A skipped sequence number aged out of `SKIPPED_SEQS_STATE` before its segment arrived. This is the only metric that distinguishes lost audio from delayed audio — everything else here is recoverable. |
+| `pubsub_order_fallback_drains` | ~0 | Segments were published out of order to avoid wedging a feed. No data lost. Sustained non-zero means `--pubsub_fallback_drain_timeout_ms` is tighter than real Stage 3 upload skew, or a feed is genuinely stuck. |
+| `pubsub_order_stall_warnings` | **0** | The fallback timer itself is not firing. This is a watchdog on the fallback (threshold is `PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE` × the drain timeout), not an alert on ordinary reordering. Investigate the timer, not the feed. |
+| `pubsub_order_gap_resolution_seconds` | distribution | How long self-resolving gaps stayed open — the Stage 3 upload skew the drain timeout has to clear. **This is the input for tuning that timeout.** Only gaps that resolved on their own are sampled, so it is not biased toward the configured value. |
+| `pubsub_order_buffer_depth` | small | How much reordering the Stage 3 fanout actually introduces. Consistently near zero means reordering is rare at current volume and the fallback is close to vestigial. |
+| `pubsub_order_future_retries_suppressed` | any | Routine Windmill redelivery of a not-yet-ready segment. Expected churn; not actionable. |
+| `pubsub_order_post_publish_retries_suppressed` | low | Redelivery of a segment **after** it was published. Relevant to the ordering guarantee — worth watching separately from the future-retry counter above. |
+
+### Tuning the fallback drain timeout
+
+The 180s default is deliberately conservative, not measured. `bcfy_feeds` produces roughly 150-400 sessions/day, so `pubsub_order_gap_resolution_seconds` accumulates slowly: **read its maximum and shape before trusting a percentile.** Tighten only once the distribution is populated, and expect skew to be worst during autoscaling events, when cold workers join the pool.
+
+The asymmetry that justifies starting long: the fallback only arms when a gap exists, so a long timeout costs nothing on the normal path and merely delays recovery of a wedged feed — loudly, via `pubsub_order_stall_warnings`. A short one publishes out of order when nothing is wrong, silently.
+
+### Caveat on timer-emitted metrics
+
+`pubsub_order_fallback_drains`, `pubsub_order_stall_warnings`, and `pubsub_order_skipped_seqs_abandoned` are emitted from Beam timer callbacks. DirectRunner does not surface metrics emitted inside `@on_timer`, so these are unverifiable locally and were only confirmed by log output. On first deploy, check the counters move in step with the corresponding `[PubSub Order]` warning logs; flat counters alongside active logs indicate a metrics-reporting problem, not healthy operation.
