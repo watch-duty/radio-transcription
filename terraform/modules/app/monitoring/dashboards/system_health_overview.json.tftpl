@@ -1,0 +1,2663 @@
+{
+  "displayName": "System Health Overview (${environment})",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "# \u23f1\ufe0f End-to-End Latency (Audio Capture to Evaluation)\nMeasures total elapsed time from when broadcast audio was received by our ingestion collectors to when evaluation completes.",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: End-to-End Latency"
+        },
+        "width": 12,
+        "yPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "E2E Audio Capture to Evaluation Latency (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "p50",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/${e2e_latency_metric_name}\" resource.type=\"cloud_run_revision\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "p95",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/${e2e_latency_metric_name}\" resource.type=\"cloud_run_revision\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "p99",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/${e2e_latency_metric_name}\" resource.type=\"cloud_run_revision\""
+                  }
+                }
+              }
+            ],
+            "thresholds": [
+              {
+                "label": "Alert Threshold (5m)",
+                "value": 300000,
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Latency (ms)",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "yPos": 3,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "E2E Audio Capture to Evaluation Latency by Feed Type (p95)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "$${metric.labels.feed_type}",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "groupByFields": [
+                        "metric.label.feed_type"
+                      ],
+                      "perSeriesAligner": "ALIGN_DELTA"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/${e2e_latency_metric_name}\" resource.type=\"cloud_run_revision\""
+                  }
+                }
+              }
+            ],
+            "thresholds": [
+              {
+                "label": "Alert Threshold (5m)",
+                "value": 300000,
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Latency (ms)",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "yPos": 3,
+        "xPos": 6
+      },
+      {
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "# \ud83d\udce5 Ingestion Health (Inputs)\nMetrics for audio acquisition (e.g., Icecast, API polling).",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: Ingestion Health"
+        },
+        "width": 12,
+        "yPos": 7
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Ingested Audio Chunks (Rate)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "metric.label.source_type"
+                      ],
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/ingestion_chunk_ingested_${environment}\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 8,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Audio Download Failures (Rate)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "metric.label.source_type"
+                      ],
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/ingestion_call_download_failed_${environment}\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 8
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Active Feed Leases (Total & p99/worker)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "p99 / worker",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch gce_instance | metric 'logging.googleapis.com/user/ingestion_active_feed_count_${environment}' | align delta(60s) | group_by [], percentile(val(), 99)"
+                }
+              },
+              {
+                "legendTemplate": "Total Active Leases",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch gce_instance | metric 'logging.googleapis.com/user/ingestion_active_feed_count_${environment}' | align delta(60s) | group_by [], sum(val())"
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 12,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Ingestion MIG CPU Utilization (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p50"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p95"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/cpu/utilization\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p99"
+              }
+            ],
+            "yAxis": {
+              "label": "CPU %",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 12
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Ingestion MIG Disk I/O (Fleet Total)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/disk/read_bytes_count\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "Read"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/disk/write_bytes_count\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "Write"
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 16,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Ingestion MIG Disk I/O (p99 Peak Node)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/disk/read_bytes_count\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "Read"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"compute.googleapis.com/instance/disk/write_bytes_count\" resource.type=\"gce_instance\" metadata.system_labels.name=starts_with(\"ingestion-collector-${environment}\")"
+                  }
+                },
+                "legendTemplate": "Write"
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 16,
+        "xPos": 6
+      },
+      {
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "# \u2699\ufe0f Pipeline Phases\nMetrics for asynchronous background workers (Transcription, Evaluation, Dataflow).",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: Pipeline Phases"
+        },
+        "width": 12,
+        "yPos": 20
+      },
+      {
+        "height": 4,
+        "width": 12,
+        "yPos": 21,
+        "xPos": 0,
+        "widget": {
+          "title": "Pipeline Stage Throughput (Rate)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "1. Ingested Audio (continuous-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"continuous-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "2. Segmented Chunks - Claims (segmented-audio-claims)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"segmented-audio-claims-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "2b. Segmented Chunks - Bypass (segmented-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"segmented-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "3. Normalized Audio (normalized-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"normalized-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "4. Transcribed Audio (transcribed-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"transcribed-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "5. Evaluated Audio (evaluated-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"evaluated-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "6. Triggered Notifications (sent-messages)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/sent_message_count\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=\"alert-notification-subscription-${environment}\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Throughput (messages/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 12,
+        "yPos": 25,
+        "xPos": 0,
+        "widget": {
+          "title": "Pipeline Stage Throughput (Total per Minute)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "1. Ingested Audio (continuous-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"continuous-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "2. Segmented Chunks - Claims (segmented-audio-claims)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"segmented-audio-claims-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "2b. Segmented Chunks - Bypass (segmented-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"segmented-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "3. Normalized Audio (normalized-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"normalized-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "4. Transcribed Audio (transcribed-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"transcribed-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "5. Evaluated Audio (evaluated-audio)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"evaluated-audio-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "6. Triggered Notifications (sent-messages)",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_SUM"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/sent_message_count\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=\"alert-notification-subscription-${environment}\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Total Messages / Minute",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Pub/Sub Backlogs (Unacked Messages)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.subscription_id"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=one_of(\"continuous-audio-sub-${environment}\", \"normalization-subscription-${environment}\", \"normalization-segmented-bypass-subscription-${environment}\", \"transcription-subscription-${environment}\", \"evaluation-subscription-${environment}\", \"alert-notification-subscription-${environment}\")"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 29,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Pub/Sub Staleness (Oldest Unacked)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.subscription_id"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=one_of(\"continuous-audio-sub-${environment}\", \"normalization-subscription-${environment}\", \"normalization-segmented-bypass-subscription-${environment}\", \"transcription-subscription-${environment}\", \"evaluation-subscription-${environment}\", \"alert-notification-subscription-${environment}\")"
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Seconds",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 29
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run Pipeline Workers CPU (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/cpu/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p50 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/cpu/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p95 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/cpu/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p99 - $${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": {
+              "label": "CPU Util",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "xPos": 0,
+        "yPos": 33
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run Pipeline Workers Memory (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/memory/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p50 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/memory/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p95 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/memory/utilizations\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p99 - $${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": {
+              "label": "Memory Util",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "yPos": 33,
+        "xPos": 6
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run Pipeline Workers Latency (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p50 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p95 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p99 - $${resource.labels.service_name}"
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 0,
+        "yPos": 37
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "xPos": 6,
+        "yPos": 37,
+        "widget": {
+          "title": "Cloud Run Pipeline Workers Active Instances",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/instance_count\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"evaluation-pipeline-${environment}\", \"transcription-service-${environment}\", \"notification-pipeline-${environment}\", \"echo-audio-ingestion-${environment}\", \"normalization-service-${environment}\")"
+                  }
+                },
+                "legendTemplate": "$${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": {
+              "label": "Active Instances",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Dataflow Worker Processing Delay (System Lag)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.job_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"dataflow.googleapis.com/job/system_lag\" resource.type=\"dataflow_job\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 41,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Dataflow Backlog Age (Watermark)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.job_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"dataflow.googleapis.com/job/data_watermark_age\" resource.type=\"dataflow_job\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 41
+      },
+      {
+        "height": 1,
+        "width": 12,
+        "yPos": 70,
+        "xPos": 0,
+        "widget": {
+          "text": {
+            "content": "# \ud83d\uded1 Dead Letter Queues (DLQ)\nMetrics monitoring processing failures and message drop-offs at each pipeline stage.",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: Dead Letter Queues (DLQ)"
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 71,
+        "xPos": 0,
+        "widget": {
+          "title": "DLQ Publish Rates (Failures/sec)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Normalized Audio DLQ",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"normalized-audio-dlq-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Transcribed Audio DLQ",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"transcribed-audio-dlq-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Evaluated Audio DLQ / Notification Failures",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" resource.type=\"pubsub_topic\" resource.labels.topic_id=\"evaluated-audio-dead-letter-${environment}\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Publish Rate (messages/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 71,
+        "xPos": 6,
+        "widget": {
+          "title": "DLQ Backlog (Undelivered Messages)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Normalized Audio DLQ Sub",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=\"normalized-audio-dlq-subscription-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Transcribed Audio DLQ Sub",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=\"transcribed-audio-dlq-subscription-${environment}\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Evaluated Audio DLQ Sub",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" resource.type=\"pubsub_subscription\" resource.labels.subscription_id=\"evaluated-audio-dead-letter-subscription-${environment}\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Backlog (messages)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "# \ud83d\uddc4\ufe0f Database Health\nMetrics for AlloyDB cluster resource saturation and active query connections.",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: Database Health"
+        },
+        "width": 12,
+        "yPos": 75
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "AlloyDB Instance CPU Utilization",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_MAX",
+                      "groupByFields": [
+                        "resource.label.instance_id"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "resource.type=\"alloydb.googleapis.com/Instance\" AND resource.labels.cluster_id=\"radio-transcription-${environment}\" AND metric.type=\"alloydb.googleapis.com/instance/cpu/average_utilization\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "CPU %",
+              "scale": "LINEAR"
+            }
+          }
+        },
+        "width": 6,
+        "yPos": 76,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "AlloyDB Active Connection Count",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.instance_id"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "resource.type=\"alloydb.googleapis.com/Instance\" AND resource.labels.cluster_id=\"radio-transcription-${environment}\" AND metric.type=\"alloydb.googleapis.com/instance/postgres/total_connections\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 76
+      },
+      {
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "# \ud83c\udf10 API & UI Health\nMetrics for synchronous API requests and Gateway traffic (User Facing).",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: API & UI Health"
+        },
+        "width": 12,
+        "yPos": 80
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "API Gateway Total Requests",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.gateway_id"
+                      ],
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"apigateway.googleapis.com/proxy/request_count\" resource.type=\"apigateway.googleapis.com/Gateway\""
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 81,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "xPos": 6,
+        "yPos": 81,
+        "widget": {
+          "title": "Cloud Run API Services Active Instances",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/container/instance_count\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                },
+                "legendTemplate": "$${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": {
+              "label": "Active Instances",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run API Services Latency (p50, p95, p99)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_50",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_50"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p50 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p95 - $${resource.labels.service_name}"
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_99",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_PERCENTILE_99"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_latencies\" resource.type=\"cloud_run_revision\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                },
+                "legendTemplate": "p99 - $${resource.labels.service_name}"
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "yPos": 85,
+        "xPos": 0
+      },
+      {
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run API Services Error Rates (4xx & 5xx)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_count\" resource.type=\"cloud_run_revision\" metric.labels.response_code_class=\"4xx\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                }
+              },
+              {
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": [
+                        "resource.label.service_name"
+                      ],
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"run.googleapis.com/request_count\" resource.type=\"cloud_run_revision\" metric.labels.response_code_class=\"5xx\" resource.labels.service_name=one_of(\"audio-segments-api-${environment}\", \"radio-transcription-api-${environment}\", \"rules-management-${environment}\", \"feed-store-${environment}\")"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "width": 6,
+        "xPos": 6,
+        "yPos": 85
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 45,
+        "xPos": 0,
+        "widget": {
+          "title": "Pipeline Phase: Segmentation (Internal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch dataflow_job | { metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && metric.metric_name == 'segmentation_success') | group_by [], sum(val()) | align rate(60s) | every 60s ; metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && (metric.metric_name == 'segmentation_success' || metric.metric_name == 'segmentation_error')) | group_by [], sum(val()) | align rate(60s) | every 60s } | ratio"
+                }
+              },
+              {
+                "legendTemplate": "Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch dataflow_job | { metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && metric.metric_name == 'segmentation_error') | group_by [], sum(val()) | align rate(60s) | every 60s ; metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && (metric.metric_name == 'segmentation_success' || metric.metric_name == 'segmentation_error')) | group_by [], sum(val()) | align rate(60s) | every 60s } | ratio"
+                }
+              },
+              {
+                "legendTemplate": "Started (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesQueryLanguage": "fetch dataflow_job | metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && metric.metric_name == 'segmentation_start') | group_by [], sum(val()) | align rate(60s) | every 60s"
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Started (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 45,
+        "xPos": 6,
+        "widget": {
+          "title": "Pipeline Phase: Normalization (Internal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"normalization\" metric.labels.status=\"success\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"normalization\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"normalization\" metric.labels.status=\"error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"normalization\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Started (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"normalization\" metric.labels.status=\"start\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Started (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 49,
+        "xPos": 0,
+        "widget": {
+          "title": "Pipeline Phase: Transcription (Internal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"success\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Skipped Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"skipped\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Started (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription\" metric.labels.status=\"start\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Started (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 49,
+        "xPos": 6,
+        "widget": {
+          "title": "Pipeline Phase: Evaluation (Internal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"success\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Skipped Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"skipped\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Started (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"evaluation\" metric.labels.status=\"start\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Started (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 53,
+        "xPos": 0,
+        "widget": {
+          "title": "Pipeline Phase: Notification (Internal)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"success\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Skipped Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"skipped\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"start\"",
+                      "aggregation": {
+                        "alignmentPeriod": "60s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Started (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"notification\" metric.labels.status=\"start\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Started (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 1,
+        "width": 12,
+        "yPos": 57,
+        "xPos": 0,
+        "widget": {
+          "text": {
+            "content": "# \ud83c\udfa4 Speech-to-Text Dependency Health\nMetrics for Speech-to-Text (STT) transcriber outcomes, including success rates, empty transcription rates, and API call volumes.",
+            "format": "MARKDOWN",
+            "style": {}
+          },
+          "title": "Section: Speech-to-Text Dependency Health"
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 58,
+        "xPos": 0,
+        "widget": {
+          "title": "Transcriber STT Outcomes",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Success Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"success\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Empty Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"empty\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Unintelligible Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"unintelligible\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Partial Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"partial\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Permanent Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"permanent_error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Transient Error Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"transient_error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Policy Blocked Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"policy_blocked\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Fallback Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"fallback\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Attempts (Y2)",
+                "plotType": "LINE",
+                "targetAxis": "Y2",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            },
+            "y2Axis": {
+              "label": "Attempts (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 12,
+        "yPos": 66,
+        "xPos": 0,
+        "widget": {
+          "title": "Transcription STT Volume (Rate)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Attempts",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Success",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"success\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Empty",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"empty\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Unintelligible",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"unintelligible\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Permanent Error",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"permanent_error\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Transient Error",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"transient_error\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Policy Blocked",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"policy_blocked\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Partial",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"partial\""
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Fallback",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "perSeriesAligner": "ALIGN_RATE"
+                    },
+                    "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"fallback\""
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Throughput (events/sec)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 0,
+        "widget": {
+          "title": "Segmentation Error Rate (Errors / Processed)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch dataflow_job | { metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && metric.metric_name == 'segmentation_error') | group_by [], sum(val()) | align rate(300s) | every 300s ; metric 'dataflow.googleapis.com/job/user_counter' | filter (resource.job_name == 'segmentation-pipeline-${environment}' && (metric.metric_name == 'segmentation_success' || metric.metric_name == 'segmentation_error')) | group_by [], sum(val()) | align rate(300s) | every 300s } | ratio"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 2,
+        "widget": {
+          "title": "Normalization Error Rate (Errors / Started)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/pipeline_stage_count' | group_by [], sum(if(metric.stage == 'normalization' && metric.status == 'error', val(), 0)) / sum(if(metric.stage == 'normalization' && metric.status == 'start', val(), 1))"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 4,
+        "widget": {
+          "title": "Transcription Pipeline Error Rate (Errors / Started)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/pipeline_stage_count' | group_by [], sum(if(metric.stage == 'transcription' && metric.status == 'error', val(), 0)) / sum(if(metric.stage == 'transcription' && metric.status == 'start', val(), 1))"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 6,
+        "widget": {
+          "title": "Transcriber Error Rate (Errors / Attempts)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/pipeline_stage_count' | group_by [], sum(if(metric.stage == 'transcription_status' && (metric.status == 'permanent_error' || metric.status == 'transient_error' || metric.status == 'policy_blocked'), val(), 0)) / sum(if(metric.stage == 'transcription_status' && metric.status == 'attempts', val(), 1))"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 8,
+        "widget": {
+          "title": "Evaluation Error Rate (Errors / Started)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/pipeline_stage_count' | group_by [], sum(if(metric.stage == 'evaluation' && metric.status == 'error', val(), 0)) / sum(if(metric.stage == 'evaluation' && metric.status == 'start', val(), 1))"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 2,
+        "yPos": 1,
+        "xPos": 10,
+        "widget": {
+          "title": "Notification Error Rate (Errors / Started)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | metric 'logging.googleapis.com/user/pipeline_stage_count' | group_by [], sum(if(metric.stage == 'notification' && metric.status == 'error', val(), 0)) / sum(if(metric.stage == 'notification' && metric.status == 'start', val(), 1))"
+            }
+          }
+        }
+      },
+      {
+        "height": 4,
+        "width": 6,
+        "yPos": 58,
+        "xPos": 6,
+        "widget": {
+          "title": "Transcriber STT Error Breakdown",
+          "xyChart": {
+            "dataSets": [
+              {
+                "legendTemplate": "Permanent Error",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"permanent_error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Transient Error",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"transient_error\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Policy Blocked",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"policy_blocked\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "legendTemplate": "Fallback Rate",
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "timeSeriesQuery": {
+                  "timeSeriesFilterRatio": {
+                    "numerator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"fallback\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    },
+                    "denominator": {
+                      "filter": "metric.type=\"logging.googleapis.com/user/pipeline_stage_count\" resource.type=\"cloud_run_revision\" metric.labels.stage=\"transcription_status\" metric.labels.status=\"attempts\"",
+                      "aggregation": {
+                        "alignmentPeriod": "300s",
+                        "crossSeriesReducer": "REDUCE_SUM",
+                        "perSeriesAligner": "ALIGN_RATE"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "yAxis": {
+              "label": "Rate",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 62,
+        "xPos": 0,
+        "widget": {
+          "title": "STT Success Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'success') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            },
+            "thresholds": [
+              {
+                "color": "YELLOW",
+                "direction": "BELOW",
+                "label": "Warning (<100%)",
+                "value": 1
+              },
+              {
+                "color": "RED",
+                "direction": "BELOW",
+                "label": "Critical (<90%)",
+                "value": 0.9
+              }
+            ]
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 62,
+        "xPos": 9,
+        "widget": {
+          "title": "STT Partial Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'partial') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 62,
+        "xPos": 3,
+        "widget": {
+          "title": "STT Empty Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'empty') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 62,
+        "xPos": 6,
+        "widget": {
+          "title": "STT Unintelligible Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'unintelligible') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            }
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 64,
+        "xPos": 0,
+        "widget": {
+          "title": "STT Permanent Error Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'permanent_error') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            },
+            "thresholds": [
+              {
+                "label": "Warning (>0%)",
+                "value": 0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "Critical (>5%)",
+                "value": 0.05,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 64,
+        "xPos": 3,
+        "widget": {
+          "title": "STT Transient Error Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'transient_error') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            },
+            "thresholds": [
+              {
+                "label": "Warning (>0%)",
+                "value": 0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "Critical (>5%)",
+                "value": 0.05,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 64,
+        "xPos": 6,
+        "widget": {
+          "title": "STT Policy Blocked Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'policy_blocked') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            },
+            "thresholds": [
+              {
+                "label": "Warning (>0%)",
+                "value": 0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "Critical (>5%)",
+                "value": 0.05,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "height": 2,
+        "width": 3,
+        "yPos": 64,
+        "xPos": 9,
+        "widget": {
+          "title": "STT Fallback Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesQueryLanguage": "fetch cloud_run_revision | { metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'fallback') | group_by [], sum(val()) | align rate(1800s) | every 1800s ; metric 'logging.googleapis.com/user/pipeline_stage_count' | filter (metric.stage == 'transcription_status' && metric.status == 'attempts') | group_by [], sum(val()) | align rate(1800s) | every 1800s } | ratio"
+            },
+            "thresholds": [
+              {
+                "label": "Warning (>0%)",
+                "value": 0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "label": "Critical (>5%)",
+                "value": 0.05,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
