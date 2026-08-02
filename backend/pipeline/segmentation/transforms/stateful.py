@@ -1983,8 +1983,14 @@ PUBSUB_ORDER_GAP_RESOLUTION_SECONDS = Metrics.distribution(
     "PubSubOrderRestorerFn", "pubsub_order_gap_resolution_seconds"
 )
 
-SKIPPED_SEQS_SPEC = BagStateSpec("skipped_seqs_bag", beam.coders.VarIntCoder())
-SKIPPED_SEQS_BAG = beam.DoFn.StateParam(SKIPPED_SEQS_SPEC)
+# Held as a single list rather than a BagState. Nothing ever appends to this in
+# isolation: every path reads it whole, recomputes, and rewrites, so a bag would
+# mean clear() plus up to MAX_TRACKED_SKIPPED_SEQS individual add() calls per
+# fallback drain. One read and one write of ~1.5KB is both cheaper and simpler.
+SKIPPED_SEQS_SPEC = ReadModifyWriteStateSpec(
+    "skipped_seqs", beam.coders.FastPrimitivesCoder()
+)
+SKIPPED_SEQS_STATE = beam.DoFn.StateParam(SKIPPED_SEQS_SPEC)
 
 FALLBACK_DRAIN_SPEC = TimerSpec(
     "fallback_drain_timer", beam.TimeDomain.REAL_TIME
@@ -2058,35 +2064,34 @@ class PubSubOrderRestorerFn(beam.DoFn):
         self,
         *,
         newly_skipped: range,
-        skipped_seqs_bag: BagRuntimeState,
+        skipped_seqs_state: ReadModifyWriteRuntimeState,
         key: str,
     ) -> None:
         """Records skipped sequence numbers for late-arrival emission, bounding how many are retained.
 
-        An entry leaves the bag only when its segment finally arrives, so a
-        segment that never arrives would pin its entry for the life of the job.
-        Once the cap is exceeded the lowest numbers are abandoned first: they are
-        the oldest, and a segment that has not arrived after this many later ones
+        An entry is removed only when its segment finally arrives, so a segment
+        that never arrives would pin its entry for the life of the job. Once the
+        cap is exceeded the lowest numbers are abandoned first: they are the
+        oldest, and a segment that has not arrived after this many later ones
         have is not going to.
 
         Args:
             newly_skipped: Sequence numbers passed over by this fallback drain.
-            skipped_seqs_bag: Bag of numbers whose late arrival should still publish.
+            skipped_seqs_state: Numbers whose late arrival should still publish.
             key: feed_id#session_id, for diagnostics.
         """
         if not newly_skipped:
             return
 
-        retained = sorted(set(skipped_seqs_bag.read()) | set(newly_skipped))
+        existing = skipped_seqs_state.read() or []
+        retained = sorted(set(existing) | set(newly_skipped))
         overflow = len(retained) - trans_constants.MAX_TRACKED_SKIPPED_SEQS
         abandoned: list[int] = []
         if overflow > 0:
             abandoned = retained[:overflow]
             retained = retained[overflow:]
 
-        skipped_seqs_bag.clear()
-        for seq in retained:
-            skipped_seqs_bag.add(seq)
+        skipped_seqs_state.write(retained)
 
         if abandoned:
             PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED.inc(len(abandoned))
@@ -2217,9 +2222,9 @@ class PubSubOrderRestorerFn(beam.DoFn):
         feed_id: str,
         item_dict: dict[str, Any],
         expected_seq: int,
-        skipped_seqs_bag: BagRuntimeState,
+        skipped_seqs_state: ReadModifyWriteRuntimeState,
     ) -> Iterator[PubsubMessage]:
-        skipped_seqs = list(skipped_seqs_bag.read())
+        skipped_seqs = skipped_seqs_state.read() or []
         if seq_num in skipped_seqs:
             if not item_dict.get("is_tombstone", False):
                 yield PubsubMessage(
@@ -2227,10 +2232,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
                     attributes=item_dict["attributes"],
                     ordering_key=item_dict["ordering_key"],
                 )
-            skipped_seqs_bag.clear()
-            for s in skipped_seqs:
-                if s != seq_num:
-                    skipped_seqs_bag.add(s)
+            skipped_seqs_state.write([s for s in skipped_seqs if s != seq_num])
             PUBSUB_ORDER_LATE_ARRIVALS_EMITTED.inc()
             logger.info(
                 "[PubSub Order] Emitted late segment seq=%d for key=%s (skipped by fallback timer earlier)",
@@ -2252,7 +2254,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         element: tuple[str, tuple[int, dict[str, Any]]],
         expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
         buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
-        skipped_seqs_bag: BagRuntimeState = SKIPPED_SEQS_BAG,  # type: ignore
+        skipped_seqs_state: ReadModifyWriteRuntimeState = SKIPPED_SEQS_STATE,  # type: ignore
         fallback_drain_timer: RuntimeTimer = FALLBACK_DRAIN_TIMER,  # type: ignore
         stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
         stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
@@ -2288,7 +2290,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 _feed_id,
                 item_dict,
                 expected_seq,
-                skipped_seqs_bag,
+                skipped_seqs_state,
             )
 
     @on_timer(PUB_STALL_PROBE_SPEC)
@@ -2356,7 +2358,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         key: str = beam.DoFn.KeyParam,  # type: ignore
         expected_seq_state: ReadModifyWriteRuntimeState = EXPECTED_PUB_SEQ_STATE,  # type: ignore
         buffer_state: BagRuntimeState = OUT_OF_ORDER_PUB_BAG,  # type: ignore
-        skipped_seqs_bag: BagRuntimeState = SKIPPED_SEQS_BAG,  # type: ignore
+        skipped_seqs_state: ReadModifyWriteRuntimeState = SKIPPED_SEQS_STATE,  # type: ignore
         fallback_drain_timer: RuntimeTimer = FALLBACK_DRAIN_TIMER,  # type: ignore
         stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
         stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
@@ -2364,7 +2366,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         """Force-drains buffered out-of-order segments if a missing sequence number is delayed past timeout_ms.
 
         Prevents permanent pipeline wedging while ensuring zero audio segments are dropped.
-        Skipped sequence numbers are recorded in skipped_seqs_bag so they emit if they arrive later.
+        Skipped sequence numbers are recorded in skipped_seqs_state so they emit if they arrive later.
         """
         buffered_items = list(buffer_state.read())
         if not buffered_items:
@@ -2379,7 +2381,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         # so that if they arrive late, they emit immediately rather than getting ignored.
         self._record_skipped_seqs(
             newly_skipped=range(expected_seq, min_buf_seq),
-            skipped_seqs_bag=skipped_seqs_bag,
+            skipped_seqs_state=skipped_seqs_state,
             key=key,
         )
 

@@ -5176,7 +5176,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5206,7 +5206,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (2, item2)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5235,7 +5235,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                     element=("feed-1#session-a", (2, item2)),
                     expected_seq_state=mock_seq_state,
                     buffer_state=fake_buf_state,
-                    skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                    skipped_seqs_state=_FakeValueState(),  # type: ignore
                     fallback_drain_timer=MagicMock(),
                     stall_since_state=_FakeValueState(),  # type: ignore
                     stall_probe_timer=MagicMock(),
@@ -5264,7 +5264,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, duplicate_item)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5297,7 +5297,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, item1)),
                 expected_seq_state=mock_seq_state,
                 buffer_state=mock_buf_state,
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5335,7 +5335,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-b", (1, item_b1)),
                 expected_seq_state=seq_state_b,
                 buffer_state=buf_state_b,
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5353,7 +5353,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         fn = PubSubOrderRestorerFn(timeout_ms=30_000)
         seq_state = _FakeValueState(2)  # Waiting on seq=2
         buf_state: Any = _FakeBagState()
-        skipped_state: Any = _FakeBagState()
+        skipped_state: Any = _FakeValueState()
         fallback_timer = MagicMock()
 
         item3 = {
@@ -5370,7 +5370,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 key="feed-1#session-a",
                 expected_seq_state=seq_state,  # type: ignore
                 buffer_state=buf_state,
-                skipped_seqs_bag=skipped_state,
+                skipped_seqs_state=skipped_state,
                 fallback_drain_timer=fallback_timer,
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5379,7 +5379,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self.assertEqual(len(res_fallback), 1)
         self.assertEqual(res_fallback[0].data, b"msg3")
         self.assertEqual(seq_state.read(), 4)
-        self.assertEqual(skipped_state._items, [2])
+        self.assertEqual(skipped_state.read(), [2])
 
         # 2. Later, delayed seq=2 arrives (seq_num=2 < expected_seq=4). It should emit out of order rather than be dropped!
         item2 = {
@@ -5393,7 +5393,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
                 element=("feed-1#session-a", (2, item2)),
                 expected_seq_state=seq_state,  # type: ignore
                 buffer_state=buf_state,
-                skipped_seqs_bag=skipped_state,
+                skipped_seqs_state=skipped_state,
                 fallback_drain_timer=fallback_timer,
                 stall_since_state=_FakeValueState(),  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5401,7 +5401,7 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         )
         self.assertEqual(len(res_late), 1)
         self.assertEqual(res_late[0].data, b"msg2")
-        self.assertEqual(skipped_state._items, [])
+        self.assertEqual(skipped_state.read(), [])
 
 
 class _FakeValueState:
@@ -5447,7 +5447,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 element=("feed-1#session-a", (2, self._item(2))),
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState(),  # type: ignore
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
@@ -5468,7 +5468,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 element=("feed-1#session-a", (2, self._item(2))),
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=MagicMock(),
@@ -5487,7 +5487,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, self._item(1))),
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
@@ -5509,7 +5509,7 @@ class PubSubStallProbeTest(unittest.TestCase):
                 element=("feed-1#session-a", (1, self._item(1))),
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState([(5, self._item(5))]),  # type: ignore
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,  # type: ignore
                 stall_probe_timer=timer,
@@ -5609,71 +5609,71 @@ class PubSubStallProbeTest(unittest.TestCase):
 class PubSubSkippedSeqRetentionTest(unittest.TestCase):
     """Covers the bound on skipped sequence numbers retained for late arrival.
 
-    Entries leave the bag only when their segment arrives, so a segment that
+    Entries are removed only when their segment arrives, so a segment that
     never arrives -- the case the fallback drain exists for -- would otherwise
     pin its entry for the life of the job.
     """
 
     def test_skipped_seqs_are_retained_for_late_arrival(self) -> None:
         fn = PubSubOrderRestorerFn()
-        bag = _FakeBagState()
+        state = _FakeValueState()
 
         fn._record_skipped_seqs(
             newly_skipped=range(3, 6),
-            skipped_seqs_bag=bag,  # type: ignore
+            skipped_seqs_state=state,  # type: ignore
             key="feed-1#session-a",
         )
 
-        self.assertEqual(sorted(bag.read()), [3, 4, 5])
+        self.assertEqual(sorted(state.read()), [3, 4, 5])
 
     def test_repeated_incidents_stay_within_the_cap(self) -> None:
         fn = PubSubOrderRestorerFn()
-        bag = _FakeBagState()
+        state = _FakeValueState()
         cap = trans_constants.MAX_TRACKED_SKIPPED_SEQS
 
         # Far more permanently-lost segments than the cap allows.
         for start in range(0, (cap * 3), 3):
             fn._record_skipped_seqs(
                 newly_skipped=range(start, start + 3),
-                skipped_seqs_bag=bag,  # type: ignore
+                skipped_seqs_state=state,  # type: ignore
                 key="feed-1#session-a",
             )
 
-        self.assertEqual(len(bag.read()), cap)
+        self.assertEqual(len(state.read()), cap)
 
     def test_overflow_abandons_oldest_and_counts_them(self) -> None:
         fn = PubSubOrderRestorerFn()
         cap = trans_constants.MAX_TRACKED_SKIPPED_SEQS
-        bag = _FakeBagState(list(range(cap)))
+        state = _FakeValueState(list(range(cap)))
 
         with patch.object(
             stateful_module, "PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED"
         ) as mock_abandoned:
             fn._record_skipped_seqs(
                 newly_skipped=range(cap, cap + 5),
-                skipped_seqs_bag=bag,  # type: ignore
+                skipped_seqs_state=state,  # type: ignore
                 key="feed-1#session-a",
             )
 
-        retained = sorted(bag.read())
+        retained = sorted(state.read())
         self.assertEqual(len(retained), cap)
         # Lowest five evicted; the newest are the ones still plausibly in flight.
         self.assertEqual(retained[0], 5)
         self.assertEqual(retained[-1], cap + 4)
         mock_abandoned.inc.assert_called_once_with(5)
 
-    def test_no_skipped_seqs_leaves_the_bag_untouched(self) -> None:
+    def test_no_skipped_seqs_leaves_the_state_untouched(self) -> None:
         """A fallback drain with no gap to skip must not rewrite state."""
         fn = PubSubOrderRestorerFn()
-        bag = _FakeBagState([7])
+        state = _FakeValueState([7])
 
         fn._record_skipped_seqs(
             newly_skipped=range(5, 5),
-            skipped_seqs_bag=bag,  # type: ignore
+            skipped_seqs_state=state,  # type: ignore
             key="feed-1#session-a",
         )
 
-        self.assertEqual(bag.read(), [7])
+        self.assertEqual(state.read(), [7])
 
 
 class PubSubGapResolutionMetricTest(unittest.TestCase):
@@ -5702,7 +5702,7 @@ class PubSubGapResolutionMetricTest(unittest.TestCase):
                 element=("feed-1#session-a", (seq, self._item(seq))),
                 expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                 buffer_state=_FakeBagState(buffered),  # type: ignore
-                skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
                 fallback_drain_timer=MagicMock(),
                 stall_since_state=stall_since,
                 stall_probe_timer=MagicMock(),
@@ -5754,7 +5754,7 @@ class PubSubGapResolutionMetricTest(unittest.TestCase):
                     key="feed-1#session-a",
                     expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
                     buffer_state=_FakeBagState([(3, self._item(3))]),  # type: ignore
-                    skipped_seqs_bag=_FakeBagState(),  # type: ignore
+                    skipped_seqs_state=_FakeValueState(),  # type: ignore
                     fallback_drain_timer=MagicMock(),
                     stall_since_state=_FakeValueState(1_000_000),  # type: ignore
                     stall_probe_timer=MagicMock(),
