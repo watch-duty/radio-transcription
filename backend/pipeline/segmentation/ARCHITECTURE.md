@@ -70,7 +70,7 @@ To resolve GCP production Dataflow worker CPU imbalances and duration clamps (`b
 
 > **Why the ordering machinery exists — read before removing it.**
 >
-> Sections B and C below (`TagSequenceNumberFn`, `PubSubOrderRestorerFn`, their state specs and timers) exist **solely** to preserve per-feed publish ordering. That is an **external requirement from the customer**, not an engineering preference: the UI and downstream consumers of this pipeline's output assume ordered Pub/Sub delivery.
+> Sections B and C below (`TagSequenceNumberFn`, `PubSubOrderRestorerFn`, their state specs and timers) exist **solely** to preserve per-feed publish ordering. That is a **product requirement**, not an engineering preference: the Watch Duty UI and downstream consumers of this pipeline's output assume ordered Pub/Sub delivery.
 >
 > Only section A (key scattering) addresses the CPU-imbalance problem. Ordering was previously an emergent side-effect of Beam fusing Stage 3 onto Stage 2's key — breaking that fusion is what makes the restorer necessary.
 >
