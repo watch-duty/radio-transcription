@@ -47,7 +47,7 @@
     {
       "name": "pubsub_fallback_drain_timeout_ms",
       "label": "Pub/Sub Fallback Drain Timeout (MS)",
-      "helpText": "Milliseconds to wait for a missing segment's upload before publishing later segments ahead of it, rather than blocking the feed indefinitely. Governed by Stage 3 upload skew, not by chunk cadence, so tune it independently of out_of_order_timeout_ms using the pubsub_order_gap_resolution_seconds metric. Default: 30000ms.",
+      "helpText": "Milliseconds to wait for a missing segment's upload before publishing later segments ahead of it, rather than blocking the feed indefinitely. Governed by Stage 3 upload skew, not by chunk cadence, so tune it independently of out_of_order_timeout_ms using the pubsub_order_gap_resolution_seconds metric. Default: 180000ms.",
       "isOptional": true
     },
     {
