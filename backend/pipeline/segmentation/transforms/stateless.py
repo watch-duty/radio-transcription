@@ -27,6 +27,7 @@ segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
 import concurrent.futures
 import datetime
 import io
+import logging
 import time
 import urllib.parse
 from collections.abc import Iterator
@@ -322,7 +323,7 @@ class UploadRawSegmentFn(beam.DoFn):
     def _download_contributing_chunks(
         self,
         request: FlushRequest,
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
         parent_context: otel_context.Context,
     ) -> dict[str, tuple[np.ndarray, int, int]]:
         """Downloads and decodes all contributing chunks in parallel."""
@@ -410,7 +411,7 @@ class UploadRawSegmentFn(beam.DoFn):
         self,
         request: FlushRequest,
         decoded_chunks: dict[str, tuple[np.ndarray, int, int]],
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
     ) -> bytes:
         """Slices, concatenates, and converts the entire continuous segment time range to FLAC bytes."""
         stitch_start = time.perf_counter_ns()
@@ -459,7 +460,7 @@ class UploadRawSegmentFn(beam.DoFn):
 
         stitch_duration_ms = (
             time.perf_counter_ns() - stitch_start
-        ) // 1_000_000
+        ) // NANOS_PER_MS
         self.stitch_latency_ms.update(int(stitch_duration_ms))
         return flac_bytes
 
@@ -468,7 +469,7 @@ class UploadRawSegmentFn(beam.DoFn):
         request: FlushRequest,
         flac_bytes: bytes,
         start_datetime: datetime.datetime,
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
     ) -> str:
         """Uploads the finalized FLAC audio bytes to GCS staging bucket."""
         gcs_client = self.gcs_client
@@ -599,9 +600,8 @@ class UploadRawSegmentFn(beam.DoFn):
         trace_attrs: dict[str, str] = {}
         if request.traceparent:
             trace_attrs["traceparent"] = request.traceparent
-        baggage_val = getattr(request, "baggage", None)
-        if baggage_val is not None:
-            trace_attrs["baggage"] = str(baggage_val)
+        if request.baggage is not None:
+            trace_attrs["baggage"] = str(request.baggage)
 
         try:
             with with_tracer_context(
