@@ -25,12 +25,16 @@ GIL contention, the pipeline uses a decoupled 4-stage hybrid architecture:
    compressing the result to FLAC. To prevent single-worker vCPU saturation
    on busy feeds, elements exiting Stage 2 are re-keyed with a randomized
    UUID suffix (`feed_id#session_id#uuid`) and passed through
-   `beam.Reshuffle()`, scattering Stage 3 encoding uniformly across 100% of
-   available Dataflow worker vCPUs.
+   `beam.Reshuffle()`, spreading Stage 3 encoding across the Dataflow worker
+   fleet instead of pinning it to one vCPU per feed.
 3. **Stage 4 (Stateful - PubSubOrderRestorerFn)**: Because parallel Stage 3
    execution causes segments to finish out of order, `PubSubOrderRestorerFn`
-   buffers out-of-order completions per `feed_id#session_id` and restores
-   strict chronological delivery before publishing to Pub/Sub.
+   buffers out-of-order completions per `feed_id#session_id` and restores the
+   order they were sequenced in before publishing to Pub/Sub. Ordering is
+   best-effort with a bounded delay, not a guarantee: sequence numbers reflect
+   arrival order at `TagSequenceNumberFn` rather than audio timestamps, and a
+   fallback timer publishes out of order when a segment is late. See
+   ARCHITECTURE.md section 5C.
 """
 
 import concurrent.futures
