@@ -13,8 +13,11 @@ graph TD
     A[Pub/Sub: Audio Chunks] -->|ReadFromPubSub| B[ParseAndKeyFn]
     B -->|Keyed by Feed ID| C[OrderedStitchAudioFn]
     C -->|Stateful Sequence / Buffer| D[StitcherEngine / StateMachine]
-    D -->|Emits PCM Buffers| E[UploadRawSegmentFn]
-    E -->|Uploads FLAC to GCS| F[Pub/Sub: Structured Claim-Check]
+    D -->|Emits PCM Buffers| E[TagSequenceNumberFn]
+    E -->|Keyed by feed_id#session_id| F[RandomizeKeyForStage3 + Reshuffle]
+    F -->|Scattered UUID Keys| G[UploadRawSegmentFn]
+    G -->|Parallel GCS FLAC Upload| H[PubSubOrderRestorerFn]
+    H -->|Keyed by feed_id#session_id| I[WriteToPubSub]
 ```
 
 ---
@@ -58,3 +61,25 @@ A core design principle of this module is **State Machine Decoupling**.
 All voice activity evaluation, float-arithmetic gap tolerance checks, and `AudioStitchingStateMachine` transitions live entirely inside `StitcherEngine`—a completely stateless, pure-Python execution domain. 
 
 By completely decoupling our audio stitching logic from Apache Beam's `StateSpec` and `TimerSpec` APIs, we ensure total pickling and serialization safety across Python worker processes while maintaining an exceptionally fast, highly targeted unit test suite (`test_transforms.py` and `test_stitcher_state.py`).
+
+---
+
+## 5. Parallel Stage 3 Key Scattering & Per-Session Order Restoration
+
+To resolve GCP production Dataflow worker CPU imbalances and duration clamps (`bundle_clamped_duration_limit`), the post-stitching pipeline implements a decoupled parallel execution and order restoration topology:
+
+### A. Stage 3 Key Scattering (`RandomizeKeyForStage3` + `beam.Reshuffle()`)
+Physical FLAC audio encoding and GCS upload (`UploadRawSegmentFn`) is stateless but CPU/IO intensive. If keyed strictly by `feed_id`, a single worker vCPU must sequentially encode all segments for active feeds, causing 99%+ single-core CPU saturation while other workers sit idle.
+* **Mechanism**: Elements exiting Stage 2 are re-keyed with a randomized UUID suffix (`f"{feed_id}#{session_id}#{uuid.uuid4().hex}"`) and passed through `beam.Reshuffle()`.
+* **Impact**: Windmill redistributes Stage 3 tasks uniformly across 100% of available worker vCPUs across the fleet, eliminating single-worker hotspots and duration clamps.
+
+### B. Per-Session Monotonic Sequencing (`TagSequenceNumberFn`)
+Immediately before key scattering, `TagSequenceNumberFn` (keyed by `feed_id#session_id`) assigns a strictly monotonic sequence number (`1, 2, 3...`) to each segment emitted by Stage 2 while elements are still in sequential order. Keying by `feed_id#session_id` isolates sequence counters per collector lease handover so collector reconnects do not cause sequence jumps.
+
+### C. Stage 4 Per-Session Chronological Restorer (`PubSubOrderRestorerFn`)
+Parallel Stage 3 execution causes segments to finish out of order. Before publishing downstream to Pub/Sub, `PubSubOrderRestorerFn` (keyed by `feed_id#session_id`) restores strict chronological order per session:
+* **Normal Chronological Delivery**: Emits contiguous sequence numbers in order and drains buffered items, while setting `ordering_key = feed_id` on the output `PubsubMessage` for downstream Pub/Sub consumers.
+* **Tunable Fallback Recovery Timer (`FALLBACK_DRAIN_TIMER`)**: Controlled by `--pubsub-fallback-drain-timeout-ms` (default: 180,000ms / 3 minutes). If a missing sequence number is delayed past the timeout, the timer force-drains buffered items out-of-order to prevent feed wedging, while recording skipped numbers in atomic state (`SKIPPED_SEQS_STATE`).
+* **Zero Audio Segment Loss (`SKIPPED_SEQS_STATE`)**: If a skipped sequence number arrives late after the fallback timer has fired, `PubSubOrderRestorerFn` checks `SKIPPED_SEQS_STATE`. Recognizing it as a late arrival rather than a duplicate retry, it publishes the late segment immediately.
+* **Deferred Session Key GC**: Because deployment updates use drain-and-relaunch (which starts with empty state on every release) and continuous Icecast feeds (`bcfy_feeds`) create only ~150–400 new session keys per day, dead session key accumulation is negligible (~1–2 MB between releases). Explicit timer-based key cleanup is deferred to avoid data loss on long disaster recovery backfills (observed max lag: 13 hours).
+
