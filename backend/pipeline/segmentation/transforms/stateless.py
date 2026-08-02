@@ -216,7 +216,8 @@ class ParseAndKeyFn(beam.DoFn):
 
                 if freshness_reference_ms is not None:
                     freshness_ms = (
-                        int(time.time() * 1000) - freshness_reference_ms
+                        int(time.time() * MS_PER_SECOND)
+                        - freshness_reference_ms
                     )
                     self.data_freshness_ms.update(freshness_ms)
                 metadata = ChunkMetadata(
@@ -401,7 +402,7 @@ class UploadRawSegmentFn(beam.DoFn):
 
         download_duration_ms = (
             time.perf_counter_ns() - download_start
-        ) // 1_000_000
+        ) // NANOS_PER_MS
         self.download_latency_ms.update(int(download_duration_ms))
         return decoded_chunks
 
@@ -424,7 +425,7 @@ class UploadRawSegmentFn(beam.DoFn):
         stitched_segments = []
         for chunk in sorted_chunks:
             samples, sr, chunk_start_ms = decoded_chunks[chunk.gcs_uri]
-            chunk_duration_ms = int(len(samples) / sr * 1000)
+            chunk_duration_ms = int(len(samples) / sr * MS_PER_SECOND)
             chunk_end_ms = chunk_start_ms + chunk_duration_ms
 
             # Calculate overlap between this chunk and the entire segment time range
@@ -433,10 +434,10 @@ class UploadRawSegmentFn(beam.DoFn):
 
             if overlap_start < overlap_end:
                 rel_start_samples = int(
-                    (overlap_start - chunk_start_ms) * (sr / 1000)
+                    (overlap_start - chunk_start_ms) * (sr / MS_PER_SECOND)
                 )
                 rel_end_samples = int(
-                    (overlap_end - chunk_start_ms) * (sr / 1000)
+                    (overlap_end - chunk_start_ms) * (sr / MS_PER_SECOND)
                 )
                 stitched_segments.append(
                     samples[rel_start_samples:rel_end_samples]
