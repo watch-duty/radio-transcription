@@ -11,10 +11,26 @@ and are highly optimized for parallel worker execution:
 
 ## Decoupled Stateful/Stateless Hybrid Architecture & Key Scattering
 
-To prevent Dataflow Windmill state locking, key-fusion CPU bottlenecks, and GIL contention, the pipeline uses a decoupled 4-stage hybrid architecture:
-1. **Stage 2 (Stateful - OrderedStitchAudioFn & TagSequenceNumberFn)**: Performs chronological sequencing, session FSM tracking, and VAD segment calculations. To keep persistent state sizes extremely small (<1 KB) and lock times under microseconds, **no raw audio bytes are stored in stateful persistent bag states**. `TagSequenceNumberFn` tags each segment with a strictly monotonic per-session sequence number (`1, 2, 3...`).
-2. **Stage 3 (Stateless - UploadRawSegmentFn with Reshuffle)**: Performs the heavy physical work of downloading contributing audio chunks from GCS, slicing them according to Stage 2's VAD segments, stitching them, and compressing the result to FLAC. To prevent single-worker vCPU saturation on busy feeds, elements exiting Stage 2 are re-keyed with a randomized UUID suffix (`feed_id#session_id#uuid`) and passed through `beam.Reshuffle()`, scattering Stage 3 encoding uniformly across 100% of available Dataflow worker vCPUs.
-3. **Stage 4 (Stateful - PubSubOrderRestorerFn)**: Because parallel Stage 3 execution causes segments to finish out of order, `PubSubOrderRestorerFn` buffers out-of-order completions per `feed_id#session_id` and restores strict chronological delivery before publishing to Pub/Sub.
+To prevent Dataflow Windmill state locking, key-fusion CPU bottlenecks, and
+GIL contention, the pipeline uses a decoupled 4-stage hybrid architecture:
+1. **Stage 2 (Stateful - OrderedStitchAudioFn & TagSequenceNumberFn)**:
+   Performs chronological sequencing, session FSM tracking, and VAD segment
+   calculations. To keep persistent state sizes extremely small (<1 KB) and
+   lock times under microseconds, **no raw audio bytes are stored in
+   stateful persistent bag states**. `TagSequenceNumberFn` tags each segment
+   with a strictly monotonic per-session sequence number (`1, 2, 3...`).
+2. **Stage 3 (Stateless - UploadRawSegmentFn with Reshuffle)**: Performs the
+   heavy physical work of downloading contributing audio chunks from GCS,
+   slicing them according to Stage 2's VAD segments, stitching them, and
+   compressing the result to FLAC. To prevent single-worker vCPU saturation
+   on busy feeds, elements exiting Stage 2 are re-keyed with a randomized
+   UUID suffix (`feed_id#session_id#uuid`) and passed through
+   `beam.Reshuffle()`, scattering Stage 3 encoding uniformly across 100% of
+   available Dataflow worker vCPUs.
+3. **Stage 4 (Stateful - PubSubOrderRestorerFn)**: Because parallel Stage 3
+   execution causes segments to finish out of order, `PubSubOrderRestorerFn`
+   buffers out-of-order completions per `feed_id#session_id` and restores
+   strict chronological delivery before publishing to Pub/Sub.
 """
 
 import concurrent.futures
