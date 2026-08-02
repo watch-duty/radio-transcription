@@ -68,6 +68,14 @@ By completely decoupling our audio stitching logic from Apache Beam's `StateSpec
 
 To resolve GCP production Dataflow worker CPU imbalances and duration clamps (`bundle_clamped_duration_limit`), the post-stitching pipeline implements a decoupled parallel execution and order restoration topology:
 
+> **Why the ordering machinery exists — read before removing it.**
+>
+> Sections B and C below (`TagSequenceNumberFn`, `PubSubOrderRestorerFn`, their state specs and timers) exist **solely** to preserve per-feed publish ordering. That is an **external requirement from the customer**, not an engineering preference: the UI and downstream consumers of this pipeline's output assume ordered Pub/Sub delivery.
+>
+> Only section A (key scattering) addresses the CPU-imbalance problem. Ordering was previously an emergent side-effect of Beam fusing Stage 3 onto Stage 2's key — breaking that fusion is what makes the restorer necessary.
+>
+> This matters because nothing in the code makes the requirement visible. Tracing the pipeline's immediate consumer (`normalization`) suggests ordering is unnecessary: it is a stateless per-message Cloud Function keyed by `segment_id` with no per-feed history. The consumers that depend on ordering sit further downstream. A reviewer reasoning only from this repository will conclude this machinery can be deleted. It cannot.
+
 ### A. Stage 3 Key Scattering (`RandomizeKeyForStage3` + `beam.Reshuffle()`)
 Physical FLAC audio encoding and GCS upload (`UploadRawSegmentFn`) is stateless but CPU/IO intensive. If keyed strictly by `feed_id`, a single worker vCPU must sequentially encode all segments for active feeds, causing 99%+ single-core CPU saturation while other workers sit idle.
 * **Mechanism**: Elements exiting Stage 2 are re-keyed with a randomized UUID suffix (`f"{feed_id}#{session_id}#{uuid.uuid4().hex}"`) and passed through `beam.Reshuffle()`.
@@ -82,6 +90,10 @@ Parallel Stage 3 execution causes segments to finish out of order. Before publis
 **Ordering is best-effort with a bounded delay, not a guarantee.** Two caveats matter to downstream consumers:
 1. Sequence numbers reflect **arrival order at `TagSequenceNumberFn`**, not audio timestamps. Two collectors briefly overlapping on one feed during a lease handover interleave nondeterministically — the same behaviour that existed before Stage 3 was parallelized.
 2. The fallback timer below **publishes out of order by design** when a segment is late.
+
+> **Open question for the customer.** Caveat 2 is a partial violation of the ordering requirement, and the tradeoff is theirs to make rather than ours: hold everything until the missing segment arrives (strict ordering, but that feed produces **no** output until it resolves), or publish the rest and slot the late segment in behind it (current behaviour — output keeps flowing, occasionally out of sequence). The current default assumes late-but-present beats absent for emergency dispatch audio, which is an assumption encoded in a constant, not a decision anyone signed off.
+>
+> The answer also depends on what "ordered" means to them — strictly monotonic on the topic, sortable on arrival, or merely not interleaved across feeds — and on whether the UI **sorts by `start_timestamp` or appends in arrival order**. If it sorts, the fallback is harmless. If it appends, a fallback drain produces visibly out-of-sequence output. Note that `SegmentedAudio` carries no marker distinguishing an out-of-order arrival from a normal one; the only signal is a `start_timestamp` earlier than its predecessor's.
 
 * **Normal Delivery**: Emits contiguous sequence numbers in order and drains buffered items, while setting `ordering_key = feed_id` on the output `PubsubMessage` for downstream Pub/Sub consumers.
 * **Tunable Fallback Recovery Timer (`FALLBACK_DRAIN_TIMER`)**: Controlled by `--pubsub_fallback_drain_timeout_ms` (default: 180,000ms / 3 minutes). If a missing sequence number is delayed past the timeout, the timer force-drains buffered items out-of-order to prevent feed wedging, while recording skipped numbers in `SKIPPED_SEQS_STATE`. 180s is a deliberately conservative starting point, not a tuned value: lower it only against observed `pubsub_order_gap_resolution_seconds` data, since erring long costs no latency on the normal path while erring short publishes out of order silently.
@@ -108,7 +120,7 @@ Two consequences worth planning around:
 | Metric | Healthy value | What a non-zero value means |
 |---|---|---|
 | `pubsub_order_skipped_seqs_abandoned` | **0** | **Audio was actually lost.** A skipped sequence number aged out of `SKIPPED_SEQS_STATE` before its segment arrived. This is the only metric that distinguishes lost audio from delayed audio — everything else here is recoverable. |
-| `pubsub_order_fallback_drains` | ~0 | Segments were published out of order to avoid wedging a feed. No data lost. Sustained non-zero means `--pubsub_fallback_drain_timeout_ms` is tighter than real Stage 3 upload skew, or a feed is genuinely stuck. |
+| `pubsub_order_fallback_drains` | **0** | **Downstream received segments out of sequence.** No audio was lost, but the ordering requirement (§5) was violated for that feed, and consumers assume ordered delivery. Sustained non-zero means `--pubsub_fallback_drain_timeout_ms` is tighter than real Stage 3 upload skew, or a feed is genuinely stuck. Treat a rising count as a customer-visible issue, not just a tuning signal. |
 | `pubsub_order_stall_warnings` | **0** | The fallback timer itself is not firing. This is a watchdog on the fallback (threshold is `PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE` × the drain timeout), not an alert on ordinary reordering. Investigate the timer, not the feed. |
 | `pubsub_order_gap_resolution_seconds` | distribution | How long self-resolving gaps stayed open — the Stage 3 upload skew the drain timeout has to clear. **This is the input for tuning that timeout.** Only gaps that resolved on their own are sampled, so it is not biased toward the configured value. |
 | `pubsub_order_buffer_depth` | small | How much reordering the Stage 3 fanout actually introduces. Consistently near zero means reordering is rare at current volume and the fallback is close to vestigial. |
