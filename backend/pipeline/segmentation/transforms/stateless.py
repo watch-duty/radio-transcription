@@ -1,8 +1,28 @@
 """Stateless Apache Beam transforms for the radio transcription pipeline.
 
+## What "stateless" means here
+
+Strictly: these DoFns declare no `StateSpec` and no `TimerSpec`, so Beam is
+free to distribute them across the fleet. That is the property Stage 3's
+reshuffle depends on, and it holds -- nothing in this module accumulates
+per-element or per-key state.
+
+It does not mean these DoFns hold nothing. `UploadRawSegmentFn` acquires two
+per-worker resources in `setup()`:
+- a GCS client, via a `Shared` handle;
+- the process-wide download `ThreadPoolExecutor`, which is **shared with the
+  stateful stitcher stage** so that total download concurrency is bounded per
+  worker rather than per stage (see `storage.acquire_shared_download_executor`).
+
+That second one is worth knowing about. It was sized when Stage 3 was fused
+onto Stage 2 and therefore serialized per key. The reshuffle removes that
+serialization, so many more uploads now contend for the same fixed pool. If
+Stage 3 saturates it, downloads queue: expect `download_latency_ms` to climb
+while worker CPU sits idle, which looks like the reshuffle failing when it is
+really this pool.
+
 This module defines the stateless mapper and serializer DoFns in our Apache
-Beam DAG. These transforms perform zero stateful buffering or timer scheduling
-and are highly optimized for parallel worker execution:
+Beam DAG:
 - **ParseAndKeyFn**: Unmarshals raw Pub/Sub messages, validates protobuf chunk
    fields, extracts Telemetry tracing context, and sets a deterministic key.
 - **UploadRawSegmentFn**: Stateless audio stitching stage. Downloads contributing

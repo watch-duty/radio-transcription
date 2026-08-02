@@ -127,6 +127,22 @@ Two consequences worth planning around:
 | `pubsub_order_future_retries_suppressed` | any | Routine Windmill redelivery of a not-yet-ready segment. Expected churn; not actionable. |
 | `pubsub_order_post_publish_retries_suppressed` | low | Redelivery of a segment **after** it was published. Relevant to the ordering guarantee — worth watching separately from the future-retry counter above. |
 
+### If CPU balances but throughput does not improve
+
+The point of §5A is to unpin Stage 3 from one vCPU per feed. If worker CPU
+evens out and throughput still does not rise, suspect the **shared download
+`ThreadPoolExecutor`** before suspecting the reshuffle.
+
+`UploadRawSegmentFn` is stateless in the Beam sense — no `StateSpec`, no
+`TimerSpec` — but it is not resource-free: it draws from a process-wide
+download pool **shared with the stateful stitcher stage**, sized when Stage 3
+was still fused onto Stage 2 and therefore serialized per key. Removing that
+serialization means many more concurrent uploads contending for the same fixed
+pool.
+
+Watch `download_latency_ms` alongside worker CPU. Climbing download latency
+with idle CPU is pool saturation, not a failed fanout.
+
 ### Tuning the fallback drain timeout
 
 The 180s default is deliberately conservative, not measured. `bcfy_feeds` produces roughly 150-400 sessions/day, so `pubsub_order_gap_resolution_seconds` accumulates slowly: **read its maximum and shape before trusting a percentile.** Tighten only once the distribution is populated, and expect skew to be worst during autoscaling events, when cold workers join the pool.
