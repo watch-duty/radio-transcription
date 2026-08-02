@@ -2228,19 +2228,30 @@ class PubSubOrderRestorerFn(beam.DoFn):
     ) -> Iterator[PubsubMessage]:
         skipped_seqs = skipped_seqs_state.read() or []
         if seq_num in skipped_seqs:
-            if not item_dict.get("is_tombstone", False):
+            # Retire the entry either way: this sequence number has now been
+            # accounted for and should stop consuming retention.
+            skipped_seqs_state.write([s for s in skipped_seqs if s != seq_num])
+            if item_dict.get("is_tombstone", False):
+                # The upload for this sequence failed, so there is nothing to
+                # publish. Counting it as a late arrival would overstate how
+                # much audio the recovery path actually saves.
+                logger.debug(
+                    "Retired skipped seq=%d for key=%s; it arrived as a tombstone, nothing to publish",
+                    seq_num,
+                    feed_id,
+                )
+            else:
                 yield PubsubMessage(
                     data=item_dict["data"],
                     attributes=item_dict["attributes"],
                     ordering_key=item_dict["ordering_key"],
                 )
-            skipped_seqs_state.write([s for s in skipped_seqs if s != seq_num])
-            PUBSUB_ORDER_LATE_ARRIVALS_EMITTED.inc()
-            logger.info(
-                "[PubSub Order] Emitted late segment seq=%d for key=%s (skipped by fallback timer earlier)",
-                seq_num,
-                feed_id,
-            )
+                PUBSUB_ORDER_LATE_ARRIVALS_EMITTED.inc()
+                logger.info(
+                    "[PubSub Order] Emitted late segment seq=%d for key=%s (skipped by fallback timer earlier)",
+                    seq_num,
+                    feed_id,
+                )
         else:
             PUBSUB_ORDER_POST_PUBLISH_RETRIES_SUPPRESSED.inc()
             logger.debug(

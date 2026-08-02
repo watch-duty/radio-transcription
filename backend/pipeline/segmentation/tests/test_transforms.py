@@ -5763,3 +5763,128 @@ class PubSubGapResolutionMetricTest(unittest.TestCase):
             )
 
         mock_dist.update.assert_not_called()
+
+
+class PubSubTombstoneTest(unittest.TestCase):
+    """Covers the tombstone path, which is what stops a failed upload wedging a feed.
+
+    UploadRawSegmentFn emits a tombstone when a segment's upload fails, so the
+    sequence number is consumed rather than leaving a gap that never fills.
+    Every branch of PubSubOrderRestorerFn has to skip publishing it while still
+    letting the sequence advance; if any of them did not, one failed upload
+    would block every later segment for that session until the fallback timer
+    fired, and then again on the next failure.
+    """
+
+    @staticmethod
+    def _item(seq: int, *, tombstone: bool = False) -> PendingPubSubMessage:
+        return {
+            "data": b"" if tombstone else f"msg{seq}".encode(),
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": tombstone,
+        }
+
+    def _process(
+        self,
+        seq: int,
+        *,
+        tombstone: bool = False,
+        expected: int = 1,
+        buffered: list[Any] | None = None,
+        skipped: list[int] | None = None,
+    ) -> tuple[list[Any], Any, Any]:
+        fn = PubSubOrderRestorerFn()
+        expected_state = _FakeValueState(expected)
+        skipped_state = _FakeValueState(skipped)
+        out = list(
+            fn.process(
+                element=(
+                    "feed-1#session-a",
+                    (seq, self._item(seq, tombstone=tombstone)),
+                ),
+                expected_seq_state=expected_state,  # type: ignore
+                buffer_state=_FakeBagState(buffered or []),  # type: ignore
+                skipped_seqs_state=skipped_state,  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        return out, expected_state, skipped_state
+
+    def test_in_order_tombstone_advances_without_publishing(self) -> None:
+        out, expected_state, _ = self._process(1, tombstone=True)
+
+        self.assertEqual(out, [])
+        self.assertEqual(expected_state.read(), 2)
+
+    def test_tombstone_does_not_wedge_later_segments(self) -> None:
+        """The whole point: a failed upload must not block what comes after it."""
+        out, expected_state, _ = self._process(
+            1,
+            tombstone=True,
+            buffered=[(2, self._item(2)), (3, self._item(3))],
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg2", b"msg3"])
+        self.assertEqual(expected_state.read(), 4)
+
+    def test_tombstone_inside_a_drain_is_skipped(self) -> None:
+        out, expected_state, _ = self._process(
+            1,
+            buffered=[
+                (2, self._item(2, tombstone=True)),
+                (3, self._item(3)),
+            ],
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg1", b"msg3"])
+        self.assertEqual(expected_state.read(), 4)
+
+    def test_tombstone_inside_a_fallback_drain_is_skipped(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        expected_state = _FakeValueState(1)
+
+        out = list(
+            fn.fallback_drain_timer_fired(
+                key="feed-1#session-a",
+                expected_seq_state=expected_state,  # type: ignore
+                buffer_state=_FakeBagState(  # type: ignore
+                    [
+                        (3, self._item(3, tombstone=True)),
+                        (4, self._item(4)),
+                    ]
+                ),
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg4"])
+        self.assertEqual(expected_state.read(), 5)
+
+    def test_late_tombstone_retires_its_entry_without_publishing(self) -> None:
+        """A tombstone arriving late must not count as audio the recovery path saved."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_LATE_ARRIVALS_EMITTED"
+        ) as mock_emitted:
+            out, _, skipped_state = self._process(
+                3, tombstone=True, expected=9, skipped=[3, 5]
+            )
+
+        self.assertEqual(out, [])
+        self.assertEqual(skipped_state.read(), [5])
+        mock_emitted.inc.assert_not_called()
+
+    def test_late_real_segment_still_counts_as_emitted(self) -> None:
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_LATE_ARRIVALS_EMITTED"
+        ) as mock_emitted:
+            out, _, skipped_state = self._process(3, expected=9, skipped=[3, 5])
+
+        self.assertEqual([m.data for m in out], [b"msg3"])
+        self.assertEqual(skipped_state.read(), [5])
+        mock_emitted.inc.assert_called_once()
