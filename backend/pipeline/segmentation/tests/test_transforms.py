@@ -27,11 +27,13 @@ from google.cloud import storage
 from google.protobuf.timestamp_pb2 import Timestamp as ProtoTimestamp
 from opentelemetry.trace import get_current_span
 
+from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
 )
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.segmentation import coders as trans_coders
+from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
@@ -48,13 +50,17 @@ from backend.pipeline.segmentation.datatypes import (
     FlushRequest,
     IdleFeedState,
     OrderRestorerConfig,
+    PendingPubSubMessage,
     StitchAudioConfig,
     TimeRange,
 )
 from backend.pipeline.segmentation.storage import UNIVERSAL_GCS_SHARED_HANDLE
+from backend.pipeline.segmentation.transforms import stateful as stateful_module
 from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
+    PubSubOrderRestorerFn,
+    TagSequenceNumberFn,
     _manage_out_of_order_timers,
     _reschedule_gap_timeout,
 )
@@ -4860,7 +4866,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         )
 
         # Execute the process generator
-        list(fn.process(element=("test-feed", request)))
+        list(fn.process(element=("test-feed", (1, request))))
 
         # Verify that with_tracer_context was called with the correct extracted attributes
         mock_with_tracer_context.assert_called_once_with(
@@ -4921,10 +4927,13 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         decoded_request = coder.decode(coder.encode(request))
 
         # Execute the process generator and convert to list
-        results = list(fn.process(element=("test-feed", decoded_request)))
+        results = list(fn.process(element=("test-feed", (1, decoded_request))))
 
         self.assertEqual(len(results), 1)
-        self.assertIsInstance(results[0], PubsubMessage)
+        self.assertEqual(results[0][0], "test-feed#test-session")
+        seq_num, pubsub_dict = results[0][1]
+        self.assertEqual(seq_num, 1)
+        self.assertFalse(pubsub_dict["is_tombstone"])
 
     @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
     def test_upload_raw_audio_executes_stateless_stitching(
@@ -5330,3 +5339,768 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         )
 
         gap_timer_event.set.assert_called_once_with(Timestamp(150.0))
+
+
+class _FakeBagState:
+    def __init__(self, items: list[Any] | None = None) -> None:
+        self._items = list(items or [])
+
+    def read(self):
+        return list(self._items)
+
+    def clear(self):
+        self._items = []
+
+    def add(self, item):
+        self._items.append(item)
+
+
+class SequenceAndOrderRestorerTest(unittest.TestCase):
+    """Unit tests for TagSequenceNumberFn and PubSubOrderRestorerFn."""
+
+    def test_tag_sequence_number_fn(self) -> None:
+        fn = TagSequenceNumberFn()
+        req1 = MagicMock(spec=FlushRequest, feed_id="feed-1")
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = None
+
+        res1 = list(
+            fn.process(
+                element=("feed-1#session-a", req1), seq_state=mock_seq_state
+            )
+        )
+        self.assertEqual(len(res1), 1)
+        self.assertEqual(res1[0][0], "feed-1#session-a")
+        self.assertEqual(res1[0][1][0], 1)
+        self.assertEqual(res1[0][1][1], req1)
+        mock_seq_state.write.assert_called_once_with(2)
+
+    def test_pubsub_order_restorer_fn_in_order(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+
+        item1: PendingPubSubMessage = {
+            "data": b"msg1",
+            "attributes": {"k": "v"},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (1, item1)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].data, b"msg1")
+        self.assertEqual(res[0].attributes, {"k": "v"})
+        self.assertEqual(res[0].ordering_key, "feed-1")
+        mock_seq_state.write.assert_called_once_with(2)
+
+    def test_pubsub_order_restorer_fn_out_of_order_buffers(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+
+        item2: PendingPubSubMessage = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (2, item2)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res), 0)
+        mock_buf_state.add.assert_called_once_with((2, item2))
+
+    def test_pubsub_order_restorer_fn_deduplicates_future_retries_in_buffer(
+        self,
+    ) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        fake_buf_state: Any = _FakeBagState()
+
+        item2: PendingPubSubMessage = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        for _ in range(3):
+            res = list(
+                fn.process(
+                    element=("feed-1#session-a", (2, item2)),
+                    expected_seq_state=mock_seq_state,
+                    buffer_state=fake_buf_state,
+                    skipped_seqs_state=_FakeValueState(),  # type: ignore
+                    fallback_drain_timer=MagicMock(),
+                    stall_since_state=_FakeValueState(),  # type: ignore
+                    stall_probe_timer=MagicMock(),
+                )
+            )
+            self.assertEqual(len(res), 0)
+
+        self.assertEqual(len(fake_buf_state._items), 1)
+        self.assertEqual(fake_buf_state._items[0], (2, item2))
+
+    def test_pubsub_order_restorer_fn_ignores_duplicate_retries(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 3
+        mock_buf_state = MagicMock()
+        mock_buf_state.read.return_value = []
+
+        duplicate_item: PendingPubSubMessage = {
+            "data": b"msg1",
+            "attributes": {"k": "v"},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (1, duplicate_item)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res), 0)
+        mock_buf_state.add.assert_not_called()
+
+    def test_pubsub_order_restorer_fn_drains_in_strict_order(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        mock_seq_state = MagicMock()
+        mock_seq_state.read.return_value = 1
+        mock_buf_state = MagicMock()
+        item2: PendingPubSubMessage = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        mock_buf_state.read.return_value = [(2, item2)]
+
+        item1: PendingPubSubMessage = {
+            "data": b"msg1",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (1, item1)),
+                expected_seq_state=mock_seq_state,
+                buffer_state=mock_buf_state,
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0].data, b"msg1")
+        self.assertEqual(res[1].data, b"msg2")
+        mock_seq_state.write.assert_called_once_with(3)
+
+    def test_pubsub_order_restorer_fn_session_isolation_on_handover(
+        self,
+    ) -> None:
+        """Verifies a stalled collector on session-a cannot block a healthy collector on session-b."""
+        fn = PubSubOrderRestorerFn()
+        seq_state_a = MagicMock()
+        seq_state_a.read.return_value = (
+            2  # Session A is waiting on seq=2 (stalled)
+        )
+
+        seq_state_b = MagicMock()
+        seq_state_b.read.return_value = (
+            1  # Session B took over lease, starting at seq=1
+        )
+        buf_state_b: Any = _FakeBagState()
+
+        item_b1: PendingPubSubMessage = {
+            "data": b"msg_b1",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res_b = list(
+            fn.process(
+                element=("feed-1#session-b", (1, item_b1)),
+                expected_seq_state=seq_state_b,
+                buffer_state=buf_state_b,
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res_b), 1)
+        self.assertEqual(res_b[0].data, b"msg_b1")
+        self.assertEqual(res_b[0].ordering_key, "feed-1")
+        seq_state_b.write.assert_called_once_with(2)
+
+    def test_pubsub_order_restorer_fn_fallback_timer_and_late_arrival(
+        self,
+    ) -> None:
+        """Verifies fallback timer force-drains out-of-order items and late arrivals emit without loss."""
+        fn = PubSubOrderRestorerFn(timeout_ms=30_000)
+        seq_state = _FakeValueState(2)  # Waiting on seq=2
+        buf_state: Any = _FakeBagState()
+        skipped_state: Any = _FakeValueState()
+        fallback_timer = MagicMock()
+
+        item3 = {
+            "data": b"msg3",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        buf_state.add((3, item3))
+
+        # 1. Fallback timer fires: seq=2 is missing, so it force-drains seq=3 and records seq=2 as skipped
+        res_fallback = list(
+            fn.fallback_drain_timer_fired(
+                key="feed-1#session-a",
+                expected_seq_state=seq_state,  # type: ignore
+                buffer_state=buf_state,
+                skipped_seqs_state=skipped_state,
+                fallback_drain_timer=fallback_timer,
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res_fallback), 1)
+        self.assertEqual(res_fallback[0].data, b"msg3")
+        self.assertEqual(seq_state.read(), 4)
+        self.assertEqual(skipped_state.read(), [2])
+
+        # 2. Later, delayed seq=2 arrives (seq_num=2 < expected_seq=4). It should emit out of order rather than be dropped!
+        item2: PendingPubSubMessage = {
+            "data": b"msg2",
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+        res_late = list(
+            fn.process(
+                element=("feed-1#session-a", (2, item2)),
+                expected_seq_state=seq_state,  # type: ignore
+                buffer_state=buf_state,
+                skipped_seqs_state=skipped_state,
+                fallback_drain_timer=fallback_timer,
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        self.assertEqual(len(res_late), 1)
+        self.assertEqual(res_late[0].data, b"msg2")
+        self.assertEqual(skipped_state.read(), [])
+
+
+class _FakeValueState:
+    def __init__(self, value: Any = None) -> None:
+        self._value = value
+        self.cleared = False
+
+    def read(self):
+        return self._value
+
+    def write(self, value: Any) -> None:
+        self._value = value
+        self.cleared = False
+
+    def clear(self) -> None:
+        self._value = None
+        self.cleared = True
+
+
+class PubSubStallProbeTest(unittest.TestCase):
+    """Covers the liveness probe that makes a silently blocked feed observable.
+
+    The restorer never times out, so a feed that falls silent while holding a
+    gap would otherwise retain BagState forever and emit no telemetry at all.
+    """
+
+    @staticmethod
+    def _item(seq: int) -> PendingPubSubMessage:
+        return {
+            "data": f"msg{seq}".encode(),
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+
+    def test_buffering_a_gap_arms_the_probe(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        stall_since = _FakeValueState()
+        timer = MagicMock()
+
+        list(
+            fn.process(
+                element=("feed-1#session-a", (2, self._item(2))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState(),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,  # type: ignore
+                stall_probe_timer=timer,
+            )
+        )
+
+        timer.set.assert_called_once()
+        self.assertIsNotNone(stall_since.read())
+
+    def test_retry_of_buffered_segment_does_not_restart_the_clock(self) -> None:
+        """A wedged feed would never look stalled if redeliveries reset the clock."""
+        fn = PubSubOrderRestorerFn()
+        original_start = 1_000_000
+        stall_since = _FakeValueState(original_start)
+
+        list(
+            fn.process(
+                element=("feed-1#session-a", (2, self._item(2))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+
+        self.assertEqual(stall_since.read(), original_start)
+
+    def test_draining_the_last_gap_stands_the_probe_down(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        stall_since = _FakeValueState(1_000_000)
+        timer = MagicMock()
+
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (1, self._item(1))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState([(2, self._item(2))]),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,  # type: ignore
+                stall_probe_timer=timer,
+            )
+        )
+
+        self.assertEqual(len(res), 2)
+        timer.clear.assert_called_once()
+        self.assertTrue(stall_since.cleared)
+
+    def test_partial_drain_restarts_the_clock_and_rearms(self) -> None:
+        """expected_seq advanced, so the feed is live even though a gap remains."""
+        fn = PubSubOrderRestorerFn()
+        stall_since = _FakeValueState(1_000_000)
+        timer = MagicMock()
+
+        res = list(
+            fn.process(
+                element=("feed-1#session-a", (1, self._item(1))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState([(5, self._item(5))]),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,  # type: ignore
+                stall_probe_timer=timer,
+            )
+        )
+
+        self.assertEqual(len(res), 1)
+        timer.set.assert_called_once()
+        self.assertNotEqual(stall_since.read(), 1_000_000)
+
+    def test_probe_rearms_and_warns_past_threshold(self) -> None:
+        """Past a few fallback timeouts, the fallback itself must not be firing."""
+        fn = PubSubOrderRestorerFn()
+        timer = MagicMock()
+        stalled_ms = (
+            fn.timeout_ms * trans_constants.PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE
+        ) + 60_000
+        started_at = int(time.time() * MS_PER_SECOND) - stalled_ms
+        mock_seq = MagicMock()
+        mock_seq.read.return_value = 4
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_STALL_WARNINGS"
+        ) as mock_warn:
+            fn.probe_publish_stall(
+                key="feed-1#session-a",
+                expected_seq_state=mock_seq,
+                buffer_state=_FakeBagState([(5, self._item(5))]),  # type: ignore
+                stall_since_state=_FakeValueState(started_at),  # type: ignore
+                stall_probe_timer=timer,
+            )
+
+        mock_warn.inc.assert_called_once()
+        timer.set.assert_called_once()
+
+    def test_probe_below_threshold_rearms_without_warning(self) -> None:
+        """Routine reordering must not page anyone."""
+        fn = PubSubOrderRestorerFn()
+        timer = MagicMock()
+        started_at = int(time.time() * MS_PER_SECOND) - 5_000
+        mock_seq = MagicMock()
+        mock_seq.read.return_value = 4
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_STALL_WARNINGS"
+        ) as mock_warn:
+            fn.probe_publish_stall(
+                key="feed-1#session-a",
+                expected_seq_state=mock_seq,
+                buffer_state=_FakeBagState([(5, self._item(5))]),  # type: ignore
+                stall_since_state=_FakeValueState(started_at),  # type: ignore
+                stall_probe_timer=timer,
+            )
+
+        mock_warn.inc.assert_not_called()
+        timer.set.assert_called_once()
+
+    def test_probe_stands_down_when_gap_resolved_before_firing(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        timer = MagicMock()
+        stall_since = _FakeValueState(1_000_000)
+        mock_seq = MagicMock()
+        mock_seq.read.return_value = 9
+
+        fn.probe_publish_stall(
+            key="feed-1#session-a",
+            expected_seq_state=mock_seq,
+            buffer_state=_FakeBagState(),  # type: ignore
+            stall_since_state=stall_since,  # type: ignore
+            stall_probe_timer=timer,
+        )
+
+        timer.set.assert_not_called()
+        self.assertTrue(stall_since.cleared)
+
+    def test_probe_never_emits_or_mutates_buffered_segments(self) -> None:
+        """The probe observes only: publishing would break order, skipping would drop audio."""
+        fn = PubSubOrderRestorerFn()
+        buffered = [(5, self._item(5)), (6, self._item(6))]
+        buf_state = _FakeBagState(list(buffered))
+        expected_seq_state = MagicMock()
+        expected_seq_state.read.return_value = 4
+
+        result = fn.probe_publish_stall(
+            key="feed-1#session-a",
+            expected_seq_state=expected_seq_state,
+            buffer_state=buf_state,  # type: ignore
+            stall_since_state=_FakeValueState(int(time.time() * MS_PER_SECOND)),  # type: ignore
+            stall_probe_timer=MagicMock(),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(buf_state.read(), buffered)
+        expected_seq_state.write.assert_not_called()
+
+
+class PubSubSkippedSeqRetentionTest(unittest.TestCase):
+    """Covers the bound on skipped sequence numbers retained for late arrival.
+
+    Entries are removed only when their segment arrives, so a segment that
+    never arrives -- the case the fallback drain exists for -- would otherwise
+    pin its entry for the life of the job.
+    """
+
+    def test_skipped_seqs_are_retained_for_late_arrival(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        state = _FakeValueState()
+
+        fn._record_skipped_seqs(
+            newly_skipped=range(3, 6),
+            skipped_seqs_state=state,  # type: ignore
+            key="feed-1#session-a",
+        )
+
+        self.assertEqual(sorted(state.read()), [3, 4, 5])
+
+    def test_repeated_incidents_stay_within_the_cap(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        state = _FakeValueState()
+        cap = trans_constants.MAX_TRACKED_SKIPPED_SEQS
+
+        # Far more permanently-lost segments than the cap allows.
+        for start in range(0, (cap * 3), 3):
+            fn._record_skipped_seqs(
+                newly_skipped=range(start, start + 3),
+                skipped_seqs_state=state,  # type: ignore
+                key="feed-1#session-a",
+            )
+
+        self.assertEqual(len(state.read()), cap)
+
+    def test_overflow_abandons_oldest_and_counts_them(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        cap = trans_constants.MAX_TRACKED_SKIPPED_SEQS
+        state = _FakeValueState(list(range(cap)))
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_SKIPPED_SEQS_ABANDONED"
+        ) as mock_abandoned:
+            fn._record_skipped_seqs(
+                newly_skipped=range(cap, cap + 5),
+                skipped_seqs_state=state,  # type: ignore
+                key="feed-1#session-a",
+            )
+
+        retained = sorted(state.read())
+        self.assertEqual(len(retained), cap)
+        # Lowest five evicted; the newest are the ones still plausibly in flight.
+        self.assertEqual(retained[0], 5)
+        self.assertEqual(retained[-1], cap + 4)
+        mock_abandoned.inc.assert_called_once_with(5)
+
+    def test_no_skipped_seqs_leaves_the_state_untouched(self) -> None:
+        """A fallback drain with no gap to skip must not rewrite state."""
+        fn = PubSubOrderRestorerFn()
+        state = _FakeValueState([7])
+
+        fn._record_skipped_seqs(
+            newly_skipped=range(5, 5),
+            skipped_seqs_state=state,  # type: ignore
+            key="feed-1#session-a",
+        )
+
+        self.assertEqual(state.read(), [7])
+
+
+class PubSubGapResolutionMetricTest(unittest.TestCase):
+    """Covers the measurement used to tune the fallback drain timeout.
+
+    The timeout has to clear real Stage 3 upload skew, which cannot be observed
+    in a dev environment. Sampling how long self-resolving gaps stay open turns
+    that from a guess into a reading.
+    """
+
+    @staticmethod
+    def _item(seq: int) -> PendingPubSubMessage:
+        return {
+            "data": f"msg{seq}".encode(),
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": False,
+        }
+
+    def _process(
+        self, seq: int, buffered: list[Any], stall_since: Any
+    ) -> list[Any]:
+        fn = PubSubOrderRestorerFn()
+        return list(
+            fn.process(
+                element=("feed-1#session-a", (seq, self._item(seq))),
+                expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                buffer_state=_FakeBagState(buffered),  # type: ignore
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=stall_since,
+                stall_probe_timer=MagicMock(),
+            )
+        )
+
+    def test_closing_a_gap_samples_how_long_it_was_open(self) -> None:
+        opened_at = int(time.time() * MS_PER_SECOND) - 12_000
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [(2, self._item(2))], _FakeValueState(opened_at))
+
+        mock_dist.update.assert_called_once()
+        (recorded,), _ = mock_dist.update.call_args
+        self.assertGreaterEqual(recorded, 11)
+        self.assertLessEqual(recorded, 14)
+
+    def test_no_gap_records_nothing(self) -> None:
+        """An in-order arrival with an empty buffer never blocked on anything."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [], _FakeValueState(None))
+
+        mock_dist.update.assert_not_called()
+
+    def test_unset_clock_records_nothing(self) -> None:
+        """Without a start time there is no interval to report; do not report zero."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            self._process(1, [(2, self._item(2))], _FakeValueState(None))
+
+        mock_dist.update.assert_not_called()
+
+    def test_fallback_drain_does_not_sample_resolution(self) -> None:
+        """A gap the fallback gave up on has no resolution time; sampling it would
+        bias the distribution toward the configured timeout.
+        """
+        fn = PubSubOrderRestorerFn()
+
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_GAP_RESOLUTION_SECONDS"
+        ) as mock_dist:
+            list(
+                fn.fallback_drain_timer_fired(
+                    key="feed-1#session-a",
+                    expected_seq_state=MagicMock(**{"read.return_value": 1}),  # type: ignore
+                    buffer_state=_FakeBagState([(3, self._item(3))]),  # type: ignore
+                    skipped_seqs_state=_FakeValueState(),  # type: ignore
+                    fallback_drain_timer=MagicMock(),
+                    stall_since_state=_FakeValueState(1_000_000),  # type: ignore
+                    stall_probe_timer=MagicMock(),
+                )
+            )
+
+        mock_dist.update.assert_not_called()
+
+
+class PubSubTombstoneTest(unittest.TestCase):
+    """Covers the tombstone path, which is what stops a failed upload wedging a feed.
+
+    UploadRawSegmentFn emits a tombstone when a segment's upload fails, so the
+    sequence number is consumed rather than leaving a gap that never fills.
+    Every branch of PubSubOrderRestorerFn has to skip publishing it while still
+    letting the sequence advance; if any of them did not, one failed upload
+    would block every later segment for that session until the fallback timer
+    fired, and then again on the next failure.
+    """
+
+    @staticmethod
+    def _item(seq: int, *, tombstone: bool = False) -> PendingPubSubMessage:
+        return {
+            "data": b"" if tombstone else f"msg{seq}".encode(),
+            "attributes": {},
+            "ordering_key": "feed-1",
+            "is_tombstone": tombstone,
+        }
+
+    def _process(
+        self,
+        seq: int,
+        *,
+        tombstone: bool = False,
+        expected: int = 1,
+        buffered: list[Any] | None = None,
+        skipped: list[int] | None = None,
+    ) -> tuple[list[Any], Any, Any]:
+        fn = PubSubOrderRestorerFn()
+        expected_state = _FakeValueState(expected)
+        skipped_state = _FakeValueState(skipped)
+        out = list(
+            fn.process(
+                element=(
+                    "feed-1#session-a",
+                    (seq, self._item(seq, tombstone=tombstone)),
+                ),
+                expected_seq_state=expected_state,  # type: ignore
+                buffer_state=_FakeBagState(buffered or []),  # type: ignore
+                skipped_seqs_state=skipped_state,  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+        return out, expected_state, skipped_state
+
+    def test_in_order_tombstone_advances_without_publishing(self) -> None:
+        out, expected_state, _ = self._process(1, tombstone=True)
+
+        self.assertEqual(out, [])
+        self.assertEqual(expected_state.read(), 2)
+
+    def test_tombstone_does_not_wedge_later_segments(self) -> None:
+        """The whole point: a failed upload must not block what comes after it."""
+        out, expected_state, _ = self._process(
+            1,
+            tombstone=True,
+            buffered=[(2, self._item(2)), (3, self._item(3))],
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg2", b"msg3"])
+        self.assertEqual(expected_state.read(), 4)
+
+    def test_tombstone_inside_a_drain_is_skipped(self) -> None:
+        out, expected_state, _ = self._process(
+            1,
+            buffered=[
+                (2, self._item(2, tombstone=True)),
+                (3, self._item(3)),
+            ],
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg1", b"msg3"])
+        self.assertEqual(expected_state.read(), 4)
+
+    def test_tombstone_inside_a_fallback_drain_is_skipped(self) -> None:
+        fn = PubSubOrderRestorerFn()
+        expected_state = _FakeValueState(1)
+
+        out = list(
+            fn.fallback_drain_timer_fired(
+                key="feed-1#session-a",
+                expected_seq_state=expected_state,  # type: ignore
+                buffer_state=_FakeBagState(  # type: ignore
+                    [
+                        (3, self._item(3, tombstone=True)),
+                        (4, self._item(4)),
+                    ]
+                ),
+                skipped_seqs_state=_FakeValueState(),  # type: ignore
+                fallback_drain_timer=MagicMock(),
+                stall_since_state=_FakeValueState(),  # type: ignore
+                stall_probe_timer=MagicMock(),
+            )
+        )
+
+        self.assertEqual([m.data for m in out], [b"msg4"])
+        self.assertEqual(expected_state.read(), 5)
+
+    def test_late_tombstone_retires_its_entry_without_publishing(self) -> None:
+        """A tombstone arriving late must not count as audio the recovery path saved."""
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_LATE_ARRIVALS_EMITTED"
+        ) as mock_emitted:
+            out, _, skipped_state = self._process(
+                3, tombstone=True, expected=9, skipped=[3, 5]
+            )
+
+        self.assertEqual(out, [])
+        self.assertEqual(skipped_state.read(), [5])
+        mock_emitted.inc.assert_not_called()
+
+    def test_late_real_segment_still_counts_as_emitted(self) -> None:
+        with patch.object(
+            stateful_module, "PUBSUB_ORDER_LATE_ARRIVALS_EMITTED"
+        ) as mock_emitted:
+            out, _, skipped_state = self._process(3, expected=9, skipped=[3, 5])
+
+        self.assertEqual([m.data for m in out], [b"msg3"])
+        self.assertEqual(skipped_state.read(), [5])
+        mock_emitted.inc.assert_called_once()

@@ -47,8 +47,88 @@ DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
 DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS: Final = 300000
 OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
 DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
+# Stage 3 (UploadRawSegmentFn) is I/O-bound -- download, stitch, upload -- and
+# holds no model. Its working set is a few MB per in-flight segment against the
+# shared download pool, so the 16GB it inherited from Stage 2 (which does carry
+# the VAD and denoiser) is far more than it needs.
+#
+# Prime's vertical autoscaling already corrects this at runtime -- production
+# logs "change per worker memory limit for pool from 16.0 GiB to 6.0 GiB", and
+# peak worker usage against that limit is 3.22 GiB. So the 16GB hint is closer
+# to fiction than to a setting, and the win here is mostly that the pools start
+# at the real requirement instead of being trimmed into it. 4GB keeps headroom
+# over observed usage for a stage that carries no model, and remains a floor:
+# vertical autoscaling still adjusts the live limit from there.
+#
+# Diverging from Stage 2's hint also splits the two into separate environments,
+# which independently forces the fusion break. That is a side effect, not the
+# mechanism: ReshuffleStage3 is what this pipeline relies on, because it also
+# scatters the key (see orchestration.py). Do not delete the Reshuffle on the
+# theory that this hint covers it -- a fusion break without the re-key leaves
+# Stage 3 concentrated on the feed's key owner, just in a different pool.
+STAGE3_MIN_RAM_RESOURCE_HINT: Final = "4GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
+
+# PubSubOrderRestorerFn fallback drain: how long to wait for a missing sequence
+# number before advancing past it rather than blocking the feed forever. Skipped
+# numbers are retained so a late arrival still publishes.
+#
+# This value is NOT the stitcher's DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS.
+# The stitcher waits on an audio chunk from the collector, so its timeout is
+# anchored to the 15s chunk cadence and runs on both watermark and processing
+# time. This one waits on a segment's GCS upload to finish relative to its
+# successors, so it is governed by Stage 3 upload skew across workers -- a
+# distribution with no relation to chunk cadence, widened deliberately by the
+# Stage 3 fanout and worst during autoscaling. Tune the two independently,
+# against different evidence.
+#
+# 600s is deliberately conservative for initial rollout, not a tuned value. The
+# skew this has to clear is only observable in production, so the fallback
+# starts effectively dormant and is tightened once
+# pubsub_order_gap_resolution_seconds has enough samples to read (set this
+# comfortably above its p99.9; at ~150-400 sessions/day expect that to
+# accumulate slowly, so read maxima before percentiles).
+#
+# The floor comes from production: system lag on the current pipeline reached
+# 231-311s during peak backlog, which is the regime this pipeline's autoscaling
+# work targets. A timeout inside that band would force-drain segments that were
+# merely delayed by the backlog rather than lost -- publishing out of order
+# precisely when the pipeline is under the stress the fallback is supposed to
+# ride out. 600s clears the observed worst case with room to spare.
+#
+# Erring long is cheap: the fallback only arms when a gap exists, so a long
+# timeout costs no latency in the normal path, and overshooting merely delays
+# recovery of a wedged feed -- loudly, via pubsub_order_stall_warnings. Erring
+# short publishes out of order when nothing is actually wrong, which is silent.
+# Lower this only with data in hand.
+DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS: Final = 600000
+
+# Upper bound on skipped sequence numbers retained per key. An entry is dropped
+# only when its segment finally arrives, so a segment that never arrives -- the
+# case the fallback exists for -- would otherwise pin its entry for the life of
+# the job. When the cap is exceeded the lowest (oldest, least likely to still
+# arrive) entries are abandoned and counted.
+MAX_TRACKED_SKIPPED_SEQS: Final = 512
+
+# PubSubOrderRestorerFn liveness probe.
+#
+# The probe is a processing-time timer that only observes: it emits telemetry
+# and re-arms while the buffer is non-empty, and never drops or skips a
+# buffered segment.
+PUBSUB_STALL_PROBE_INTERVAL_SEC: Final = 60.0
+# The fallback drain bounds a stall at roughly one timeout, so a stall lasting
+# several multiples of it means the fallback itself is not firing. The probe is
+# therefore a watchdog on the fallback rather than on ordinary reordering: a
+# fixed threshold above the fallback timeout would never trip, and one below it
+# would fire on every routine drain.
+#
+# Because it is a multiple, the warning threshold moves with the timeout: at the
+# 600s default a stall is reported after 30 minutes. That is detection latency
+# for a fallback that has itself failed, not for a stalled feed -- the fallback
+# bounds an ordinary stall an order of magnitude sooner. Lower the multiple only
+# alongside a lower timeout, or the probe starts firing on routine drains.
+PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE: Final = 3
 
 
 SHARED_DOWNLOAD_POOL_SIZE: Final = get_optimal_thread_pool_size(

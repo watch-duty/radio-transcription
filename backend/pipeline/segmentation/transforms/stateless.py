@@ -1,32 +1,66 @@
 """Stateless Apache Beam transforms for the radio transcription pipeline.
 
+## What "stateless" means here
+
+Strictly: these DoFns declare no `StateSpec` and no `TimerSpec`, so Beam is
+free to distribute them across the fleet. That is the property Stage 3's
+reshuffle depends on, and it holds -- nothing in this module accumulates
+per-element or per-key state.
+
+It does not mean these DoFns hold nothing. `UploadRawSegmentFn` acquires two
+per-worker resources in `setup()`:
+- a GCS client, via a `Shared` handle;
+- the process-wide download `ThreadPoolExecutor`, which is **shared with the
+  stateful stitcher stage** so that total download concurrency is bounded per
+  worker rather than per stage (see `storage.acquire_shared_download_executor`).
+
+That second one is worth knowing about. It was sized when Stage 3 was fused
+onto Stage 2 and therefore serialized per key. The reshuffle removes that
+serialization, so many more uploads now contend for the same fixed pool. If
+Stage 3 saturates it, downloads queue: expect `download_latency_ms` to climb
+while worker CPU sits idle, which looks like the reshuffle failing when it is
+really this pool.
+
 This module defines the stateless mapper and serializer DoFns in our Apache
-Beam DAG. These transforms perform zero stateful buffering or timer scheduling
-and are highly optimized for parallel worker execution:
+Beam DAG:
 - **ParseAndKeyFn**: Unmarshals raw Pub/Sub messages, validates protobuf chunk
    fields, extracts Telemetry tracing context, and sets a deterministic key.
 - **UploadRawSegmentFn**: Stateless audio stitching stage. Downloads contributing
    chunks from GCS, slices them according to VAD segments, stitches them, and
    uploads the final FLAC segment to GCS.
 
-## Decoupled Stateful/Stateless Hybrid Architecture (Stage 2 & Stage 3)
+## Decoupled Stateful/Stateless Hybrid Architecture & Key Scattering
 
-To prevent Dataflow Windmill state locking and GIL contention bottlenecks, the audio
-segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
-1. **Stage 2 (Stateful - OrderedStitchAudioFn)**: Performs chronological sequencing,
-   session FSM tracking, and VAD segment calculations. To keep persistent state sizes
-   extremely small (<1 KB) and lock times under microseconds, **no raw audio bytes are stored
-   in stateful cell persistent bag states**.
-2. **Stage 3 (Stateless - UploadRawSegmentFn)**: Performs the heavy physical work of
-   downloading contributing audio chunks from GCS, slicing them according to Stage 2's
-   VAD segments, stitching them, and compressing the result to FLAC. Since this stage is
-   completely stateless, Dataflow can distribute and execute these tasks in parallel across
-   unlimited worker threads.
+To prevent Dataflow Windmill state locking, key-fusion CPU bottlenecks, and
+GIL contention, the pipeline uses a decoupled 4-stage hybrid architecture:
+1. **Stage 2 (Stateful - OrderedStitchAudioFn & TagSequenceNumberFn)**:
+   Performs chronological sequencing, session FSM tracking, and VAD segment
+   calculations. To keep persistent state sizes extremely small (<1 KB) and
+   lock times under microseconds, **no raw audio bytes are stored in
+   stateful persistent bag states**. `TagSequenceNumberFn` tags each segment
+   with a strictly monotonic per-session sequence number (`1, 2, 3...`).
+2. **Stage 3 (Stateless - UploadRawSegmentFn with Reshuffle)**: Performs the
+   heavy physical work of downloading contributing audio chunks from GCS,
+   slicing them according to Stage 2's VAD segments, stitching them, and
+   compressing the result to FLAC. To prevent single-worker vCPU saturation
+   on busy feeds, elements exiting Stage 2 are re-keyed with a randomized
+   UUID suffix (`feed_id#session_id#uuid`) and passed through
+   `beam.Reshuffle()`, spreading Stage 3 encoding across the Dataflow worker
+   fleet instead of pinning it to one vCPU per feed.
+3. **Stage 4 (Stateful - PubSubOrderRestorerFn)**: Because parallel Stage 3
+   execution causes segments to finish out of order, `PubSubOrderRestorerFn`
+   buffers out-of-order completions per `feed_id#session_id` and restores the
+   order they were sequenced in before publishing to Pub/Sub. Ordering is
+   best-effort with a bounded delay, not a guarantee: sequence numbers reflect
+   arrival order at `TagSequenceNumberFn` rather than audio timestamps, and a
+   fallback timer publishes out of order when a segment is late. See
+   ARCHITECTURE.md section 5C.
 """
 
 import concurrent.futures
 import datetime
 import io
+import logging
 import time
 import urllib.parse
 from collections.abc import Iterator
@@ -38,6 +72,7 @@ import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
+from apache_beam.metrics.metric import Counter, Distribution
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -72,6 +107,7 @@ from backend.pipeline.segmentation.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
+    PendingPubSubMessage,
     SegmentationDlqOutput,
 )
 from backend.pipeline.segmentation.options import (
@@ -215,7 +251,8 @@ class ParseAndKeyFn(beam.DoFn):
 
                 if freshness_reference_ms is not None:
                     freshness_ms = (
-                        int(time.time() * 1000) - freshness_reference_ms
+                        int(time.time() * MS_PER_SECOND)
+                        - freshness_reference_ms
                     )
                     self.data_freshness_ms.update(freshness_ms)
                 metadata = ChunkMetadata(
@@ -256,16 +293,20 @@ class ParseAndKeyFn(beam.DoFn):
         yield from outputs
 
 
-@beam.typehints.with_input_types(tuple[str, FlushRequest])
-@beam.typehints.with_output_types(PubsubMessage)
+@beam.typehints.with_input_types(tuple[str, tuple[int, FlushRequest]])
+@beam.typehints.with_output_types(tuple[str, tuple[int, PendingPubSubMessage]])
 class UploadRawSegmentFn(beam.DoFn):
     """Stateless DoFn to upload PCM audio bytes as a raw WAV file to the GCS staging bucket
     and yield a SegmentedAudio claim-check protobuf message.
     """
 
     SHARED_GCS_HANDLE = Shared()
-    segmentation_success: Any
-    segmentation_error: Any
+    segmentation_success: Counter
+    segmentation_error: Counter
+    gcs_chunks_downloaded: Counter
+    stitched_segments_uploaded: Counter
+    download_latency_ms: Distribution
+    stitch_latency_ms: Distribution
 
     def __init__(
         self, staging_audio_bucket: str | None, project_id: str
@@ -316,7 +357,7 @@ class UploadRawSegmentFn(beam.DoFn):
     def _download_contributing_chunks(
         self,
         request: FlushRequest,
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
         parent_context: otel_context.Context,
     ) -> dict[str, tuple[np.ndarray, int, int]]:
         """Downloads and decodes all contributing chunks in parallel."""
@@ -396,7 +437,7 @@ class UploadRawSegmentFn(beam.DoFn):
 
         download_duration_ms = (
             time.perf_counter_ns() - download_start
-        ) // 1_000_000
+        ) // NANOS_PER_MS
         self.download_latency_ms.update(int(download_duration_ms))
         return decoded_chunks
 
@@ -404,7 +445,7 @@ class UploadRawSegmentFn(beam.DoFn):
         self,
         request: FlushRequest,
         decoded_chunks: dict[str, tuple[np.ndarray, int, int]],
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
     ) -> bytes:
         """Slices, concatenates, and converts the entire continuous segment time range to FLAC bytes."""
         stitch_start = time.perf_counter_ns()
@@ -419,7 +460,7 @@ class UploadRawSegmentFn(beam.DoFn):
         stitched_segments = []
         for chunk in sorted_chunks:
             samples, sr, chunk_start_ms = decoded_chunks[chunk.gcs_uri]
-            chunk_duration_ms = int(len(samples) / sr * 1000)
+            chunk_duration_ms = int(len(samples) / sr * MS_PER_SECOND)
             chunk_end_ms = chunk_start_ms + chunk_duration_ms
 
             # Calculate overlap between this chunk and the entire segment time range
@@ -428,10 +469,10 @@ class UploadRawSegmentFn(beam.DoFn):
 
             if overlap_start < overlap_end:
                 rel_start_samples = int(
-                    (overlap_start - chunk_start_ms) * (sr / 1000)
+                    (overlap_start - chunk_start_ms) * (sr / MS_PER_SECOND)
                 )
                 rel_end_samples = int(
-                    (overlap_end - chunk_start_ms) * (sr / 1000)
+                    (overlap_end - chunk_start_ms) * (sr / MS_PER_SECOND)
                 )
                 stitched_segments.append(
                     samples[rel_start_samples:rel_end_samples]
@@ -453,7 +494,7 @@ class UploadRawSegmentFn(beam.DoFn):
 
         stitch_duration_ms = (
             time.perf_counter_ns() - stitch_start
-        ) // 1_000_000
+        ) // NANOS_PER_MS
         self.stitch_latency_ms.update(int(stitch_duration_ms))
         return flac_bytes
 
@@ -462,7 +503,7 @@ class UploadRawSegmentFn(beam.DoFn):
         request: FlushRequest,
         flac_bytes: bytes,
         start_datetime: datetime.datetime,
-        task_logger: Any,
+        task_logger: logging.LoggerAdapter[Any] | logging.Logger,
     ) -> str:
         """Uploads the finalized FLAC audio bytes to GCS staging bucket."""
         gcs_client = self.gcs_client
@@ -583,15 +624,18 @@ class UploadRawSegmentFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, FlushRequest],
-    ) -> Iterator[PubsubMessage | SegmentationDlqOutput]:
-        feed_id, request = element
+        element: tuple[str, tuple[int, FlushRequest]],
+    ) -> Iterator[
+        tuple[str, tuple[int, PendingPubSubMessage]] | SegmentationDlqOutput
+    ]:
+        _key, (seq_num, request) = element
+        feed_id = request.feed_id
+        session_key = f"{feed_id}#{request.session_id}"
         trace_attrs: dict[str, str] = {}
         if request.traceparent:
             trace_attrs["traceparent"] = request.traceparent
-        baggage_val = getattr(request, "baggage", None)
-        if baggage_val is not None:
-            trace_attrs["baggage"] = str(baggage_val)
+        if request.baggage is not None:
+            trace_attrs["baggage"] = str(request.baggage)
 
         try:
             with with_tracer_context(
@@ -612,10 +656,17 @@ class UploadRawSegmentFn(beam.DoFn):
                 pubsub_attributes: dict[str, str] = {}
                 inject_otel_context(pubsub_attributes)
 
-                yield PubsubMessage(
-                    data=segmented_audio_pb.SerializeToString(),
-                    attributes=pubsub_attributes,
-                    ordering_key=request.feed_id,
+                yield (
+                    session_key,
+                    (
+                        seq_num,
+                        {
+                            "data": segmented_audio_pb.SerializeToString(),
+                            "attributes": pubsub_attributes,
+                            "ordering_key": request.feed_id,
+                            "is_tombstone": False,
+                        },
+                    ),
                 )
                 self.segmentation_success.inc()
 
@@ -625,6 +676,18 @@ class UploadRawSegmentFn(beam.DoFn):
                 feed_id,
             )
             self.segmentation_error.inc()
+            yield (
+                session_key,
+                (
+                    seq_num,
+                    {
+                        "data": b"",
+                        "attributes": {},
+                        "ordering_key": feed_id,
+                        "is_tombstone": True,
+                    },
+                ),
+            )
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
                 {"error": str(e), "feed_id": feed_id},
