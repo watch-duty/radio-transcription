@@ -33,10 +33,19 @@ To maximize testability and guarantee 100% serialization (pickling) safety acros
 ### 1. `OrderedContinuousStitchAudioFn` (`transforms/stateful.py`)
 The Apache Beam stateful Windmill DoFn. Manages persistent state cells, watermark timers (`out_of_order_timer`, `stale_timer`), and bundle lease limits, delegating all domain evaluation to the stateless engine.
 
-### 2. `StitcherEngine` (`transforms/stitcher_engine.py`)
+### 2. `TagSequenceNumberFn` (`transforms/stateful.py`)
+Stateful DoFn keyed by `feed_id#session_id` that assigns strictly monotonic sequence numbers (`1, 2, 3...`) to stitched segments before parallel Stage 3 key scattering.
+
+### 3. `UploadRawSegmentFn` (`transforms/stateless.py`)
+Stateless audio stitching and compression stage. Driven by randomized UUID keys (`f"{feed_id}#{session_id}#{uuid}"`) + `beam.Reshuffle()` to spread heavy FLAC encoding across the Dataflow worker fleet instead of pinning it to one vCPU per feed.
+
+### 4. `PubSubOrderRestorerFn` (`transforms/stateful.py`)
+Stateful order restoration DoFn keyed by `feed_id#session_id`. Re-sequences parallel Stage 3 completions back into the order they were assigned, backed by a tunable fallback recovery timer (`FALLBACK_DRAIN_TIMER`) and skipped sequence tracking (`SKIPPED_SEQS_STATE`) so a late segment still publishes. Ordering is best-effort with a bounded delay rather than a guarantee — see [ARCHITECTURE.md](ARCHITECTURE.md) §5C for what downstream consumers can and cannot rely on.
+
+### 5. `StitcherEngine` (`transforms/stitcher_engine.py`)
 The intermediate stateless domain execution orchestrator. Coordinates downloading raw GCS staging audio files, lazily initializing ONNXRuntime Silero VAD inference sessions, and emitting structured `FlushRequest` payloads.
 
-### 3. `AudioStitchingStateMachine` (`state/stitcher_state.py`)
+### 6. `AudioStitchingStateMachine` (`state/stitcher_state.py`)
 The framework-agnostic finite state machine (FSM). Emits imperative state transition actions (`AppendBufferAction`, `FlushAction`, `DropAction`) based on active VAD evaluations and sequence context tracking.
 
 ---

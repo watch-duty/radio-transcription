@@ -5,6 +5,7 @@ It is separated from the CLI entry point to improve testability and modularity.
 """
 
 import json
+import uuid
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import (
@@ -25,9 +26,11 @@ from backend.pipeline.segmentation.constants import (
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_MIN_RAM_RESOURCE_HINT,
+    DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
+    STAGE3_MIN_RAM_RESOURCE_HINT,
 )
 from backend.pipeline.segmentation.datatypes import (
     OrderRestorerConfig,
@@ -36,6 +39,8 @@ from backend.pipeline.segmentation.datatypes import (
 from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedStitchAudioFn,
+    PubSubOrderRestorerFn,
+    TagSequenceNumberFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -77,6 +82,20 @@ def get_pipeline(
     )
 
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+
+    fallback_drain_timeout = (
+        options.pubsub_fallback_drain_timeout_ms
+        if options.pubsub_fallback_drain_timeout_ms is not None
+        else DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS
+    )
+
+    if fallback_drain_timeout <= 0:
+        err_msg = (
+            f"Invalid pipeline configuration: pubsub_fallback_drain_timeout_ms "
+            f"({fallback_drain_timeout}) must be positive. A non-positive value would "
+            f"force-drain buffered segments out of order the moment any gap appears."
+        )
+        raise ValueError(err_msg)
 
     if not options.staging_audio_bucket:
         err_msg = (
@@ -139,17 +158,42 @@ def get_pipeline(
 
     stitching_main = stitching.main
 
+    # Re-key to feed_id#session_id BEFORE the stateful tagger. Beam partitions
+    # stateful DoFn state by the *input* key, so this is what makes the sequence
+    # counter per-session rather than per-feed, keeping a stalled collector from
+    # blocking a healthy one that took over its lease.
+    session_keyed = stitching_main | "KeyBySession" >> beam.Map(
+        lambda kv: (f"{kv[1].feed_id}#{kv[1].session_id}", kv[1])
+    )
+
+    tagged_requests = session_keyed | "TagSequenceNumber" >> beam.ParDo(
+        TagSequenceNumberFn()
+    )
+
+    stateless_input = (
+        tagged_requests
+        | "RandomizeKeyForStage3"
+        >> beam.Map(lambda kv: (f"{kv[0]}#{uuid.uuid4().hex}", kv[1]))
+        | "ReshuffleStage3" >> beam.Reshuffle()
+    )
+
     # Statelessly upload the raw PCM buffer as a WAV file and produce SegmentedAudio claim-check
-    uploaded_segments = stitching_main | "UploadRawSegment" >> beam.ParDo(
+    uploaded_segments = stateless_input | "UploadRawSegment" >> beam.ParDo(
         UploadRawSegmentFn(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
         )
-    ).with_resource_hints(min_ram=DEFAULT_MIN_RAM_RESOURCE_HINT).with_outputs(
+    ).with_resource_hints(min_ram=STAGE3_MIN_RAM_RESOURCE_HINT).with_outputs(
         DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
     )
 
-    uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
+    ordered_pubsub = (
+        uploaded_segments.main
+        | "RestorePubSubOrder"
+        >> beam.ParDo(PubSubOrderRestorerFn(timeout_ms=fallback_drain_timeout))
+    )
+
+    ordered_pubsub | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
         publish_with_ordering_key=True,

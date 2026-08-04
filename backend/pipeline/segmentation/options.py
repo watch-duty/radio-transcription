@@ -7,6 +7,7 @@ from apache_beam.options.pipeline_options import PipelineOptions
 from backend.pipeline.segmentation.constants import (
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+    DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
 )
@@ -70,6 +71,19 @@ class SegmentationOptions(PipelineOptions):
             type=int,
             default=None,
             help=f"Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: {DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS}ms.",
+        )
+
+        parser.add_argument(
+            "--pubsub_fallback_drain_timeout_ms",
+            type=int,
+            default=None,
+            help=(
+                "Milliseconds to wait for a missing segment's upload before publishing later "
+                "segments ahead of it, rather than blocking the feed indefinitely. Governed by "
+                "Stage 3 upload skew, not by chunk cadence, so tune it independently of "
+                "out_of_order_timeout_ms using the pubsub_order_gap_resolution_seconds metric. "
+                f"Default: {DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS}ms."
+            ),
         )
 
         parser.add_argument(
