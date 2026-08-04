@@ -30,6 +30,7 @@ from backend.pipeline.segmentation.constants import (
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
+    STAGE3_MIN_RAM_RESOURCE_HINT,
 )
 from backend.pipeline.segmentation.datatypes import (
     OrderRestorerConfig,
@@ -182,7 +183,7 @@ def get_pipeline(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
         )
-    ).with_resource_hints(min_ram=DEFAULT_MIN_RAM_RESOURCE_HINT).with_outputs(
+    ).with_resource_hints(min_ram=STAGE3_MIN_RAM_RESOURCE_HINT).with_outputs(
         DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
     )
 

@@ -47,6 +47,20 @@ DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
 DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS: Final = 300000
 OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
 DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
+# Stage 3 (UploadRawSegmentFn) is I/O-bound -- download, stitch, upload -- and
+# holds no model. Its working set is a few MB per in-flight segment against the
+# shared download pool, so the 16GB it inherited from Stage 2 (which does carry
+# the VAD and denoiser) is far more than it needs, and Dataflow Prime's vertical
+# autoscaling has been trimming it down at runtime anyway. This states the real
+# requirement instead of leaning on that correction.
+#
+# Diverging from Stage 2's hint also splits the two into separate environments,
+# which independently forces the fusion break. That is a side effect, not the
+# mechanism: ReshuffleStage3 is what this pipeline relies on, because it also
+# scatters the key (see orchestration.py). Do not delete the Reshuffle on the
+# theory that this hint covers it -- a fusion break without the re-key leaves
+# Stage 3 concentrated on the feed's key owner, just in a different pool.
+STAGE3_MIN_RAM_RESOURCE_HINT: Final = "4GB"
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
