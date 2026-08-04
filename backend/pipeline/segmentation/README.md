@@ -40,7 +40,7 @@ Stateful DoFn keyed by `feed_id#session_id` that assigns strictly monotonic sequ
 Stateless audio stitching and compression stage. Driven by randomized UUID keys (`f"{feed_id}#{session_id}#{uuid}"`) + `beam.Reshuffle()` to spread heavy FLAC encoding across the Dataflow worker fleet instead of pinning it to one vCPU per feed.
 
 ### 4. `PubSubOrderRestorerFn` (`transforms/stateful.py`)
-Stateful order restoration DoFn keyed by `feed_id#session_id`. Re-sequences parallel Stage 3 completions back into the order they were assigned, backed by a tunable 180s fallback recovery timer (`FALLBACK_DRAIN_TIMER`) and skipped sequence tracking (`SKIPPED_SEQS_STATE`) so a late segment still publishes. Ordering is best-effort with a bounded delay rather than a guarantee — see [ARCHITECTURE.md](ARCHITECTURE.md) §5C for what downstream consumers can and cannot rely on.
+Stateful order restoration DoFn keyed by `feed_id#session_id`. Re-sequences parallel Stage 3 completions back into the order they were assigned, backed by a tunable 600s fallback recovery timer (`FALLBACK_DRAIN_TIMER`) and skipped sequence tracking (`SKIPPED_SEQS_STATE`) so a late segment still publishes. Ordering is best-effort with a bounded delay rather than a guarantee — see [ARCHITECTURE.md](ARCHITECTURE.md) §5C for what downstream consumers can and cannot rely on.
 
 ### 5. `StitcherEngine` (`transforms/stitcher_engine.py`)
 The intermediate stateless domain execution orchestrator. Coordinates downloading raw GCS staging audio files, lazily initializing ONNXRuntime Silero VAD inference sessions, and emitting structured `FlushRequest` payloads.

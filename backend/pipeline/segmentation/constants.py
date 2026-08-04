@@ -63,19 +63,26 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 # Stage 3 fanout and worst during autoscaling. Tune the two independently,
 # against different evidence.
 #
-# 180s is deliberately conservative for initial rollout, not a tuned value. The
+# 600s is deliberately conservative for initial rollout, not a tuned value. The
 # skew this has to clear is only observable in production, so the fallback
 # starts effectively dormant and is tightened once
 # pubsub_order_gap_resolution_seconds has enough samples to read (set this
 # comfortably above its p99.9; at ~150-400 sessions/day expect that to
 # accumulate slowly, so read maxima before percentiles).
 #
+# The floor comes from production: system lag on the current pipeline reached
+# 231-311s during peak backlog, which is the regime this pipeline's autoscaling
+# work targets. A timeout inside that band would force-drain segments that were
+# merely delayed by the backlog rather than lost -- publishing out of order
+# precisely when the pipeline is under the stress the fallback is supposed to
+# ride out. 600s clears the observed worst case with room to spare.
+#
 # Erring long is cheap: the fallback only arms when a gap exists, so a long
 # timeout costs no latency in the normal path, and overshooting merely delays
 # recovery of a wedged feed -- loudly, via pubsub_order_stall_warnings. Erring
 # short publishes out of order when nothing is actually wrong, which is silent.
 # Lower this only with data in hand.
-DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS: Final = 180000
+DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS: Final = 600000
 
 # Upper bound on skipped sequence numbers retained per key. An entry is dropped
 # only when its segment finally arrives, so a segment that never arrives -- the
@@ -95,6 +102,12 @@ PUBSUB_STALL_PROBE_INTERVAL_SEC: Final = 60.0
 # therefore a watchdog on the fallback rather than on ordinary reordering: a
 # fixed threshold above the fallback timeout would never trip, and one below it
 # would fire on every routine drain.
+#
+# Because it is a multiple, the warning threshold moves with the timeout: at the
+# 600s default a stall is reported after 30 minutes. That is detection latency
+# for a fallback that has itself failed, not for a stalled feed -- the fallback
+# bounds an ordinary stall an order of magnitude sooner. Lower the multiple only
+# alongside a lower timeout, or the probe starts firing on routine drains.
 PUBSUB_STALL_WARN_TIMEOUT_MULTIPLE: Final = 3
 
 

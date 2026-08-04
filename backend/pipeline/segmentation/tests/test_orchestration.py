@@ -261,10 +261,14 @@ def test_fallback_drain_timeout_is_overridable_at_launch() -> None:
     """Production is the only place upload skew is observable, so this must be
     tunable without a code change.
     """
-    fn = _restorer_from_pipeline(
-        ["--pubsub_fallback_drain_timeout_ms", "180000"]
+    override = 180000
+    assert override != DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS, (
+        "the override must differ from the default, or this asserts nothing"
     )
-    assert fn.timeout_ms == 180000
+    fn = _restorer_from_pipeline(
+        ["--pubsub_fallback_drain_timeout_ms", str(override)]
+    )
+    assert fn.timeout_ms == override
 
 
 def test_non_positive_fallback_drain_timeout_is_rejected() -> None:
