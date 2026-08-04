@@ -1,6 +1,8 @@
 import argparse
+import inspect
 import json
 from pathlib import Path
+from typing import Any
 
 import apache_beam as beam
 import pytest
@@ -14,6 +16,12 @@ from backend.pipeline.segmentation.constants import (
 from backend.pipeline.segmentation.datatypes import FlushRequest
 from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.orchestration import get_pipeline
+from backend.pipeline.segmentation.transforms import (
+    stateful as stateful_module,
+)
+from backend.pipeline.segmentation.transforms import (
+    stateless as stateless_module,
+)
 from backend.pipeline.segmentation.transforms.stateful import (
     TagSequenceNumberFn,
 )
@@ -266,3 +274,61 @@ def test_non_positive_fallback_drain_timeout_is_rejected() -> None:
         match=r"pubsub_fallback_drain_timeout_ms .* must be positive",
     ):
         _restorer_from_pipeline(["--pubsub_fallback_drain_timeout_ms", "0"])
+
+
+def _beam_dofns_defined_in(module: Any) -> list[type]:
+    """Returns beam.DoFn subclasses defined in (not merely imported into) a module."""
+    return [
+        obj
+        for _, obj in inspect.getmembers(module, inspect.isclass)
+        if issubclass(obj, beam.DoFn)
+        and obj is not beam.DoFn
+        and obj.__module__ == module.__name__
+    ]
+
+
+def _declares_beam_state(dofn_cls: type) -> bool:
+    """True if any method declares a StateParam or TimerParam default.
+
+    Checked statically rather than through is_stateful_dofn so nothing has to be
+    constructed, and -- more importantly -- so that a bare StateSpec passed where
+    a StateParam belongs reads as "not stateful", which is the defect this is
+    meant to catch.
+    """
+    for _, method in inspect.getmembers(dofn_cls, inspect.isfunction):
+        for param in inspect.signature(method).parameters.values():
+            if isinstance(
+                param.default, beam.DoFn.StateParam | beam.DoFn.TimerParam
+            ):
+                return True
+    return False
+
+
+def test_dofns_live_in_the_module_matching_their_statefulness() -> None:
+    """stateful.py and stateless.py split on a property Beam itself can check.
+
+    This is not bookkeeping. A DoFn whose state is declared with a bare
+    StateSpec instead of beam.DoFn.StateParam(...) is silently not stateful:
+    Beam never wires the state up, every element raises AttributeError on first
+    access, and unit tests that inject mocks for those parameters pass anyway.
+    Such a DoFn sits in stateful.py while failing this check, so the mismatch
+    between file and behaviour is what surfaces the bug.
+    """
+    stateful_dofns = _beam_dofns_defined_in(stateful_module)
+    stateless_dofns = _beam_dofns_defined_in(stateless_module)
+    assert stateful_dofns and stateless_dofns, "expected DoFns in both modules"
+
+    for cls in stateful_dofns:
+        assert _declares_beam_state(cls), (
+            f"{cls.__name__} is in stateful.py but declares no StateParam or "
+            "TimerParam. Either it belongs in stateless.py, or its specs are "
+            "not wrapped in beam.DoFn.StateParam()/TimerParam() -- in which "
+            "case Beam will not treat it as stateful at runtime."
+        )
+
+    for cls in stateless_dofns:
+        assert not _declares_beam_state(cls), (
+            f"{cls.__name__} is in stateless.py but declares Beam state or "
+            "timers, so Beam will serialize its processing per key. It belongs "
+            "in stateful.py."
+        )
