@@ -50,9 +50,15 @@ DEFAULT_MIN_RAM_RESOURCE_HINT: Final = "16GB"
 # Stage 3 (UploadRawSegmentFn) is I/O-bound -- download, stitch, upload -- and
 # holds no model. Its working set is a few MB per in-flight segment against the
 # shared download pool, so the 16GB it inherited from Stage 2 (which does carry
-# the VAD and denoiser) is far more than it needs, and Dataflow Prime's vertical
-# autoscaling has been trimming it down at runtime anyway. This states the real
-# requirement instead of leaning on that correction.
+# the VAD and denoiser) is far more than it needs.
+#
+# Prime's vertical autoscaling already corrects this at runtime -- production
+# logs "change per worker memory limit for pool from 16.0 GiB to 6.0 GiB", and
+# peak worker usage against that limit is 3.22 GiB. So the 16GB hint is closer
+# to fiction than to a setting, and the win here is mostly that the pools start
+# at the real requirement instead of being trimmed into it. 4GB keeps headroom
+# over observed usage for a stage that carries no model, and remains a floor:
+# vertical autoscaling still adjusts the live limit from there.
 #
 # Diverging from Stage 2's hint also splits the two into separate environments,
 # which independently forces the fusion break. That is a side effect, not the
