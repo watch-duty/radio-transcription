@@ -2,7 +2,7 @@ import argparse
 import inspect
 import json
 from pathlib import Path
-from typing import Any
+from types import ModuleType
 
 import apache_beam as beam
 import pytest
@@ -280,7 +280,7 @@ def test_non_positive_fallback_drain_timeout_is_rejected() -> None:
         _restorer_from_pipeline(["--pubsub_fallback_drain_timeout_ms", "0"])
 
 
-def _beam_dofns_defined_in(module: Any) -> list[type]:
+def _beam_dofns_defined_in(module: ModuleType) -> list[type]:
     """Returns beam.DoFn subclasses defined in (not merely imported into) a module."""
     return [
         obj
