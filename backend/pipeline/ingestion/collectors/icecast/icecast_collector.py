@@ -81,6 +81,35 @@ AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
     120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins);
     # filters out baseline ~30-90s Icecast stream buffer delay
 )
+# Icecast carries no timestamp metadata, so the stream timeline is synthesized
+# from a self-assigned anchor plus PCM sample counting. Its offset from true
+# broadcast time is unknown and unknowable in-band. receipt_time is the only
+# clock we trust, so the timeline is continuously corrected toward it.
+#
+# Correction follows the NTP step/slew distinction:
+#
+# SLEW (normal): ordinary sub-realtime delivery drift is absorbed a little at a
+# time, capped per chunk. The cap MUST stay below
+# segmentation.DEFAULT_SIGNIFICANT_GAP_MS (800ms) so a correction never reads as
+# a transmission boundary downstream. Measured on feed dfdfc8f6 (CO / Montezuma
+# County Fire and EMS) 2026-08-06: 0.963x delivery => 3.7% drift => 554ms to
+# absorb per 15s chunk. A 700ms cap absorbs 4.7%, covering that feed with
+# margin, and holds the timeline at receipt time indefinitely.
+#
+# The cap also sets discontinuity recovery speed: surplus above the drift rate
+# is what works an accumulated error back down (700ms - 554ms = 146ms/chunk,
+# recovering a 60s gap in ~100 min). Raising it converges faster but eats the
+# margin to the 800ms split threshold; lowering it is safer but slower.
+MAX_TIMELINE_SLEW_SEC: Final = 0.7
+
+# STEP (exceptional): a discontinuity slew cannot explain -- an ffmpeg
+# transparent reconnect gap, or a stalled source. Bound to
+# AUDIO_LAG_WARN_THRESHOLD_SEC so the timeline steps on exactly the condition
+# that emits the [Ingestion Audio Lag] warning. With slew active this should
+# essentially never fire on a healthy feed, so a step in the logs is a real
+# signal rather than a metronome. A step leaves a forward gap of its full size;
+# that gap is genuine when the cause is a dropped connection.
+MAX_CUMULATIVE_STREAM_DRIFT_SECS: Final = AUDIO_LAG_WARN_THRESHOLD_SEC
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -780,6 +809,7 @@ class IcecastTimelineManager:
         self.burst_buffer: list[CapturedChunk] = []
         self._last_yielded_end_time: datetime.datetime | None = None
         self.last_receipt_time: datetime.datetime | None = None
+        self.timeline_step_count = 0
 
     def _validate_and_track_chunk(self, chunk: CapturedChunk) -> CapturedChunk:
         if chunk.chunk_end_time < chunk.chunk_start_time:
@@ -930,6 +960,7 @@ class IcecastTimelineManager:
                     chunk=chunk,
                     cumulative_pcm_samples=cumulative_pcm_samples,
                     chunk_duration_sec=chunk_duration_sec,
+                    chunk_receipt=chunk_receipt,
                 )
                 res.append(self._validate_and_track_chunk(chunk))
                 self.last_receipt_time = chunk_receipt
@@ -952,6 +983,7 @@ class IcecastTimelineManager:
 
         is_fast = False
         is_late = False
+        arrival_time: float | None = None
         if self.last_receipt_time is not None:
             arrival_time = (
                 chunk_receipt - self.last_receipt_time
@@ -962,7 +994,7 @@ class IcecastTimelineManager:
             is_late = chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS
 
         if is_fast or is_late:
-            if is_fast:
+            if is_fast and arrival_time is not None:
                 logger.info(
                     "Feed %s (%s): Catch-up burst detected (arrival %.2fs < %.2fs). "
                     "Entering burst buffering mode.",
@@ -971,7 +1003,7 @@ class IcecastTimelineManager:
                     arrival_time,
                     chunk_duration_sec * 0.8,
                 )
-            else:
+            elif is_late:
                 logger.info(
                     "Feed %s (%s): Late chunk detected (lag %.2fs > %.2fs). "
                     "Entering burst buffering mode.",
@@ -991,6 +1023,7 @@ class IcecastTimelineManager:
             chunk=chunk,
             cumulative_pcm_samples=cumulative_pcm_samples,
             chunk_duration_sec=chunk_duration_sec,
+            chunk_receipt=chunk_receipt,
         )
         return [self._validate_and_track_chunk(chunk)]
 
@@ -999,43 +1032,81 @@ class IcecastTimelineManager:
         chunk: CapturedChunk,
         cumulative_pcm_samples: int,
         chunk_duration_sec: float,
+        chunk_receipt: datetime.datetime,
     ) -> CapturedChunk:
-        if chunk.stream_interval_lag_sec is not None:
-            if chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
-                old_anchor = self.stream_anchor_time
-                # Re-anchor the stream timeline to align chunk_end_time with receipt_time
-                self.stream_anchor_time = (
-                    chunk.receipt_time or _now_utc()
-                ) - datetime.timedelta(
-                    seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
+        """Correct the synthesized timeline toward receipt_time.
+
+        Slews by a bounded amount per chunk for ordinary drift; steps only for
+        discontinuities slew cannot explain. See MAX_TIMELINE_SLEW_SEC.
+        """
+        audio_lag_sec = (chunk_receipt - chunk.chunk_start_time).total_seconds()
+        # A healthy feed lags by exactly one chunk: chunk_end aligns with
+        # receipt. Anything beyond that is timeline error to correct away.
+        error_sec = audio_lag_sec - chunk_duration_sec
+
+        is_interval_drift = (
+            chunk.stream_interval_lag_sec is not None
+            and chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS
+        )
+        is_step = (
+            is_interval_drift or error_sec > MAX_CUMULATIVE_STREAM_DRIFT_SECS
+        )
+
+        if is_step:
+            correction_sec = error_sec
+        elif error_sec > 0.0:
+            correction_sec = min(error_sec, MAX_TIMELINE_SLEW_SEC)
+        else:
+            # Timeline is at or ahead of receipt; nothing to correct.
+            return chunk
+
+        old_anchor = self.stream_anchor_time
+        self.stream_anchor_time = old_anchor + datetime.timedelta(
+            seconds=correction_sec
+        )
+        start_offset_sec = (
+            cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+        )
+        new_start = self.stream_anchor_time + datetime.timedelta(
+            seconds=start_offset_sec
+        )
+        new_end = new_start + datetime.timedelta(seconds=chunk_duration_sec)
+
+        if is_step:
+            self.timeline_step_count += 1
+            if is_interval_drift:
+                step_reason = (
+                    f"Stream interval lag "
+                    f"{chunk.stream_interval_lag_sec:.2f}s > "
+                    f"{MAX_STREAM_DRIFT_SECS:.2f}s"
                 )
-                logger.warning(
-                    "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
-                    "%.2fs. Re-anchoring timeline: "
-                    "old_anchor=%s, new_anchor=%s",
-                    self.feed_id,
-                    self.feed_name,
-                    chunk.stream_interval_lag_sec,
-                    MAX_STREAM_DRIFT_SECS,
-                    old_anchor.isoformat(),
-                    self.stream_anchor_time.isoformat(),
+            else:
+                step_reason = (
+                    f"Timeline error {error_sec:.2f}s > "
+                    f"{MAX_CUMULATIVE_STREAM_DRIFT_SECS:.2f}s"
                 )
-                # Recalculate current chunk's timestamps using the new anchor
-                start_offset_sec = (
-                    cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
-                )
-                new_start = self.stream_anchor_time + datetime.timedelta(
-                    seconds=start_offset_sec
-                )
-                new_end = new_start + datetime.timedelta(
-                    seconds=chunk_duration_sec
-                )
-                chunk = dataclasses.replace(
-                    chunk,
-                    chunk_start_time=new_start,
-                    chunk_end_time=new_end,
-                )
-        return chunk
+            forward_gap_sec = (
+                (new_start - self._last_yielded_end_time).total_seconds()
+                if self._last_yielded_end_time is not None
+                else 0.0
+            )
+            logger.warning(
+                "[Ingestion Timeline Step] Feed %s (%s): %s. Stepping timeline: "
+                "old_anchor=%s, new_anchor=%s, forward_gap_sec=%.1f, "
+                "step_count=%d",
+                self.feed_id,
+                self.feed_name,
+                step_reason,
+                old_anchor.isoformat(),
+                self.stream_anchor_time.isoformat(),
+                forward_gap_sec,
+                self.timeline_step_count,
+            )
+        return dataclasses.replace(
+            chunk,
+            chunk_start_time=new_start,
+            chunk_end_time=new_end,
+        )
 
     def flush(self) -> list[CapturedChunk]:
         """Flush any remaining buffered chunks, adjusting if still in burst."""

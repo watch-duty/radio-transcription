@@ -2283,6 +2283,118 @@ class TestIcecastTimelineManager(unittest.TestCase):
             now + datetime.timedelta(seconds=75),
         )
 
+    def _slew_manager(
+        self, anchor: datetime.datetime
+    ) -> "icecast_collector.IcecastTimelineManager":
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=anchor,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        manager.in_burst = False
+        return manager
+
+    def test_slew_cap_stays_below_segmentation_split_threshold(self) -> None:
+        """The slew cap must never read as a transmission boundary."""
+        # segmentation.constants.DEFAULT_SIGNIFICANT_GAP_MS
+        self.assertLess(icecast_collector.MAX_TIMELINE_SLEW_SEC, 0.800)
+
+    def test_ordinary_drift_slews_without_stepping(self) -> None:
+        """Sub-threshold drift is absorbed gradually, never stepped."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=45)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        # error = 45s lag - 15s chunk = 30s, capped to MAX_TIMELINE_SLEW_SEC
+        shift = (manager.stream_anchor_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            shift, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_slew_is_bounded_per_chunk(self) -> None:
+        """A large error is not absorbed in one chunk while below step bound."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=100)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        gap_sec = (res[0].chunk_start_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            gap_sec, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_discontinuity_beyond_bound_steps(self) -> None:
+        """Error past the step bound is corrected in full, and counted."""
+        now = datetime.datetime.now(datetime.UTC)
+        lag = icecast_collector.MAX_CUMULATIVE_STREAM_DRIFT_SECS + 60.0
+        initial_anchor = now - datetime.timedelta(seconds=lag)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 1)
+        # Step aligns chunk_end with receipt exactly.
+        self.assertEqual(res[0].chunk_end_time, now)
+        self.assertEqual(
+            manager.stream_anchor_time, now - datetime.timedelta(seconds=15)
+        )
+
+    def test_timeline_ahead_of_receipt_is_left_alone(self) -> None:
+        """No correction when the timeline is not behind receipt time."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=10)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.stream_anchor_time, initial_anchor)
+        self.assertEqual(manager.timeline_step_count, 0)
+
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
     )
