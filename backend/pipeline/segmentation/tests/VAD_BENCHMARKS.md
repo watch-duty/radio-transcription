@@ -36,6 +36,8 @@ Numbers come from the `BENCHMARK:` lines that `_run_integration_test` writes to 
 | **`test_cajon_pass_trailing.flac`** | **0.090** | `0.913` | `0.048` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
 | **`test_vad_inter_transmission_gap_speech.flac`** | **0.793** | `0.688` | `0.935` | Oregon Hood River (`bcfy_feeds`) 15s stream chunk (`c1416cf1`). |
 | **`test_vad_hood_river_segment_payload.flac`** | **0.606** | `0.454` | `0.912` | The `[8.868s, 13.548s]` stitched payload cut from the chunk above. |
+| **`test_idle_line_noise_with_speech.flac`** | **0.837** | `1.000` | `0.720` | Real-world Broadcastify stream with 15s active dispatch followed by 15s stationary soundcard line-in ADC hiss (skips neural denoiser on idle chunk with 0 false positives). |
+
 
 ---
 

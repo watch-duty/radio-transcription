@@ -592,6 +592,25 @@ class TestVadEngine(unittest.TestCase):
         # segment before noise floor settles.
         self.assertEqual(padded_segments, [(0.16, 1.216)])
 
+    def test_integration_idle_line_noise_with_speech(self) -> None:
+        """Integration test to verify VAD detects speech while stationarity skips idle noise.
+
+        Verifies that on a 30s stream with active dispatch speech in chunk 1 (0-15s)
+        and stationary ADC soundcard line-in hiss in chunk 2 (15-30s), speech is
+        reliably detected in chunk 1 and chunk 2 is skipped without false positives.
+        """
+        self._run_integration_test(
+            "test_idle_line_noise_with_speech.flac",
+            [
+                (0.0, 1.484),
+                (3.188, 4.972),
+                (7.892, 9.072),
+                (9.872, 11.212),
+            ],
+            baseline_f1=0.835,
+            chunk_len_sec=15.0,
+        )
+
     def test_vad_priming_contiguous_chunk(self) -> None:
         """Verifies that passing a prior_audio tail primes VAD state and shifts time coordinates correctly."""
         # 1. Generate 1 second of voice-frequency-like sine wave
