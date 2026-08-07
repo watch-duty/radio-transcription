@@ -10,7 +10,6 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from apache_beam.metrics import Metrics
 from pedalboard import (
     HighpassFilter,
     LowpassFilter,
@@ -921,10 +920,6 @@ class VoiceActivityDetector:
                         cv_rms,
                         peak_ratio,
                     )
-                    Metrics.counter(
-                        "VoiceActivityDetector",
-                        "vad_stationarity_skipped_chunks",
-                    ).inc()
                     return True
 
         return False
