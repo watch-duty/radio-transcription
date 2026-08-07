@@ -130,9 +130,12 @@ MAX_TIMELINE_SLEW_SEC: Final = 0.7
 
 # STEP (exceptional): a discontinuity slew cannot explain -- an ffmpeg
 # transparent reconnect gap, or a stalled source. Bound to
-# AUDIO_LAG_WARN_THRESHOLD_SEC so the timeline steps on exactly the condition
-# that emits the [Ingestion Audio Lag] warning. With slew active this should
-# essentially never fire on a healthy feed, so a step in the logs is a real
+# AUDIO_LAG_WARN_THRESHOLD_SEC to share one order of magnitude with the
+# [Ingestion Audio Lag] warning, but note the two are not the same test: the
+# warning compares raw audio lag, while the step compares drift beyond the one
+# chunk of lag a healthy feed already carries. Stepping therefore begins about
+# one chunk later than the warning first fires. With slew active a step should
+# essentially never occur on a healthy feed, so one in the logs is a real
 # signal rather than a metronome. A step leaves a forward gap of its full size;
 # that gap is genuine when the cause is a dropped connection.
 MAX_CUMULATIVE_STREAM_DRIFT_SECS: Final = AUDIO_LAG_WARN_THRESHOLD_SEC

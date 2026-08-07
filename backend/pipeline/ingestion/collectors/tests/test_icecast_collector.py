@@ -2374,6 +2374,87 @@ class TestIcecastTimelineManager(unittest.TestCase):
             manager.stream_anchor_time, now - datetime.timedelta(seconds=15)
         )
 
+    def test_slew_through_connection_burst_stays_contiguous(self) -> None:
+        """Drive the burst path, which slew now touches on nearly every chunk.
+
+        A manager starts in_burst=True, so the connection burst is the first
+        thing every capture exercises. The old re-anchor only fired here on a
+        rare interval-drift trigger; slew fires whenever the timeline is
+        behind, so this path went from almost never corrected to corrected
+        continuously. Assert the emitted timeline stays well formed and
+        converges rather than drifting or splitting transmissions.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk_sec = 15.0
+        samples = int(chunk_sec * 16000)
+        cumulative = 0
+        receipt = now
+        emitted: list[CapturedChunk] = []
+
+        # Five chunks arriving far faster than real time (the catch-up burst
+        # seen at connect), then steady arrivals slightly slower than the
+        # audio they carry.
+        for interval in [2.0] * 5 + [15.6] * 12:
+            start = manager.stream_anchor_time + datetime.timedelta(
+                seconds=cumulative / 16000
+            )
+            cumulative += samples
+            receipt += datetime.timedelta(seconds=interval)
+            emitted.extend(
+                manager.process_chunk(
+                    chunk=CapturedChunk(
+                        audio_bytes=b"data",
+                        chunk_start_time=start,
+                        chunk_end_time=start
+                        + datetime.timedelta(seconds=chunk_sec),
+                        session_id="session",
+                        receipt_time=receipt,
+                        stream_interval_lag_sec=None,
+                    ),
+                    cumulative_pcm_samples=cumulative,
+                    process_done=False,
+                )
+            )
+
+        self.assertEqual(manager.timeline_step_count, 0)
+        self.assertGreater(len(emitted), 10)
+
+        for chunk in emitted:
+            duration = (
+                chunk.chunk_end_time - chunk.chunk_start_time
+            ).total_seconds()
+            self.assertAlmostEqual(duration, chunk_sec, places=6)
+
+        gaps = [
+            (
+                emitted[i + 1].chunk_start_time - emitted[i].chunk_end_time
+            ).total_seconds()
+            for i in range(len(emitted) - 1)
+        ]
+        self.assertGreaterEqual(min(gaps), 0.0, "timeline went backwards")
+        self.assertLessEqual(
+            max(gaps),
+            icecast_collector.MAX_TIMELINE_SLEW_SEC + 1e-6,
+            "a correction exceeded the slew cap",
+        )
+        # Every gap must stay under the segmentation split threshold.
+        self.assertLess(max(gaps), 0.800)
+
+        # Lag introduced by the burst is worked off, converging on the one
+        # chunk of lag a healthy feed carries.
+        lags = [
+            (chunk.receipt_time - chunk.chunk_start_time).total_seconds()
+            for chunk in emitted
+            if chunk.receipt_time is not None
+        ]
+        self.assertGreater(lags[0], 2 * chunk_sec, "burst should start behind")
+        self.assertAlmostEqual(lags[-1], chunk_sec, delta=1.0)
+
     def test_timeline_ahead_of_receipt_is_left_alone(self) -> None:
         """No correction when the timeline is not behind receipt time."""
         now = datetime.datetime.now(datetime.UTC)
