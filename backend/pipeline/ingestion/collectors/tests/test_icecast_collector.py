@@ -1897,10 +1897,11 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
 
 class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
-    """ffmpeg's transparent reconnects must be surfaced, not just retained."""
+    """ffmpeg reconnect attempts must be surfaced, bounded, and accurate."""
 
     # Verbatim ffmpeg output; the collector sets no -loglevel, so ffmpeg's
-    # default `info` level emits this AV_LOG_WARNING line.
+    # default `info` level emits this AV_LOG_WARNING line. ffmpeg emits one per
+    # *attempt*, backing off up to -reconnect_delay_max.
     RECONNECT_LINE = (
         "[http @ 0x55d1c8a1e400] Will reconnect at 4194304 in 0 second(s), "
         "error=Connection reset by peer."
@@ -1916,28 +1917,46 @@ class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
         tail: collections.deque[str] = collections.deque(
             maxlen=icecast_collector.STDERR_TAIL_LINES
         )
-        http_status_lines: collections.deque[str] = collections.deque(maxlen=8)
         with self.assertLogs(
             icecast_collector.logger, level="WARNING"
         ) as captured:
             await icecast_collector._drain_stderr(
                 reader,
                 tail,
-                http_status_lines,
+                collections.deque(maxlen=8),
                 uuid.uuid4(),
                 "test-feed",
             )
-        return tail, captured.output
-
-    async def test_reconnect_line_is_logged_and_counted(self) -> None:
-        _, output = await self._drain([self.RECONNECT_LINE] * 2)
-
         reconnects = [
-            line for line in output if "[Ingestion Stream Reconnect]" in line
+            line
+            for line in captured.output
+            if "[Ingestion Stream Reconnect]" in line
         ]
+        return tail, reconnects
+
+    async def test_first_attempt_is_logged_immediately(self) -> None:
+        _, reconnects = await self._drain([self.RECONNECT_LINE])
+
+        self.assertEqual(len(reconnects), 1)
+        self.assertIn("attempts=1", reconnects[0])
+
+    async def test_attempt_burst_is_rate_limited(self) -> None:
+        """A sustained outage must not emit one warning per retry line."""
+        _, reconnects = await self._drain([self.RECONNECT_LINE] * 50)
+
+        # First attempt logs; the rest fall inside the suppression window and
+        # are folded into the end-of-capture summary.
         self.assertEqual(len(reconnects), 2)
-        self.assertIn("reconnect_count=1", reconnects[0])
-        self.assertIn("reconnect_count=2", reconnects[1])
+        self.assertIn("attempts=1", reconnects[0])
+        self.assertIn(
+            "capture ended after 50 reconnect attempt(s)", reconnects[1]
+        )
+        self.assertIn("+49 not yet logged", reconnects[1])
+
+    async def test_no_summary_when_every_attempt_was_logged(self) -> None:
+        _, reconnects = await self._drain([self.RECONNECT_LINE])
+
+        self.assertNotIn("capture ended after", reconnects[0])
 
     async def test_reconnect_line_still_reaches_the_tail(self) -> None:
         """Logging must not replace the existing failure-diagnostic path."""

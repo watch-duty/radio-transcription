@@ -82,11 +82,21 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 # gap, so every transparent reconnect permanently adds its full gap duration to
 # the synthesized timeline -- even though ffmpeg itself resumes at the source's
 # live edge. These lines reach the stderr tail already but are only read when
-# the process fails, so a healthy long-running capture discards them. Match
-# ffmpeg's own warning ("Will reconnect at <off> in <n> second(s), error=...")
-# and surface it, so drop-driven timeline error is distinguishable from
-# delivery-rate drift.
+# the process fails, so a healthy long-running capture discards them.
+#
+# This matches ffmpeg's retry warning ("Will reconnect at <off> in <n>
+# second(s), error=..."), which announces a *scheduled attempt*, not a
+# completed reconnect. ffmpeg emits one per attempt and backs off up to
+# -reconnect_delay_max, so a single outage produces many lines (the same
+# behavior _drain_stderr already notes for post-429/5xx retries). Attempts are
+# therefore an upper bound on outages, never a count of them, and logging is
+# rate limited so a sustained outage across many feeds cannot flood.
 _FFMPEG_RECONNECT_PATTERN: Final = re.compile(r"[Ww]ill reconnect at ")
+
+# Minimum wall-clock gap between reconnect log lines per capture session. The
+# first attempt always logs; later ones fold into the next emitted line via its
+# attempt count.
+_RECONNECT_LOG_INTERVAL_SEC: Final = 60.0
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
@@ -338,9 +348,12 @@ async def _drain_stderr(
     ffmpeg can emit many retry lines after the first 429/5xx.  Classification
     must not depend on the original HTTP error surviving the rolling log tail.
 
-    Transparent reconnects are logged as they occur rather than only retained,
-    because they are invisible to the rest of the collector and each one shifts
-    the synthesized timeline permanently.  See _FFMPEG_RECONNECT_PATTERN.
+    Reconnect attempts are surfaced rather than only retained, because they
+    are invisible to the rest of the collector and each outage shifts the
+    synthesized timeline permanently.  Logging is rate limited to one line per
+    _RECONNECT_LOG_INTERVAL_SEC per capture, since ffmpeg emits one line per
+    attempt and backs off; the emitted line carries the running attempt count
+    so no attempt is lost.  See _FFMPEG_RECONNECT_PATTERN.
 
     Exceptions are caught and logged so they cannot mask exceptions from
     the caller's ``try`` block when this task is awaited in ``finally``.
@@ -353,7 +366,9 @@ async def _drain_stderr(
         feed_id: The feed ID, for reconnect logging.
         feed_name: The feed name, for reconnect logging.
     """
-    reconnect_count = 0
+    reconnect_attempts = 0
+    reconnect_attempts_logged = 0
+    last_reconnect_log_at: float | None = None
     try:
         while True:
             line = await stderr.readline()
@@ -367,17 +382,38 @@ async def _drain_stderr(
             ):
                 http_status_lines.append(text)
             if _FFMPEG_RECONNECT_PATTERN.search(text):
-                reconnect_count += 1
-                logger.warning(
-                    "[Ingestion Stream Reconnect] Feed %s (%s): ffmpeg "
-                    "reconnected the source transparently; the audio gap is "
-                    "absorbed into the stream timeline as permanent drift. "
-                    "reconnect_count=%d, ffmpeg=%s",
-                    feed_id,
-                    feed_name,
-                    reconnect_count,
-                    text,
-                )
+                reconnect_attempts += 1
+                now = time.monotonic()
+                if (
+                    last_reconnect_log_at is None
+                    or now - last_reconnect_log_at
+                    >= _RECONNECT_LOG_INTERVAL_SEC
+                ):
+                    logger.warning(
+                        "[Ingestion Stream Reconnect] Feed %s (%s): ffmpeg is "
+                        "reconnecting the source transparently; any audio gap "
+                        "is absorbed into the stream timeline as permanent "
+                        "drift. attempts=%d (+%d since last logged; attempts "
+                        "bound outages, they do not count them), ffmpeg=%s",
+                        feed_id,
+                        feed_name,
+                        reconnect_attempts,
+                        reconnect_attempts - reconnect_attempts_logged,
+                        text,
+                    )
+                    reconnect_attempts_logged = reconnect_attempts
+                    last_reconnect_log_at = now
+        if reconnect_attempts > reconnect_attempts_logged:
+            # Rate limiting defers attempts to the next emitted line, so a
+            # capture that ends mid-outage would otherwise drop them.
+            logger.warning(
+                "[Ingestion Stream Reconnect] Feed %s (%s): capture ended "
+                "after %d reconnect attempt(s) (+%d not yet logged).",
+                feed_id,
+                feed_name,
+                reconnect_attempts,
+                reconnect_attempts - reconnect_attempts_logged,
+            )
     except asyncio.CancelledError:
         raise
     except Exception:
