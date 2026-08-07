@@ -344,6 +344,14 @@ async def _drain_stderr(
 
     Exceptions are caught and logged so they cannot mask exceptions from
     the caller's ``try`` block when this task is awaited in ``finally``.
+
+    Args:
+        stderr: ffmpeg's stderr stream for the running capture.
+        tail: Ring buffer retaining the most recent stderr lines.
+        http_status_lines: Ring buffer retaining lines carrying an HTTP
+            status, kept separately so classification survives tail rollover.
+        feed_id: The feed ID, for reconnect logging.
+        feed_name: The feed name, for reconnect logging.
     """
     reconnect_count = 0
     try:
