@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import datetime
 import io
 import itertools
@@ -1893,6 +1894,72 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
+
+
+class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
+    """ffmpeg's transparent reconnects must be surfaced, not just retained."""
+
+    # Verbatim ffmpeg output; the collector sets no -loglevel, so ffmpeg's
+    # default `info` level emits this AV_LOG_WARNING line.
+    RECONNECT_LINE = (
+        "[http @ 0x55d1c8a1e400] Will reconnect at 4194304 in 0 second(s), "
+        "error=Connection reset by peer."
+    )
+
+    async def _drain(
+        self, lines: list[str]
+    ) -> tuple[collections.deque[str], list[str]]:
+        reader = asyncio.StreamReader()
+        for line in lines:
+            reader.feed_data(line.encode() + b"\n")
+        reader.feed_eof()
+        tail: collections.deque[str] = collections.deque(
+            maxlen=icecast_collector.STDERR_TAIL_LINES
+        )
+        http_status_lines: collections.deque[str] = collections.deque(maxlen=8)
+        with self.assertLogs(
+            icecast_collector.logger, level="WARNING"
+        ) as captured:
+            await icecast_collector._drain_stderr(
+                reader,
+                tail,
+                http_status_lines,
+                uuid.uuid4(),
+                "test-feed",
+            )
+        return tail, captured.output
+
+    async def test_reconnect_line_is_logged_and_counted(self) -> None:
+        _, output = await self._drain([self.RECONNECT_LINE] * 2)
+
+        reconnects = [
+            line for line in output if "[Ingestion Stream Reconnect]" in line
+        ]
+        self.assertEqual(len(reconnects), 2)
+        self.assertIn("reconnect_count=1", reconnects[0])
+        self.assertIn("reconnect_count=2", reconnects[1])
+
+    async def test_reconnect_line_still_reaches_the_tail(self) -> None:
+        """Logging must not replace the existing failure-diagnostic path."""
+        tail, _ = await self._drain([self.RECONNECT_LINE])
+
+        self.assertIn(self.RECONNECT_LINE, tail)
+
+    async def test_ordinary_stderr_is_not_flagged_as_a_reconnect(self) -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"size=    1024kB time=00:00:15.00 bitrate=N/A\n")
+        reader.feed_eof()
+        tail: collections.deque[str] = collections.deque(maxlen=8)
+
+        with self.assertNoLogs(icecast_collector.logger, level="WARNING"):
+            await icecast_collector._drain_stderr(
+                reader,
+                tail,
+                collections.deque(maxlen=8),
+                uuid.uuid4(),
+                "test-feed",
+            )
+        self.assertEqual(len(tail), 1)
 
 
 class TestEncodePcmSegmentToFlac(unittest.IsolatedAsyncioTestCase):
