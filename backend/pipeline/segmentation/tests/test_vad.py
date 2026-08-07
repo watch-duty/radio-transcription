@@ -943,16 +943,62 @@ class TestVadEngine(unittest.TestCase):
             "Stationary line-in noise was not skipped by stationarity gating.",
         )
 
-        # 2. Dynamic modulated signal (syllabic bursts resembling speech)
+        # 2. Dynamic modulated signal scaled below the 0.040 ceiling (amplitude 0.03)
+        # mean_rms is ~0.0072 (below ceiling), so high CV and peak/median is what
+        # exercises and guards the non-skip decision.
         t = np.linspace(0, 2.0, sample_rate * 2, endpoint=False)
         carrier = np.sin(2 * np.pi * 500 * t).astype(np.float32)
         modulator = np.maximum(0.0, np.sin(2 * np.pi * 3 * t)).astype(
             np.float32
         )
-        speech_like = carrier * modulator * 0.2
+        speech_like = carrier * modulator * 0.03
         self.assertFalse(
             detector._should_skip_vad(speech_like, sample_rate),
             "Modulated speech-like signal was incorrectly skipped.",
+        )
+
+    def test_stationarity_gating_dilution_protection(self) -> None:
+        """Verifies short speech bursts over a stationary floor are not averaged away."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+        rng = np.random.default_rng(42)
+
+        # 15s stationary floor at RMS 0.020
+        floor_15s = (rng.normal(0.0, 0.020, 15 * sample_rate)).astype(
+            np.float32
+        )
+        burst_samples = int(0.3 * sample_rate)
+        burst_start = int(7.0 * sample_rate)
+        t = np.linspace(0, 0.3, burst_samples, endpoint=False)
+        burst = (np.sin(2 * np.pi * 500 * t) * 0.042).astype(np.float32)
+        floor_15s[burst_start : burst_start + burst_samples] += burst
+
+        self.assertFalse(
+            detector._should_skip_vad(floor_15s, sample_rate),
+            "0.3s speech burst was diluted away and incorrectly skipped.",
+        )
+
+    def test_stationarity_gating_edge_cases(self) -> None:
+        """Verifies boundary conditions for stationarity gating."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+
+        # Short signal (< 4 frames / < 0.20s): should not trigger stationarity
+        short_noise = np.ones(int(0.10 * sample_rate), dtype=np.float32) * 0.02
+        self.assertFalse(
+            detector._should_skip_vad(short_noise, sample_rate),
+            "Short signal under 4 frames was incorrectly evaluated.",
+        )
+
+        # Near-zero digital silence: should trigger skip
+        digital_zero = np.zeros(sample_rate, dtype=np.float32)
+        self.assertTrue(
+            detector._should_skip_vad(digital_zero, sample_rate),
+            "Digital zero signal was not skipped.",
         )
 
 

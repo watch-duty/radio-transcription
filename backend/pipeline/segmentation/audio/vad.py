@@ -56,7 +56,8 @@ from backend.pipeline.segmentation.constants import (
     VAD_SPECTRAL_MIN_TOTAL_ENERGY,
     VAD_STATIONARITY_CV_THRESHOLD,
     VAD_STATIONARITY_MAX_RMS_THRESHOLD,
-    VAD_STATIONARITY_MIN_DURATION_SEC,
+    VAD_STATIONARITY_MIN_FRAMES,
+    VAD_STATIONARITY_PEAK_RATIO_THRESHOLD,
     VAD_STATIONARITY_WINDOW_SEC,
     VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
     VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
@@ -849,7 +850,7 @@ class VoiceActivityDetector:
         neural network inference.
 
         Args:
-            audio_array: Normalized floating-point audio samples.
+            audio_array: Raw float32 samples in [-1.0, 1.0], pre-normalization.
             sample_rate: Sample rate in Hz of the audio_array.
 
         Returns:
@@ -858,16 +859,12 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return True
 
-        # 1. Absolute peak check: if the peak is too quiet to be normalized,
-        # VAD won't detect it anyway.
+        # 1. Absolute peak check & Transient click check:
+        # If peak is too quiet to normalize or energy is extremely concentrated
+        # (high peak, very low RMS), it contains no speech.
         peak = np.max(np.abs(audio_array))
-        if peak < self.normalization_min_peak:
-            return True
-
-        # 2. Transient Click / Spike Heuristic:
-        # If energy is concentrated (high peak, very low RMS), it's a click/pop.
         chunk_rms = np.sqrt(np.mean(audio_array**2))
-        if chunk_rms / peak < 0.015:
+        if peak < self.normalization_min_peak or chunk_rms / peak < 0.015:
             return True
 
         # 3. Constant Static / Tone-only Heuristic:
@@ -889,24 +886,32 @@ class VoiceActivityDetector:
             if ratio < 1.8 and chunk_rms < 0.015:
                 return True
 
-        # 4. Scale-Invariant Stationarity Gating:
+        # 4. Stationary Floor Gating with Peak-to-Median Dilution Guard:
         # Evaluates short-time sub-frames (50ms) to detect stationary background
         # noise (e.g., soundcard line-in ADC hiss or stationary channel squelch).
-        # Speech exhibits strong syllabic energy modulation (high CV_RMS).
-        min_samples = int(VAD_STATIONARITY_MIN_DURATION_SEC * sample_rate)
+        # To prevent averaging away short, quiet speech bursts in long chunks,
+        # we require both low CV_RMS and peak_to_median frame ratio < 1.35.
         frame_samples = int(VAD_STATIONARITY_WINDOW_SEC * sample_rate)
-        if frame_samples > 0 and len(audio_array) >= min_samples:
+        if frame_samples > 0:
             num_frames = len(audio_array) // frame_samples
-            if num_frames >= 4:
+            if num_frames >= VAD_STATIONARITY_MIN_FRAMES:
                 frames = audio_array[: num_frames * frame_samples].reshape(
                     num_frames, frame_samples
                 )
                 frame_rms = np.sqrt(np.mean(frames**2, axis=1))
-                mean_rms = np.mean(frame_rms)
-                if mean_rms < 1e-6 or (
-                    float(np.std(frame_rms) / (mean_rms + 1e-9))
-                    < VAD_STATIONARITY_CV_THRESHOLD
+                mean_rms = float(np.mean(frame_rms))
+                if mean_rms < 1e-6:
+                    return True
+
+                cv_rms = float(np.std(frame_rms) / mean_rms)
+                median_rms = float(np.median(frame_rms))
+                max_rms = float(np.max(frame_rms))
+                peak_ratio = max_rms / (median_rms + 1e-6)
+
+                if (
+                    cv_rms < VAD_STATIONARITY_CV_THRESHOLD
                     and mean_rms < VAD_STATIONARITY_MAX_RMS_THRESHOLD
+                    and peak_ratio < VAD_STATIONARITY_PEAK_RATIO_THRESHOLD
                 ):
                     return True
 
