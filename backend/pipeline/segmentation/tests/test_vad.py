@@ -602,12 +602,12 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_idle_line_noise_with_speech.flac",
             [
-                (0.0, 1.484),
-                (3.188, 4.972),
-                (7.892, 9.072),
-                (9.872, 11.212),
+                (0.080, 1.150),
+                (3.450, 4.600),
+                (8.050, 8.950),
+                (9.850, 10.850),
             ],
-            baseline_f1=0.835,
+            baseline_f1=0.940,
             chunk_len_sec=15.0,
         )
 
