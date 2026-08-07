@@ -927,6 +927,34 @@ class TestVadEngine(unittest.TestCase):
         assert expected_preprocessed is not None
         np.testing.assert_array_equal(preprocessed, expected_preprocessed)
 
+    def test_stationarity_gating_stationary_noise_vs_speech(self) -> None:
+        """Verifies stationarity gating skips stationary noise but preserves speech."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+        rng = np.random.default_rng(12345)
+
+        # 1. Stationary Gaussian line-in noise (RMS ~ 0.020, Peak ~ 0.060)
+        # Without stationarity gating, RMS > 0.015 would fail legacy skip checks.
+        noise = (rng.normal(0.0, 0.020, sample_rate * 2)).astype(np.float32)
+        self.assertTrue(
+            detector._should_skip_vad(noise, sample_rate),
+            "Stationary line-in noise was not skipped by stationarity gating.",
+        )
+
+        # 2. Dynamic modulated signal (syllabic bursts resembling speech)
+        t = np.linspace(0, 2.0, sample_rate * 2, endpoint=False)
+        carrier = np.sin(2 * np.pi * 500 * t).astype(np.float32)
+        modulator = np.maximum(0.0, np.sin(2 * np.pi * 3 * t)).astype(
+            np.float32
+        )
+        speech_like = carrier * modulator * 0.2
+        self.assertFalse(
+            detector._should_skip_vad(speech_like, sample_rate),
+            "Modulated speech-like signal was incorrectly skipped.",
+        )
+
 
 class TestFeedDiagnosticRunner(unittest.TestCase):
     """Unit tests for pure timeframe reconciliation and audit functions in diagnose_feed_drop."""
