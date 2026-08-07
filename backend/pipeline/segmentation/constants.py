@@ -204,8 +204,9 @@ VAD_DEFAULT_MIN_RMS_THRESHOLD: Final = 0.001
 VAD_DEFAULT_SEED: Final = 2147483647
 MAX_AUDIO_CHUNK_DURATION_SEC: Final = 300
 
-# Scale-Invariant Stationarity Gating Defaults
+# Stationary Noise Floor Gating Defaults
 # Window size in seconds for computing short-time RMS dynamics (50ms frames)
+
 VAD_STATIONARITY_WINDOW_SEC: Final = 0.05
 # Minimum number of consecutive sub-frames required for evaluation (0.20s total)
 VAD_STATIONARITY_MIN_FRAMES: Final = 4

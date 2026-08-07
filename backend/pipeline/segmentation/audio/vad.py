@@ -87,6 +87,7 @@ class SpeechDetectionResult:
 
     segments: list[tuple[float, float]]
     preprocessed_audio: np.ndarray | None
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,7 @@ class SpeechDetectionDiagnostics:
     accepted_segments: list[tuple[float, float]]
     rejected_segments: list[tuple[float, float, str]]
     preprocessed_audio: np.ndarray | None
+    skip_reason: str | None = None
 
 
 class VoiceActivityDetector:
@@ -750,16 +752,21 @@ class VoiceActivityDetector:
                 accepted_segments=[],
                 rejected_segments=[],
                 preprocessed_audio=None,
+                skip_reason="empty",
             )
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        if self._should_skip_vad(audio_array, sample_rate):
+        should_skip, skip_reason = self._should_skip_vad(
+            audio_array, sample_rate
+        )
+        if should_skip:
             return SpeechDetectionDiagnostics(
                 accepted_segments=[],
                 rejected_segments=[],
                 preprocessed_audio=None,
+                skip_reason=skip_reason,
             )
 
         if prior_audio is not None and np.issubdtype(
@@ -842,7 +849,7 @@ class VoiceActivityDetector:
 
     def _should_skip_vad(
         self, audio_array: np.ndarray, sample_rate: int
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Applies true RMS, transient, and stationarity checks to skip VAD.
 
         Evaluates fast mathematical and acoustic heuristics to short-circuit
@@ -854,18 +861,22 @@ class VoiceActivityDetector:
             sample_rate: Sample rate in Hz of the audio_array.
 
         Returns:
-            True if the audio contains no detectable speech and can bypass VAD.
+            Tuple of (should_skip, skip_reason).
         """
         if len(audio_array) == 0:
-            return True
+            return True, "empty"
 
-        # 1. Absolute peak check & Transient click check:
-        # If peak is too quiet to normalize or energy is extremely concentrated
-        # (high peak, very low RMS), it contains no speech.
+        # 1. Absolute peak check: if peak is too quiet to be normalized,
+        # VAD won't detect it anyway.
         peak = np.max(np.abs(audio_array))
+        if peak < self.normalization_min_peak:
+            return True, "peak"
+
+        # 2. Transient Click / Spike Heuristic:
+        # If energy is concentrated (high peak, very low RMS), it's a click/pop.
         chunk_rms = np.sqrt(np.mean(audio_array**2))
-        if peak < self.normalization_min_peak or chunk_rms / peak < 0.015:
-            return True
+        if chunk_rms / peak < 0.015:
+            return True, "transient"
 
         # 3. Constant Static / Tone-only Heuristic:
         # Analyze 100ms windows to detect constant static or clean flat tones.
@@ -884,7 +895,7 @@ class VoiceActivityDetector:
             # If the ratio is very low (energy is completely flat) and the
             # overall RMS is below safety threshold, exit early.
             if ratio < 1.8 and chunk_rms < 0.015:
-                return True
+                return True, "static"
 
         # 4. Stationary Floor Gating with Peak-to-Median Dilution Guard:
         # Evaluates short-time sub-frames (50ms) to detect stationary background
@@ -900,9 +911,6 @@ class VoiceActivityDetector:
                 )
                 frame_rms = np.sqrt(np.mean(frames**2, axis=1))
                 mean_rms = float(np.mean(frame_rms))
-                if mean_rms < 1e-6:
-                    return True
-
                 cv_rms = float(np.std(frame_rms) / mean_rms)
                 median_rms = float(np.median(frame_rms))
                 max_rms = float(np.max(frame_rms))
@@ -920,9 +928,9 @@ class VoiceActivityDetector:
                         cv_rms,
                         peak_ratio,
                     )
-                    return True
+                    return True, "stationarity"
 
-        return False
+        return False, None
 
     def detect_speech_segments(
         self,
@@ -936,13 +944,24 @@ class VoiceActivityDetector:
     ) -> SpeechDetectionResult:
         """Analyzes normalized float32 audio array, returning detected speech segments and the signal VAD judged."""
         if len(audio_array) == 0:
-            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
+            return SpeechDetectionResult(
+                segments=[],
+                preprocessed_audio=None,
+                skip_reason="empty",
+            )
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        if self._should_skip_vad(audio_array, sample_rate):
-            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
+        should_skip, skip_reason = self._should_skip_vad(
+            audio_array, sample_rate
+        )
+        if should_skip:
+            return SpeechDetectionResult(
+                segments=[],
+                preprocessed_audio=None,
+                skip_reason=skip_reason,
+            )
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer

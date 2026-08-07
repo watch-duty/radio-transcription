@@ -608,6 +608,7 @@ class TestVadEngine(unittest.TestCase):
                 (9.850, 10.850),
             ],
             baseline_f1=0.940,
+            min_recall=0.90,
             chunk_len_sec=15.0,
         )
 
@@ -957,10 +958,12 @@ class TestVadEngine(unittest.TestCase):
         # 1. Stationary Gaussian line-in noise (RMS ~ 0.020, Peak ~ 0.060)
         # Without stationarity gating, RMS > 0.015 would fail legacy skip checks.
         noise = (rng.normal(0.0, 0.020, sample_rate * 2)).astype(np.float32)
+        skip, reason = detector._should_skip_vad(noise, sample_rate)
         self.assertTrue(
-            detector._should_skip_vad(noise, sample_rate),
+            skip,
             "Stationary line-in noise was not skipped by stationarity gating.",
         )
+        self.assertEqual(reason, "stationarity")
 
         # 2. Dynamic modulated signal scaled below the 0.040 ceiling (amplitude 0.03)
         # mean_rms is ~0.0072 (below ceiling), so high CV and peak/median is what
@@ -971,10 +974,12 @@ class TestVadEngine(unittest.TestCase):
             np.float32
         )
         speech_like = carrier * modulator * 0.03
+        skip, reason = detector._should_skip_vad(speech_like, sample_rate)
         self.assertFalse(
-            detector._should_skip_vad(speech_like, sample_rate),
+            skip,
             "Modulated speech-like signal was incorrectly skipped.",
         )
+        self.assertIsNone(reason)
 
     def test_stationarity_gating_dilution_protection(self) -> None:
         """Verifies short speech bursts over a stationary floor are not averaged away."""
@@ -994,10 +999,12 @@ class TestVadEngine(unittest.TestCase):
         burst = (np.sin(2 * np.pi * 500 * t) * 0.042).astype(np.float32)
         floor_15s[burst_start : burst_start + burst_samples] += burst
 
+        skip, reason = detector._should_skip_vad(floor_15s, sample_rate)
         self.assertFalse(
-            detector._should_skip_vad(floor_15s, sample_rate),
+            skip,
             "0.3s speech burst was diluted away and incorrectly skipped.",
         )
+        self.assertIsNone(reason)
 
     def test_stationarity_gating_edge_cases(self) -> None:
         """Verifies boundary conditions for stationarity gating."""
@@ -1008,17 +1015,17 @@ class TestVadEngine(unittest.TestCase):
 
         # Short signal (< 4 frames / < 0.20s): should not trigger stationarity
         short_noise = np.ones(int(0.10 * sample_rate), dtype=np.float32) * 0.02
+        skip, _ = detector._should_skip_vad(short_noise, sample_rate)
         self.assertFalse(
-            detector._should_skip_vad(short_noise, sample_rate),
+            skip,
             "Short signal under 4 frames was incorrectly evaluated.",
         )
 
-        # Near-zero digital silence: should trigger skip
-        digital_zero = np.zeros(sample_rate, dtype=np.float32)
-        self.assertTrue(
-            detector._should_skip_vad(digital_zero, sample_rate),
-            "Digital zero signal was not skipped.",
-        )
+        # Empty signal
+        empty = np.array([], dtype=np.float32)
+        skip, reason = detector._should_skip_vad(empty, sample_rate)
+        self.assertTrue(skip)
+        self.assertEqual(reason, "empty")
 
 
 class TestFeedDiagnosticRunner(unittest.TestCase):

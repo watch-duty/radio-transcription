@@ -38,9 +38,8 @@ Numbers come from the `BENCHMARK:` lines that `_run_integration_test` writes to 
 | **`test_vad_hood_river_segment_payload.flac`** | **0.606** | `0.454` | `0.912` | The `[8.868s, 13.548s]` stitched payload cut from the chunk above. |
 | **`test_idle_line_noise_with_speech.flac`** | **0.943** | `0.938` | `0.949` | Real-world Broadcastify stream with 15s active dispatch followed by 15s stationary soundcard line-in ADC hiss (skips neural denoiser on idle chunk with 0 false positives). |
 
-
-
 ---
+
 
 ### Threshold Tuning Decision (`VAD_DEFAULT_THRESHOLD_ONSET = 0.17`, `VAD_DEFAULT_THRESHOLD_OFFSET = 0.17`)
 
