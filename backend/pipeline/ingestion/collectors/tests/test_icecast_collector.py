@@ -1,5 +1,6 @@
 import asyncio
 import collections
+import contextlib
 import datetime
 import io
 import itertools
@@ -1938,7 +1939,7 @@ class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
         _, reconnects = await self._drain([self.RECONNECT_LINE])
 
         self.assertEqual(len(reconnects), 1)
-        self.assertIn("attempts=1", reconnects[0])
+        self.assertIn("attempts=1 (+0 earlier", reconnects[0])
 
     async def test_attempt_burst_is_rate_limited(self) -> None:
         """A sustained outage must not emit one warning per retry line."""
@@ -1947,16 +1948,97 @@ class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
         # First attempt logs; the rest fall inside the suppression window and
         # are folded into the end-of-capture summary.
         self.assertEqual(len(reconnects), 2)
-        self.assertIn("attempts=1", reconnects[0])
+        self.assertIn("attempts=1 (+0 earlier", reconnects[0])
         self.assertIn(
             "capture ended after 50 reconnect attempt(s)", reconnects[1]
         )
-        self.assertIn("+49 not yet logged", reconnects[1])
+        self.assertIn("+49 never individually logged", reconnects[1])
 
     async def test_no_summary_when_every_attempt_was_logged(self) -> None:
         _, reconnects = await self._drain([self.RECONNECT_LINE])
 
         self.assertNotIn("capture ended after", reconnects[0])
+
+    async def test_summary_survives_task_cancellation(self) -> None:
+        """_cleanup_capture_tasks always cancels the drain task.
+
+        A capture torn down while ffmpeg is still running -- the normal path
+        for a healthy long capture -- never reaches stderr EOF, so the summary
+        has to survive CancelledError or every deferred attempt is lost.
+        """
+        reader = asyncio.StreamReader()
+        for _ in range(50):
+            reader.feed_data(self.RECONNECT_LINE.encode() + b"\n")
+        tail: collections.deque[str] = collections.deque(
+            maxlen=icecast_collector.STDERR_TAIL_LINES
+        )
+
+        with self.assertLogs(
+            icecast_collector.logger, level="WARNING"
+        ) as captured:
+            task = asyncio.create_task(
+                icecast_collector._drain_stderr(
+                    reader,
+                    tail,
+                    collections.deque(maxlen=8),
+                    uuid.uuid4(),
+                    "test-feed",
+                )
+            )
+            for _ in range(20):
+                await asyncio.sleep(0)
+            # Exactly how _cleanup_capture_tasks tears this down.
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        summary = [
+            line for line in captured.output if "capture ended after" in line
+        ]
+        self.assertEqual(len(summary), 1)
+        self.assertIn("50 reconnect attempt(s)", summary[0])
+        self.assertIn("+49 never individually logged", summary[0])
+
+    async def test_rate_limit_window_expiry_emits_another_line(self) -> None:
+        """Once the suppression window passes, logging resumes."""
+        reader = asyncio.StreamReader()
+        for _ in range(2):
+            reader.feed_data(self.RECONNECT_LINE.encode() + b"\n")
+        reader.feed_eof()
+        clock = [0.0, icecast_collector._RECONNECT_LOG_INTERVAL_SEC + 1.0]
+
+        with (
+            patch.object(
+                icecast_collector.time, "monotonic", side_effect=clock
+            ),
+            self.assertLogs(
+                icecast_collector.logger, level="WARNING"
+            ) as captured,
+        ):
+            await icecast_collector._drain_stderr(
+                reader,
+                collections.deque(maxlen=8),
+                collections.deque(maxlen=8),
+                uuid.uuid4(),
+                "test-feed",
+            )
+
+        throttled = [line for line in captured.output if "attempts=" in line]
+        self.assertEqual(len(throttled), 2)
+        self.assertIn("attempts=1 (+0 earlier", throttled[0])
+        self.assertIn("attempts=2 (+0 earlier", throttled[1])
+        self.assertFalse(
+            [ln for ln in captured.output if "capture ended after" in ln],
+            "nothing was deferred, so no summary should be emitted",
+        )
+
+    async def test_lowercase_reconnect_variant_is_matched(self) -> None:
+        """The pattern accepts either case; pin that breadth with a test."""
+        _, reconnects = await self._drain(
+            [self.RECONNECT_LINE.replace("Will reconnect", "will reconnect")]
+        )
+
+        self.assertEqual(len(reconnects), 1)
 
     async def test_reconnect_line_still_reaches_the_tail(self) -> None:
         """Logging must not replace the existing failure-diagnostic path."""

@@ -76,8 +76,9 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 # ffmpeg reconnects the HTTP source internally (see the -reconnect family in
-# _build_ffmpeg_command), so a dropped connection never surfaces as a process
-# exit and the capture session is never restarted. stream_anchor_time therefore
+# _create_ffmpeg_process), so a dropped connection never surfaces as a
+# process exit and the capture session is never restarted.
+# stream_anchor_time therefore
 # stays where it was while cumulative_pcm_samples keeps counting across the
 # gap, so every transparent reconnect permanently adds its full gap duration to
 # the synthesized timeline -- even though ffmpeg itself resumes at the source's
@@ -393,31 +394,39 @@ async def _drain_stderr(
                         "[Ingestion Stream Reconnect] Feed %s (%s): ffmpeg is "
                         "reconnecting the source transparently; any audio gap "
                         "is absorbed into the stream timeline as permanent "
-                        "drift. attempts=%d (+%d since last logged; attempts "
-                        "bound outages, they do not count them), ffmpeg=%s",
+                        "drift. attempts=%d (+%d earlier attempts not "
+                        "individually logged; attempts bound outages, they do "
+                        "not count them), ffmpeg=%s",
                         feed_id,
                         feed_name,
                         reconnect_attempts,
-                        reconnect_attempts - reconnect_attempts_logged,
+                        reconnect_attempts - reconnect_attempts_logged - 1,
                         text,
                     )
                     reconnect_attempts_logged = reconnect_attempts
                     last_reconnect_log_at = now
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("stderr drain failed", exc_info=True)
+    finally:
+        # Must run in finally, not after the loop. _cleanup_capture_tasks
+        # unconditionally cancels this task, so a capture torn down while
+        # ffmpeg is still running -- the normal path for a healthy long
+        # capture -- raises CancelledError out of readline() and would
+        # otherwise skip the summary entirely, dropping every attempt that
+        # rate limiting had deferred. Logging here is safe: it does not
+        # await, so the CancelledError still propagates.
         if reconnect_attempts > reconnect_attempts_logged:
-            # Rate limiting defers attempts to the next emitted line, so a
-            # capture that ends mid-outage would otherwise drop them.
             logger.warning(
                 "[Ingestion Stream Reconnect] Feed %s (%s): capture ended "
-                "after %d reconnect attempt(s) (+%d not yet logged).",
+                "after %d reconnect attempt(s) (+%d never individually "
+                "logged).",
                 feed_id,
                 feed_name,
                 reconnect_attempts,
                 reconnect_attempts - reconnect_attempts_logged,
             )
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.warning("stderr drain failed", exc_info=True)
 
 
 def _segment_path(directory: Path, index: int, ext: str = "pcm") -> Path:
