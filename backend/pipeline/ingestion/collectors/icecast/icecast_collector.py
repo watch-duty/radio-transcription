@@ -88,18 +88,44 @@ AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
 #
 # Correction follows the NTP step/slew distinction:
 #
-# SLEW (normal): ordinary sub-realtime delivery drift is absorbed a little at a
-# time, capped per chunk. The cap MUST stay below
-# segmentation.DEFAULT_SIGNIFICANT_GAP_MS (800ms) so a correction never reads as
-# a transmission boundary downstream. Measured on feed dfdfc8f6 (CO / Montezuma
-# County Fire and EMS) 2026-08-06: 0.963x delivery => 3.7% drift => 554ms to
-# absorb per 15s chunk. A 700ms cap absorbs 4.7%, covering that feed with
-# margin, and holds the timeline at receipt time indefinitely.
+# SLEW (normal): the timeline is nudged toward receipt time a bounded amount
+# per chunk. The cap MUST stay below segmentation.DEFAULT_SIGNIFICANT_GAP_MS
+# (800ms) so a correction never reads as a transmission boundary downstream.
+# Measured: a 900ms cap produced 1821 spurious transmission splits over a
+# single feed-day, so that ceiling is a hard constraint, not a guideline.
 #
-# The cap also sets discontinuity recovery speed: surplus above the drift rate
-# is what works an accumulated error back down (700ms - 554ms = 146ms/chunk,
-# recovering a 60s gap in ~100 min). Raising it converges faster but eats the
-# margin to the 800ms split threshold; lowering it is safer but slower.
+# Measured across 818,928 chunks in 692 capture runs on four feeds, using GCS
+# object creation times as a clock independent of this collector. Over paced
+# intervals -- those not inflated by a source stall -- feeds run at or a little
+# above real time, so they drain backlog rather than accumulate it:
+#
+#   feed        paced drift    rate      stall% of wall clock
+#   00de748d           -0ms   1.0000x      0.0%
+#   2e554a81           -6ms   1.0004x      0.0%
+#   dfdfc8f6         -111ms   1.0075x      2.9%
+#   f776b9d8         -174ms   1.0117x      3.0%
+#
+# So the cap is not compensating for steady sub-realtime pacing. It exists for
+# two other things:
+#
+# 1. Outage recovery. Feeds are volunteer-operated and drop out regularly, and
+#    each outage permanently adds its duration to the timeline because wall
+#    clock advances while the audio timeline does not. Natural catch-up alone
+#    is not enough: at a 3% stall rate a feed still nets about +1.2 min of lag
+#    per hour. This cap supplies roughly 2.8 min/hr of recovery, which turns
+#    that negative for every feed measured.
+#
+# 2. Rare sustained-pacing anomalies. One 12.83h capture of dfdfc8f6 on
+#    2026-08-06 held a steady 589ms of drift per chunk with a single stall in
+#    2962 intervals, reaching 1276s of lag. That is far outside that feed's
+#    normal behaviour -- its usual paced drift is negative -- and the cause is
+#    not understood. The cap is deliberately sized against that outlier rather
+#    than the median: replaying those intervals, slew holds peak lag to 22.5s
+#    and never steps.
+#
+# Raising the cap buys faster recovery but eats the margin to the 800ms split
+# threshold. Lowering it is safer against splits but would not have contained
+# the anomaly above.
 MAX_TIMELINE_SLEW_SEC: Final = 0.7
 
 # STEP (exceptional): a discontinuity slew cannot explain -- an ffmpeg
@@ -1091,7 +1117,8 @@ class IcecastTimelineManager:
                 else 0.0
             )
             logger.warning(
-                "[Ingestion Timeline Step] Feed %s (%s): %s. Stepping timeline: "
+                "[Ingestion Timeline Step] Feed %s (%s): %s. "
+                "Stepping timeline: "
                 "old_anchor=%s, new_anchor=%s, forward_gap_sec=%.1f, "
                 "step_count=%d",
                 self.feed_id,
