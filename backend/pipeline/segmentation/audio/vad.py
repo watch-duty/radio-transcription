@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
+from apache_beam.metrics import Metrics
 from pedalboard import (
     HighpassFilter,
     LowpassFilter,
@@ -913,6 +914,17 @@ class VoiceActivityDetector:
                     and mean_rms < VAD_STATIONARITY_MAX_RMS_THRESHOLD
                     and peak_ratio < VAD_STATIONARITY_PEAK_RATIO_THRESHOLD
                 ):
+                    logger.debug(
+                        "VAD stationarity gate skipped chunk: mean_rms=%.4f, "
+                        "cv_rms=%.3f, peak_ratio=%.2f",
+                        mean_rms,
+                        cv_rms,
+                        peak_ratio,
+                    )
+                    Metrics.counter(
+                        "VoiceActivityDetector",
+                        "vad_stationarity_skipped_chunks",
+                    ).inc()
                     return True
 
         return False
