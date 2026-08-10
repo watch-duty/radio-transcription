@@ -23,6 +23,7 @@ import datetime
 import io
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -73,6 +74,30 @@ logger = logging.getLogger(__name__)
 READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
 POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
+
+# ffmpeg reconnects the HTTP source internally (see the -reconnect family in
+# _create_ffmpeg_process), so a dropped connection never surfaces as a
+# process exit and the capture session is never restarted.
+# stream_anchor_time therefore
+# stays where it was while cumulative_pcm_samples keeps counting across the
+# gap, so every transparent reconnect permanently adds its full gap duration to
+# the synthesized timeline -- even though ffmpeg itself resumes at the source's
+# live edge. These lines reach the stderr tail already but are only read when
+# the process fails, so a healthy long-running capture discards them.
+#
+# This matches ffmpeg's retry warning ("Will reconnect at <off> in <n>
+# second(s), error=..."), which announces a *scheduled attempt*, not a
+# completed reconnect. ffmpeg emits one per attempt and backs off up to
+# -reconnect_delay_max, so a single outage produces many lines (the same
+# behavior _drain_stderr already notes for post-429/5xx retries). Attempts are
+# therefore an upper bound on outages, never a count of them, and logging is
+# rate limited so a sustained outage across many feeds cannot flood.
+_FFMPEG_RECONNECT_PATTERN: Final = re.compile(r"[Ww]ill reconnect at ")
+
+# Minimum wall-clock gap between reconnect log lines per capture session. The
+# first attempt always logs; later ones fold into the next emitted line via its
+# attempt count.
+_RECONNECT_LOG_INTERVAL_SEC: Final = 60.0
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
@@ -369,6 +394,8 @@ async def _drain_stderr(
     stderr: asyncio.StreamReader,
     tail: collections.deque[str],
     http_status_lines: collections.deque[str],
+    feed_id: uuid.UUID,
+    feed_name: str,
 ) -> None:
     """Read stderr line-by-line, keeping only the last *STDERR_TAIL_LINES* in *tail*.
 
@@ -380,9 +407,27 @@ async def _drain_stderr(
     ffmpeg can emit many retry lines after the first 429/5xx.  Classification
     must not depend on the original HTTP error surviving the rolling log tail.
 
+    Reconnect attempts are surfaced rather than only retained, because they
+    are invisible to the rest of the collector and each outage shifts the
+    synthesized timeline permanently.  Logging is rate limited to one line per
+    _RECONNECT_LOG_INTERVAL_SEC per capture, since ffmpeg emits one line per
+    attempt and backs off; the emitted line carries the running attempt count
+    so no attempt is lost.  See _FFMPEG_RECONNECT_PATTERN.
+
     Exceptions are caught and logged so they cannot mask exceptions from
     the caller's ``try`` block when this task is awaited in ``finally``.
+
+    Args:
+        stderr: ffmpeg's stderr stream for the running capture.
+        tail: Ring buffer retaining the most recent stderr lines.
+        http_status_lines: Ring buffer retaining lines carrying an HTTP
+            status, kept separately so classification survives tail rollover.
+        feed_id: The feed ID, for reconnect logging.
+        feed_name: The feed name, for reconnect logging.
     """
+    reconnect_attempts = 0
+    reconnect_attempts_logged = 0
+    last_reconnect_log_at: float | None = None
     try:
         while True:
             line = await stderr.readline()
@@ -395,10 +440,51 @@ async def _drain_stderr(
                 is not None
             ):
                 http_status_lines.append(text)
+            if _FFMPEG_RECONNECT_PATTERN.search(text):
+                reconnect_attempts += 1
+                now = time.monotonic()
+                if (
+                    last_reconnect_log_at is None
+                    or now - last_reconnect_log_at
+                    >= _RECONNECT_LOG_INTERVAL_SEC
+                ):
+                    logger.warning(
+                        "[Ingestion Stream Reconnect] Feed %s (%s): ffmpeg is "
+                        "reconnecting the source transparently; any audio gap "
+                        "is absorbed into the stream timeline as permanent "
+                        "drift. attempts=%d (+%d earlier attempts not "
+                        "individually logged; attempts bound outages, they do "
+                        "not count them), ffmpeg=%s",
+                        feed_id,
+                        feed_name,
+                        reconnect_attempts,
+                        reconnect_attempts - reconnect_attempts_logged - 1,
+                        text,
+                    )
+                    reconnect_attempts_logged = reconnect_attempts
+                    last_reconnect_log_at = now
     except asyncio.CancelledError:
         raise
     except Exception:
         logger.warning("stderr drain failed", exc_info=True)
+    finally:
+        # Must run in finally, not after the loop. _cleanup_capture_tasks
+        # unconditionally cancels this task, so a capture torn down while
+        # ffmpeg is still running -- the normal path for a healthy long
+        # capture -- raises CancelledError out of readline() and would
+        # otherwise skip the summary entirely, dropping every attempt that
+        # rate limiting had deferred. Logging here is safe: it does not
+        # await, so the CancelledError still propagates.
+        if reconnect_attempts > reconnect_attempts_logged:
+            logger.warning(
+                "[Ingestion Stream Reconnect] Feed %s (%s): capture ended "
+                "after %d reconnect attempt(s) (+%d never individually "
+                "logged).",
+                feed_id,
+                feed_name,
+                reconnect_attempts,
+                reconnect_attempts - reconnect_attempts_logged,
+            )
 
 
 def _segment_path(directory: Path, index: int, ext: str = "pcm") -> Path:
@@ -1208,7 +1294,13 @@ async def capture_icecast_stream(  # noqa: PLR0915
             maxlen=STDERR_TAIL_LINES
         )
         drain_task = asyncio.create_task(
-            _drain_stderr(process.stderr, stderr_tail, stderr_http_status_lines)
+            _drain_stderr(
+                process.stderr,
+                stderr_tail,
+                stderr_http_status_lines,
+                feed_id,
+                feed_name,
+            )
         )
         logger.info(
             "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
