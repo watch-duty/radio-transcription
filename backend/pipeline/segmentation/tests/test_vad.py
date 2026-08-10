@@ -8,6 +8,7 @@ import concurrent.futures
 import datetime
 import sys
 import unittest
+import warnings
 from pathlib import Path
 from typing import Final, NamedTuple
 
@@ -1026,6 +1027,43 @@ class TestVadEngine(unittest.TestCase):
         skip, reason = detector._should_skip_vad(empty, sample_rate)
         self.assertTrue(skip)
         self.assertEqual(reason, "empty")
+
+    def test_stationarity_gating_energy_only_in_dropped_remainder(
+        self,
+    ) -> None:
+        """Verifies a zero mean sub-frame RMS neither divides by zero nor skips.
+
+        The stationarity reshape analyzes only whole 50ms frames, so a chunk
+        whose entire signal sits in the dropped remainder leaves every analyzed
+        frame at exactly zero. The step 1 peak check still passes (the loud
+        samples are in the remainder) and step 3 is bypassed because a zero p10
+        trips the 999.0 ratio sentinel, so this reaches the stationarity math.
+        """
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        # 22050Hz matches the native rate of the Broadcastify fixtures, where
+        # a 15s chunk leaves a 150 sample (6.8ms) remainder after reshaping.
+        sample_rate = 22050
+        frame_samples = int(0.05 * sample_rate)
+        total_samples = 15 * sample_rate
+        remainder = (
+            total_samples - (total_samples // frame_samples) * frame_samples
+        )
+        self.assertGreater(remainder, 0, "Fixture rate must leave a remainder.")
+
+        audio = np.zeros(total_samples, dtype=np.float32)
+        audio[-remainder:] = 0.5
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            skip, reason = detector._should_skip_vad(audio, sample_rate)
+
+        self.assertFalse(
+            skip,
+            "Chunk with unmeasurable stationarity was incorrectly skipped.",
+        )
+        self.assertIsNone(reason)
 
 
 class TestFeedDiagnosticRunner(unittest.TestCase):

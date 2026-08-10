@@ -911,24 +911,41 @@ class VoiceActivityDetector:
                 )
                 frame_rms = np.sqrt(np.mean(frames**2, axis=1))
                 mean_rms = float(np.mean(frame_rms))
-                cv_rms = float(np.std(frame_rms) / mean_rms)
-                median_rms = float(np.median(frame_rms))
-                max_rms = float(np.max(frame_rms))
-                peak_ratio = max_rms / (median_rms + 1e-6)
 
-                if (
-                    cv_rms < VAD_STATIONARITY_CV_THRESHOLD
-                    and mean_rms < VAD_STATIONARITY_MAX_RMS_THRESHOLD
-                    and peak_ratio < VAD_STATIONARITY_PEAK_RATIO_THRESHOLD
-                ):
-                    logger.debug(
-                        "VAD stationarity gate skipped chunk: mean_rms=%.4f, "
-                        "cv_rms=%.3f, peak_ratio=%.2f",
-                        mean_rms,
-                        cv_rms,
-                        peak_ratio,
-                    )
-                    return True, "stationarity"
+                # mean_rms is only nonzero when the analyzed frames carry
+                # energy, which the step 1 peak check does not guarantee: the
+                # reshape above drops a sub-frame remainder, and a chunk whose
+                # only content lands there leaves every frame at exactly zero.
+                # Step 3 does not catch that case either, because a zero p10
+                # trips the 999.0 ratio sentinel. Skipping the whole block
+                # avoids dividing by zero; stationarity is not measurable, and
+                # declining to skip keeps the recall-first bias documented in
+                # VAD_BENCHMARKS.md.
+                if mean_rms > 0.0:
+                    cv_rms = float(np.std(frame_rms) / mean_rms)
+
+                    # median_rms needs its own epsilon for a different reason:
+                    # it reaches zero whenever more than half the frames are
+                    # silent, which happens with a healthy mean_rms (e.g. one
+                    # loud frame among many quiet ones), so a guard on the mean
+                    # cannot cover it.
+                    median_rms = float(np.median(frame_rms))
+                    max_rms = float(np.max(frame_rms))
+                    peak_ratio = max_rms / (median_rms + 1e-6)
+
+                    if (
+                        cv_rms < VAD_STATIONARITY_CV_THRESHOLD
+                        and mean_rms < VAD_STATIONARITY_MAX_RMS_THRESHOLD
+                        and peak_ratio < VAD_STATIONARITY_PEAK_RATIO_THRESHOLD
+                    ):
+                        logger.debug(
+                            "VAD stationarity gate skipped chunk: "
+                            "mean_rms=%.4f, cv_rms=%.3f, peak_ratio=%.2f",
+                            mean_rms,
+                            cv_rms,
+                            peak_ratio,
+                        )
+                        return True, "stationarity"
 
         return False, None
 
