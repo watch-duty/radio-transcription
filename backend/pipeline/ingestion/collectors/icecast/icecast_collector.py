@@ -23,6 +23,7 @@ import datetime
 import io
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -74,6 +75,30 @@ READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
 POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
+# ffmpeg reconnects the HTTP source internally (see the -reconnect family in
+# _create_ffmpeg_process), so a dropped connection never surfaces as a
+# process exit and the capture session is never restarted.
+# stream_anchor_time therefore
+# stays where it was while cumulative_pcm_samples keeps counting across the
+# gap, so every transparent reconnect permanently adds its full gap duration to
+# the synthesized timeline -- even though ffmpeg itself resumes at the source's
+# live edge. These lines reach the stderr tail already but are only read when
+# the process fails, so a healthy long-running capture discards them.
+#
+# This matches ffmpeg's retry warning ("Will reconnect at <off> in <n>
+# second(s), error=..."), which announces a *scheduled attempt*, not a
+# completed reconnect. ffmpeg emits one per attempt and backs off up to
+# -reconnect_delay_max, so a single outage produces many lines (the same
+# behavior _drain_stderr already notes for post-429/5xx retries). Attempts are
+# therefore an upper bound on outages, never a count of them, and logging is
+# rate limited so a sustained outage across many feeds cannot flood.
+_FFMPEG_RECONNECT_PATTERN: Final = re.compile(r"[Ww]ill reconnect at ")
+
+# Minimum wall-clock gap between reconnect log lines per capture session. The
+# first attempt always logs; later ones fold into the next emitted line via its
+# attempt count.
+_RECONNECT_LOG_INTERVAL_SEC: Final = 60.0
+
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
@@ -81,6 +106,64 @@ AUDIO_LAG_WARN_THRESHOLD_SEC: Final = (
     120.0  # Threshold (in seconds) for logging anomalous audio timestamp lag (>2 mins);
     # filters out baseline ~30-90s Icecast stream buffer delay
 )
+# Icecast carries no timestamp metadata, so the stream timeline is synthesized
+# from a self-assigned anchor plus PCM sample counting. Its offset from true
+# broadcast time is unknown and unknowable in-band. receipt_time is the only
+# clock we trust, so the timeline is continuously corrected toward it.
+#
+# Correction follows the NTP step/slew distinction:
+#
+# SLEW (normal): the timeline is nudged toward receipt time a bounded amount
+# per chunk. The cap MUST stay below segmentation.DEFAULT_SIGNIFICANT_GAP_MS
+# (800ms) so a correction never reads as a transmission boundary downstream.
+# Measured: a 900ms cap produced 1821 spurious transmission splits over a
+# single feed-day, so that ceiling is a hard constraint, not a guideline.
+#
+# Measured across 818,928 chunks in 692 capture runs on four feeds, using GCS
+# object creation times as a clock independent of this collector. Over paced
+# intervals -- those not inflated by a source stall -- feeds run at or a little
+# above real time, so they drain backlog rather than accumulate it:
+#
+#   feed        paced drift    rate      stall% of wall clock
+#   00de748d           -0ms   1.0000x      0.0%
+#   2e554a81           -6ms   1.0004x      0.0%
+#   dfdfc8f6         -111ms   1.0075x      2.9%
+#   f776b9d8         -174ms   1.0117x      3.0%
+#
+# So the cap is not compensating for steady sub-realtime pacing. It exists for
+# two other things:
+#
+# 1. Outage recovery. Feeds are volunteer-operated and drop out regularly, and
+#    each outage permanently adds its duration to the timeline because wall
+#    clock advances while the audio timeline does not. Natural catch-up alone
+#    is not enough: at a 3% stall rate a feed still nets about +1.2 min of lag
+#    per hour. This cap supplies roughly 2.8 min/hr of recovery, which turns
+#    that negative for every feed measured.
+#
+# 2. Rare sustained-pacing anomalies. One 12.83h capture of dfdfc8f6 on
+#    2026-08-06 held a steady 589ms of drift per chunk with a single stall in
+#    2962 intervals, reaching 1276s of lag. That is far outside that feed's
+#    normal behaviour -- its usual paced drift is negative -- and the cause is
+#    not understood. The cap is deliberately sized against that outlier rather
+#    than the median: replaying those intervals, slew holds peak lag to 22.5s
+#    and never steps.
+#
+# Raising the cap buys faster recovery but eats the margin to the 800ms split
+# threshold. Lowering it is safer against splits but would not have contained
+# the anomaly above.
+MAX_TIMELINE_SLEW_SEC: Final = 0.7
+
+# STEP (exceptional): a discontinuity slew cannot explain -- an ffmpeg
+# transparent reconnect gap, or a stalled source. Bound to
+# AUDIO_LAG_WARN_THRESHOLD_SEC to share one order of magnitude with the
+# [Ingestion Audio Lag] warning, but note the two are not the same test: the
+# warning compares raw audio lag, while the step compares drift beyond the one
+# chunk of lag a healthy feed already carries. Stepping therefore begins about
+# one chunk later than the warning first fires. With slew active a step should
+# essentially never occur on a healthy feed, so one in the logs is a real
+# signal rather than a metronome. A step leaves a forward gap of its full size;
+# that gap is genuine when the cause is a dropped connection.
+MAX_CUMULATIVE_STREAM_DRIFT_SECS: Final = AUDIO_LAG_WARN_THRESHOLD_SEC
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -311,6 +394,8 @@ async def _drain_stderr(
     stderr: asyncio.StreamReader,
     tail: collections.deque[str],
     http_status_lines: collections.deque[str],
+    feed_id: uuid.UUID,
+    feed_name: str,
 ) -> None:
     """Read stderr line-by-line, keeping only the last *STDERR_TAIL_LINES* in *tail*.
 
@@ -322,9 +407,27 @@ async def _drain_stderr(
     ffmpeg can emit many retry lines after the first 429/5xx.  Classification
     must not depend on the original HTTP error surviving the rolling log tail.
 
+    Reconnect attempts are surfaced rather than only retained, because they
+    are invisible to the rest of the collector and each outage shifts the
+    synthesized timeline permanently.  Logging is rate limited to one line per
+    _RECONNECT_LOG_INTERVAL_SEC per capture, since ffmpeg emits one line per
+    attempt and backs off; the emitted line carries the running attempt count
+    so no attempt is lost.  See _FFMPEG_RECONNECT_PATTERN.
+
     Exceptions are caught and logged so they cannot mask exceptions from
     the caller's ``try`` block when this task is awaited in ``finally``.
+
+    Args:
+        stderr: ffmpeg's stderr stream for the running capture.
+        tail: Ring buffer retaining the most recent stderr lines.
+        http_status_lines: Ring buffer retaining lines carrying an HTTP
+            status, kept separately so classification survives tail rollover.
+        feed_id: The feed ID, for reconnect logging.
+        feed_name: The feed name, for reconnect logging.
     """
+    reconnect_attempts = 0
+    reconnect_attempts_logged = 0
+    last_reconnect_log_at: float | None = None
     try:
         while True:
             line = await stderr.readline()
@@ -337,10 +440,51 @@ async def _drain_stderr(
                 is not None
             ):
                 http_status_lines.append(text)
+            if _FFMPEG_RECONNECT_PATTERN.search(text):
+                reconnect_attempts += 1
+                now = time.monotonic()
+                if (
+                    last_reconnect_log_at is None
+                    or now - last_reconnect_log_at
+                    >= _RECONNECT_LOG_INTERVAL_SEC
+                ):
+                    logger.warning(
+                        "[Ingestion Stream Reconnect] Feed %s (%s): ffmpeg is "
+                        "reconnecting the source transparently; any audio gap "
+                        "is absorbed into the stream timeline as permanent "
+                        "drift. attempts=%d (+%d earlier attempts not "
+                        "individually logged; attempts bound outages, they do "
+                        "not count them), ffmpeg=%s",
+                        feed_id,
+                        feed_name,
+                        reconnect_attempts,
+                        reconnect_attempts - reconnect_attempts_logged - 1,
+                        text,
+                    )
+                    reconnect_attempts_logged = reconnect_attempts
+                    last_reconnect_log_at = now
     except asyncio.CancelledError:
         raise
     except Exception:
         logger.warning("stderr drain failed", exc_info=True)
+    finally:
+        # Must run in finally, not after the loop. _cleanup_capture_tasks
+        # unconditionally cancels this task, so a capture torn down while
+        # ffmpeg is still running -- the normal path for a healthy long
+        # capture -- raises CancelledError out of readline() and would
+        # otherwise skip the summary entirely, dropping every attempt that
+        # rate limiting had deferred. Logging here is safe: it does not
+        # await, so the CancelledError still propagates.
+        if reconnect_attempts > reconnect_attempts_logged:
+            logger.warning(
+                "[Ingestion Stream Reconnect] Feed %s (%s): capture ended "
+                "after %d reconnect attempt(s) (+%d never individually "
+                "logged).",
+                feed_id,
+                feed_name,
+                reconnect_attempts,
+                reconnect_attempts - reconnect_attempts_logged,
+            )
 
 
 def _segment_path(directory: Path, index: int, ext: str = "pcm") -> Path:
@@ -780,6 +924,7 @@ class IcecastTimelineManager:
         self.burst_buffer: list[CapturedChunk] = []
         self._last_yielded_end_time: datetime.datetime | None = None
         self.last_receipt_time: datetime.datetime | None = None
+        self.timeline_step_count = 0
 
     def _validate_and_track_chunk(self, chunk: CapturedChunk) -> CapturedChunk:
         if chunk.chunk_end_time < chunk.chunk_start_time:
@@ -930,6 +1075,7 @@ class IcecastTimelineManager:
                     chunk=chunk,
                     cumulative_pcm_samples=cumulative_pcm_samples,
                     chunk_duration_sec=chunk_duration_sec,
+                    chunk_receipt=chunk_receipt,
                 )
                 res.append(self._validate_and_track_chunk(chunk))
                 self.last_receipt_time = chunk_receipt
@@ -952,6 +1098,7 @@ class IcecastTimelineManager:
 
         is_fast = False
         is_late = False
+        arrival_time: float | None = None
         if self.last_receipt_time is not None:
             arrival_time = (
                 chunk_receipt - self.last_receipt_time
@@ -962,7 +1109,7 @@ class IcecastTimelineManager:
             is_late = chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS
 
         if is_fast or is_late:
-            if is_fast:
+            if is_fast and arrival_time is not None:
                 logger.info(
                     "Feed %s (%s): Catch-up burst detected (arrival %.2fs < %.2fs). "
                     "Entering burst buffering mode.",
@@ -971,7 +1118,7 @@ class IcecastTimelineManager:
                     arrival_time,
                     chunk_duration_sec * 0.8,
                 )
-            else:
+            elif is_late:
                 logger.info(
                     "Feed %s (%s): Late chunk detected (lag %.2fs > %.2fs). "
                     "Entering burst buffering mode.",
@@ -991,6 +1138,7 @@ class IcecastTimelineManager:
             chunk=chunk,
             cumulative_pcm_samples=cumulative_pcm_samples,
             chunk_duration_sec=chunk_duration_sec,
+            chunk_receipt=chunk_receipt,
         )
         return [self._validate_and_track_chunk(chunk)]
 
@@ -999,43 +1147,82 @@ class IcecastTimelineManager:
         chunk: CapturedChunk,
         cumulative_pcm_samples: int,
         chunk_duration_sec: float,
+        chunk_receipt: datetime.datetime,
     ) -> CapturedChunk:
-        if chunk.stream_interval_lag_sec is not None:
-            if chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
-                old_anchor = self.stream_anchor_time
-                # Re-anchor the stream timeline to align chunk_end_time with receipt_time
-                self.stream_anchor_time = (
-                    chunk.receipt_time or _now_utc()
-                ) - datetime.timedelta(
-                    seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
+        """Correct the synthesized timeline toward receipt_time.
+
+        Slews by a bounded amount per chunk for ordinary drift; steps only for
+        discontinuities slew cannot explain. See MAX_TIMELINE_SLEW_SEC.
+        """
+        audio_lag_sec = (chunk_receipt - chunk.chunk_start_time).total_seconds()
+        # A healthy feed lags by exactly one chunk: chunk_end aligns with
+        # receipt. Anything beyond that is timeline error to correct away.
+        error_sec = audio_lag_sec - chunk_duration_sec
+
+        is_interval_drift = (
+            chunk.stream_interval_lag_sec is not None
+            and chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS
+        )
+        is_step = (
+            is_interval_drift or error_sec > MAX_CUMULATIVE_STREAM_DRIFT_SECS
+        )
+
+        if is_step:
+            correction_sec = error_sec
+        elif error_sec > 0.0:
+            correction_sec = min(error_sec, MAX_TIMELINE_SLEW_SEC)
+        else:
+            # Timeline is at or ahead of receipt; nothing to correct.
+            return chunk
+
+        old_anchor = self.stream_anchor_time
+        self.stream_anchor_time = old_anchor + datetime.timedelta(
+            seconds=correction_sec
+        )
+        start_offset_sec = (
+            cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+        )
+        new_start = self.stream_anchor_time + datetime.timedelta(
+            seconds=start_offset_sec
+        )
+        new_end = new_start + datetime.timedelta(seconds=chunk_duration_sec)
+
+        if is_step:
+            self.timeline_step_count += 1
+            if is_interval_drift:
+                step_reason = (
+                    f"Stream interval lag "
+                    f"{chunk.stream_interval_lag_sec:.2f}s > "
+                    f"{MAX_STREAM_DRIFT_SECS:.2f}s"
                 )
-                logger.warning(
-                    "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
-                    "%.2fs. Re-anchoring timeline: "
-                    "old_anchor=%s, new_anchor=%s",
-                    self.feed_id,
-                    self.feed_name,
-                    chunk.stream_interval_lag_sec,
-                    MAX_STREAM_DRIFT_SECS,
-                    old_anchor.isoformat(),
-                    self.stream_anchor_time.isoformat(),
+            else:
+                step_reason = (
+                    f"Timeline error {error_sec:.2f}s > "
+                    f"{MAX_CUMULATIVE_STREAM_DRIFT_SECS:.2f}s"
                 )
-                # Recalculate current chunk's timestamps using the new anchor
-                start_offset_sec = (
-                    cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
-                )
-                new_start = self.stream_anchor_time + datetime.timedelta(
-                    seconds=start_offset_sec
-                )
-                new_end = new_start + datetime.timedelta(
-                    seconds=chunk_duration_sec
-                )
-                chunk = dataclasses.replace(
-                    chunk,
-                    chunk_start_time=new_start,
-                    chunk_end_time=new_end,
-                )
-        return chunk
+            forward_gap_sec = (
+                (new_start - self._last_yielded_end_time).total_seconds()
+                if self._last_yielded_end_time is not None
+                else 0.0
+            )
+            logger.warning(
+                "[Ingestion Timeline Step] Feed %s (%s): %s. "
+                "Stepping timeline: "
+                "old_anchor=%s, new_anchor=%s, forward_gap_sec=%.1f, "
+                "step_count=%d",
+                self.feed_id,
+                self.feed_name,
+                step_reason,
+                old_anchor.isoformat(),
+                self.stream_anchor_time.isoformat(),
+                forward_gap_sec,
+                self.timeline_step_count,
+            )
+        return dataclasses.replace(
+            chunk,
+            chunk_start_time=new_start,
+            chunk_end_time=new_end,
+        )
 
     def flush(self) -> list[CapturedChunk]:
         """Flush any remaining buffered chunks, adjusting if still in burst."""
@@ -1107,7 +1294,13 @@ async def capture_icecast_stream(  # noqa: PLR0915
             maxlen=STDERR_TAIL_LINES
         )
         drain_task = asyncio.create_task(
-            _drain_stderr(process.stderr, stderr_tail, stderr_http_status_lines)
+            _drain_stderr(
+                process.stderr,
+                stderr_tail,
+                stderr_http_status_lines,
+                feed_id,
+                feed_name,
+            )
         )
         logger.info(
             "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
