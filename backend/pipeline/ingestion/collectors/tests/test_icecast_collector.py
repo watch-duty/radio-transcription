@@ -2283,6 +2283,199 @@ class TestIcecastTimelineManager(unittest.TestCase):
             now + datetime.timedelta(seconds=75),
         )
 
+    def _slew_manager(
+        self, anchor: datetime.datetime
+    ) -> "icecast_collector.IcecastTimelineManager":
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=anchor,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        manager.in_burst = False
+        return manager
+
+    def test_slew_cap_stays_below_segmentation_split_threshold(self) -> None:
+        """The slew cap must never read as a transmission boundary."""
+        # segmentation.constants.DEFAULT_SIGNIFICANT_GAP_MS
+        self.assertLess(icecast_collector.MAX_TIMELINE_SLEW_SEC, 0.800)
+
+    def test_ordinary_drift_slews_without_stepping(self) -> None:
+        """Sub-threshold drift is absorbed gradually, never stepped."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=45)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        # error = 45s lag - 15s chunk = 30s, capped to MAX_TIMELINE_SLEW_SEC
+        shift = (manager.stream_anchor_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            shift, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_slew_is_bounded_per_chunk(self) -> None:
+        """A large error is not absorbed in one chunk while below step bound."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=100)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        gap_sec = (res[0].chunk_start_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            gap_sec, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_discontinuity_beyond_bound_steps(self) -> None:
+        """Error past the step bound is corrected in full, and counted."""
+        now = datetime.datetime.now(datetime.UTC)
+        lag = icecast_collector.MAX_CUMULATIVE_STREAM_DRIFT_SECS + 60.0
+        initial_anchor = now - datetime.timedelta(seconds=lag)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 1)
+        # Step aligns chunk_end with receipt exactly.
+        self.assertEqual(res[0].chunk_end_time, now)
+        self.assertEqual(
+            manager.stream_anchor_time, now - datetime.timedelta(seconds=15)
+        )
+
+    def test_slew_through_connection_burst_stays_contiguous(self) -> None:
+        """Drive the burst path, which slew now touches on nearly every chunk.
+
+        A manager starts in_burst=True, so the connection burst is the first
+        thing every capture exercises. The old re-anchor only fired here on a
+        rare interval-drift trigger; slew fires whenever the timeline is
+        behind, so this path went from almost never corrected to corrected
+        continuously. Assert the emitted timeline stays well formed and
+        converges rather than drifting or splitting transmissions.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk_sec = 15.0
+        samples = int(chunk_sec * 16000)
+        cumulative = 0
+        receipt = now
+        emitted: list[CapturedChunk] = []
+
+        # Five chunks arriving far faster than real time (the catch-up burst
+        # seen at connect), then steady arrivals slightly slower than the
+        # audio they carry.
+        for interval in [2.0] * 5 + [15.6] * 12:
+            start = manager.stream_anchor_time + datetime.timedelta(
+                seconds=cumulative / 16000
+            )
+            cumulative += samples
+            receipt += datetime.timedelta(seconds=interval)
+            emitted.extend(
+                manager.process_chunk(
+                    chunk=CapturedChunk(
+                        audio_bytes=b"data",
+                        chunk_start_time=start,
+                        chunk_end_time=start
+                        + datetime.timedelta(seconds=chunk_sec),
+                        session_id="session",
+                        receipt_time=receipt,
+                        stream_interval_lag_sec=None,
+                    ),
+                    cumulative_pcm_samples=cumulative,
+                    process_done=False,
+                )
+            )
+
+        self.assertEqual(manager.timeline_step_count, 0)
+        self.assertGreater(len(emitted), 10)
+
+        for chunk in emitted:
+            duration = (
+                chunk.chunk_end_time - chunk.chunk_start_time
+            ).total_seconds()
+            self.assertAlmostEqual(duration, chunk_sec, places=6)
+
+        gaps = [
+            (
+                emitted[i + 1].chunk_start_time - emitted[i].chunk_end_time
+            ).total_seconds()
+            for i in range(len(emitted) - 1)
+        ]
+        self.assertGreaterEqual(min(gaps), 0.0, "timeline went backwards")
+        self.assertLessEqual(
+            max(gaps),
+            icecast_collector.MAX_TIMELINE_SLEW_SEC + 1e-6,
+            "a correction exceeded the slew cap",
+        )
+        # Every gap must stay under the segmentation split threshold.
+        self.assertLess(max(gaps), 0.800)
+
+        # Lag introduced by the burst is worked off, converging on the one
+        # chunk of lag a healthy feed carries.
+        lags = [
+            (chunk.receipt_time - chunk.chunk_start_time).total_seconds()
+            for chunk in emitted
+            if chunk.receipt_time is not None
+        ]
+        self.assertGreater(lags[0], 2 * chunk_sec, "burst should start behind")
+        self.assertAlmostEqual(lags[-1], chunk_sec, delta=1.0)
+
+    def test_timeline_ahead_of_receipt_is_left_alone(self) -> None:
+        """No correction when the timeline is not behind receipt time."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=10)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.stream_anchor_time, initial_anchor)
+        self.assertEqual(manager.timeline_step_count, 0)
+
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
     )
