@@ -88,12 +88,10 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
         )
 
     def test_continuous_source_types_constant_tracks_the_specs(self) -> None:
-        """The Dataflow-facing constant must equal the CONTINUOUS spec set.
+        """CONTINUOUS_SOURCE_TYPES must equal the CONTINUOUS spec set.
 
-        Dataflow workers cannot import this registry (it pulls in asyncpg), so
-        they compare against common.constants.CONTINUOUS_SOURCE_TYPES instead.
-        If the two drift, continuous audio is silently published on the
-        segmented path and never reaches segmentation.
+        Dataflow can't import this registry, so it compares against that
+        constant instead. Drift silently routes continuous audio as segmented.
         """
         continuous_specs = {
             source_type.value

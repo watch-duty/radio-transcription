@@ -2323,7 +2323,7 @@ class TestBuildAuthAndUrlGenericIcecast(unittest.TestCase):
 
 
 class TestValidateFeedAndBuildUrl(unittest.TestCase):
-    """The leased feed's own source_type must drive the connection built."""
+    """The leased feed's own source_type must pick the connection path."""
 
     def setUp(self) -> None:
         self.original_env = os.environ.copy()

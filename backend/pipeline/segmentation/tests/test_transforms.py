@@ -529,10 +529,10 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
 
     def test_parse_and_key_accepts_every_continuous_source(self) -> None:
-        """Every continuous source must pass the continuous-subscription guard.
+        """Verifies every continuous source passes the routing guard.
 
-        generic_icecast shares the continuous topic with bcfy_feeds, so
-        rejecting it here would drop all of its audio into the DLQ.
+        generic_icecast shares this topic with bcfy_feeds, so rejecting it
+        here would send all of its audio to the DLQ.
         """
         for source_type in ("bcfy_feeds", "generic_icecast"):
             with self.subTest(source_type=source_type):

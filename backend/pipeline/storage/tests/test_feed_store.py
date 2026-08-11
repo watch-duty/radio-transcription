@@ -395,11 +395,10 @@ class TestSourceType(unittest.TestCase):
         )
 
     def test_matches_db_seed(self) -> None:
-        """The seeded source_types slugs must match the enum exactly.
+        """Seeded source_types slugs must match the enum exactly.
 
-        feeds.source_type carries a FOREIGN KEY to source_types(slug), so an
-        enum member with no seeded row fails at INSERT time in production
-        rather than at import or startup.
+        feeds.source_type has a FK to source_types(slug), so a member with no
+        seeded row fails at INSERT in production, not at startup.
         """
         current_file = pathlib.Path(__file__).resolve()
         repo_root = current_file.parents[4]

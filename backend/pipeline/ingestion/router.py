@@ -36,9 +36,8 @@ if TYPE_CHECKING:
 #
 # ARCHITECTURAL NOTE:
 # 1. SourceType.BCFY_FEEDS and SourceType.GENERIC_ICECAST are continuous
-#    Icecast-protocol streams handled by icecast_collector.py. bcfy_feeds
-#    authenticates against Broadcastify and identifies feeds by numeric ID;
-#    generic_icecast connects anonymously to a self-hosted stream URL.
+#    Icecast-protocol streams sharing icecast_collector.py; they differ only in
+#    how the stream URL is built (numeric id + auth vs. full URL, anonymous).
 # 2. SourceType.BCFY_CALLS is a discrete REST polling API collector
 #    (bcfy_calls_collector.py) that does NOT use Icecast.
 # Continuous streams (bcfy_feeds / generic_icecast) are the ONLY source types

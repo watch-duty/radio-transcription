@@ -39,8 +39,6 @@ export function validateFeedSourceId(
       }
       break;
     case SourceType.GENERIC_ICECAST:
-      // The full stream URL is the identifier for a self-hosted Icecast feed,
-      // so only http(s) URLs are valid here — never a Broadcastify feed ID.
       if (!/^https?:\/\/\S+$/.test(trimmedId)) {
         return 'Must be a stream URL starting with http:// or https://.';
       }

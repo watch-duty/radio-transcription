@@ -112,11 +112,7 @@ class TestResolveTopicPath(unittest.TestCase):
         )
 
     def test_continuous_sources_share_one_topic(self) -> None:
-        """generic_icecast must land on the same topic as bcfy_feeds.
-
-        Both are Icecast streams consumed by the Dataflow continuous
-        segmentation pipeline; a separate topic would bypass it.
-        """
+        """Verifies both Icecast types resolve to the one continuous topic."""
         settings = self._settings()
         for source_type in (
             SourceType.BCFY_FEEDS,
@@ -148,8 +144,7 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
                 url_base = source_runtime_specs.url_base_for(source_type)
                 self.assertIsInstance(url_base, str)
                 # FIRE_NOTIFICATIONS may have empty default to fail lazily on claim due to api secret
-                # GENERIC_ICECAST has no base by design: source_feed_id holds
-                # the full stream URL, so there is nothing to prepend.
+                # GENERIC_ICECAST has none because source_feed_id is the URL
                 if source_type not in (
                     SourceType.FIRE_NOTIFICATIONS,
                     SourceType.GENERIC_ICECAST,

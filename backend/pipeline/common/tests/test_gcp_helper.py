@@ -672,8 +672,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 class TestContinuousVsSegmentedPayload(unittest.TestCase):
     """source_type decides which proto a chunk is published as.
 
-    A continuous source published as SegmentedAudio would bypass the Dataflow
-    segmentation pipeline entirely, so this routing is load-bearing.
+    A continuous source sent as SegmentedAudio silently skips segmentation.
     """
 
     def _publish(self, source_type: str | None) -> bytes:

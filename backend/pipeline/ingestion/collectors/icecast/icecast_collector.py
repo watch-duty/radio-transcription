@@ -1,12 +1,11 @@
 """Icecast Protocol Ingestion Collector.
 
 Handles continuous audio stream capture for Icecast-protocol streams
-(source_type="bcfy_feeds" or "generic_icecast"). Broadcastify Stream Feeds
-("bcfy_feeds") identify a stream by numeric id and authenticate against
-Broadcastify; generic Icecast streams ("generic_icecast") store the full stream
-URL and connect anonymously. Both are otherwise handled by this identical
-implementation. Emits continuous FLAC audio chunks that feed the downstream
-Dataflow segmentation pipeline.
+(source_type="bcfy_feeds" or "generic_icecast"). "bcfy_feeds" is a numeric
+Broadcastify feed id and authenticates; "generic_icecast" is a full self-hosted
+stream URL and connects anonymously. Everything after the connection is
+identical. Emits continuous FLAC audio chunks that feed the downstream Dataflow
+segmentation pipeline.
 
 Note: Do not confuse with "bcfy_calls", which is a separate REST-based polling
 collector (bcfy_calls_collector.py) for discrete calls that does NOT pass
@@ -197,22 +196,18 @@ def _build_auth_and_url(
     *,
     source_type: SourceType,
 ) -> tuple[str, str]:
-    """Build the auth header and stream URL for one leased feed.
+    """Build the auth header and stream URL, supporting both XAN token and Basic Auth.
 
-    bcfy_feeds identifies a stream by numeric id and authenticates with either
-    an XAN token or Basic Auth. generic_icecast stores the full stream URL and
-    connects anonymously, so no credentials are sent and nothing is prepended.
-
-    ``source_type`` is required rather than defaulting so a future continuous
-    source cannot silently inherit Broadcastify authentication.
+    generic_icecast stores the full stream URL and connects anonymously, so it
+    skips both. source_type has no default: a new continuous source must pick a
+    branch here instead of inheriting Broadcastify auth by omission.
 
     Raises:
         FeedFailure: Broadcastify credentials are missing, or a generic feed's
-            stored id is not an http(s) URL.
+            source_feed_id is not an http(s) URL.
     """
     if source_type is SourceType.GENERIC_ICECAST:
-        # source_feed_id arrives from a database row, so it stays untrusted
-        # here even though the UI validates it on entry.
+        # The UI validates this on entry, but the row is still external input.
         stream_url = source_feed_id.strip()
         if not stream_url.startswith(("http://", "https://")):
             raise collector_failure(
