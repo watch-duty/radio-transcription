@@ -4,6 +4,8 @@ export function toSourceTypeString(type: SourceType) {
   switch (type) {
     case SourceType.BCFY_FEEDS:
       return 'Broadcastify Feeds';
+    case SourceType.GENERIC_ICECAST:
+      return 'Generic Icecast';
     case SourceType.BCFY_CALLS:
       return 'Broadcastify Calls';
     case SourceType.ECHO:

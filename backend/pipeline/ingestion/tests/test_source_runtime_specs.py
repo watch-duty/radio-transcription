@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from backend.pipeline.common.constants import CONTINUOUS_SOURCE_TYPES
 from backend.pipeline.ingestion import main as ingestion_main
 from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.router import _COLLECTORS
@@ -30,6 +31,7 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
         settings = mock.Mock(
             feed_claim_caps={
                 feed_store.SourceType.BCFY_FEEDS: 240,
+                feed_store.SourceType.GENERIC_ICECAST: 240,
                 feed_store.SourceType.OPENMHZ: 900,
                 feed_store.SourceType.FIRE_NOTIFICATIONS: 600,
             }
@@ -66,6 +68,7 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
             set(source_runtime_specs.feed_claimable_source_specs()),
             {
                 feed_store.SourceType.BCFY_FEEDS,
+                feed_store.SourceType.GENERIC_ICECAST,
                 feed_store.SourceType.OPENMHZ,
                 feed_store.SourceType.FIRE_NOTIFICATIONS,
             },
@@ -78,10 +81,29 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
             caps,
             {
                 feed_store.SourceType.BCFY_FEEDS: 240,
+                feed_store.SourceType.GENERIC_ICECAST: 240,
                 feed_store.SourceType.OPENMHZ: 900,
                 feed_store.SourceType.FIRE_NOTIFICATIONS: 600,
             },
         )
+
+    def test_continuous_source_types_constant_tracks_the_specs(self) -> None:
+        """The Dataflow-facing constant must equal the CONTINUOUS spec set.
+
+        Dataflow workers cannot import this registry (it pulls in asyncpg), so
+        they compare against common.constants.CONTINUOUS_SOURCE_TYPES instead.
+        If the two drift, continuous audio is silently published on the
+        segmented path and never reaches segmentation.
+        """
+        continuous_specs = {
+            source_type.value
+            for source_type, spec in (
+                source_runtime_specs.SOURCE_RUNTIME_SPECS.items()
+            )
+            if spec.topic_kind is source_runtime_specs.TopicKind.CONTINUOUS
+        }
+
+        self.assertEqual(set(CONTINUOUS_SOURCE_TYPES), continuous_specs)
 
     def test_url_base_uses_env_override(self) -> None:
         with mock.patch.dict(
@@ -96,12 +118,15 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
             )
 
     def test_topic_kinds_are_registered(self) -> None:
-        self.assertIs(
-            source_runtime_specs.source_spec(
-                feed_store.SourceType.BCFY_FEEDS
-            ).topic_kind,
-            source_runtime_specs.TopicKind.CONTINUOUS,
-        )
+        for source_type in (
+            feed_store.SourceType.BCFY_FEEDS,
+            feed_store.SourceType.GENERIC_ICECAST,
+        ):
+            with self.subTest(source_type=source_type.value):
+                self.assertIs(
+                    source_runtime_specs.source_spec(source_type).topic_kind,
+                    source_runtime_specs.TopicKind.CONTINUOUS,
+                )
         for source_type in (
             feed_store.SourceType.BCFY_CALLS,
             feed_store.SourceType.ECHO,

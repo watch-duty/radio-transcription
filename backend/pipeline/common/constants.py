@@ -22,3 +22,13 @@ NANOS_PER_SECOND = 1_000_000_000
 
 # Transcription fallback constants
 UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+
+# Source-type slugs whose capture is published as ContinuousAudio and must pass
+# through the Dataflow continuous segmentation pipeline. Everything else is
+# published pre-segmented and bypasses it.
+#
+# Held as plain strings so Dataflow workers do not import the ingestion
+# registry (and transitively asyncpg). The authority is still
+# SourceRuntimeSpec.topic_kind; a contract test in the ingestion suite pins
+# this set to the CONTINUOUS specs so the two cannot drift.
+CONTINUOUS_SOURCE_TYPES = frozenset({"bcfy_feeds", "generic_icecast"})

@@ -528,6 +528,61 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             assert_that(parsed[MAIN_TAG], equal_to([]))
             assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
 
+    def test_parse_and_key_accepts_every_continuous_source(self) -> None:
+        """Every continuous source must pass the continuous-subscription guard.
+
+        generic_icecast shares the continuous topic with bcfy_feeds, so
+        rejecting it here would drop all of its audio into the DLQ.
+        """
+        for source_type in ("bcfy_feeds", "generic_icecast"):
+            with self.subTest(source_type=source_type):
+                chunk = ContinuousAudio(
+                    gcs_uri="gs://test-bucket/path/to/test.flac",
+                    session_id="mock-session-id",
+                    feed_name="mock-feed-name",
+                    duration_ms=1000,
+                    feed_id="test-feed",
+                )
+                mock_msg = PubsubMessage(
+                    chunk.SerializeToString(),
+                    {"feed_id": "test-feed", "source_type": source_type},
+                )
+                options = PipelineOptions(
+                    flags=[
+                        "--continuous_input_subscription=projects/p/subscriptions/a",
+                        "--output_topic=b",
+                        "--project=c",
+                    ]
+                )
+                with BeamTestPipeline(options=options) as p:
+                    messages = p | beam.Create([mock_msg])
+                    parsed = messages | beam.ParDo(
+                        ParseAndKeyFn(is_continuous=True)
+                    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+                    assert_that(
+                        parsed[MAIN_TAG],
+                        equal_to(
+                            [
+                                (
+                                    "test-feed#mock-session-id",
+                                    ChunkMetadata(
+                                        gcs_uri="gs://test-bucket/path/to/test.flac",
+                                        session_id="mock-session-id",
+                                        duration_ms=1000,
+                                        feed_metadata=FeedMetadata(
+                                            feed_name="mock-feed-name",
+                                        ),
+                                    ),
+                                )
+                            ]
+                        ),
+                    )
+                    assert_that(
+                        parsed[DEAD_LETTER_QUEUE_TAG],
+                        equal_to([]),
+                        label="CheckEmptyDLQ",
+                    )
+
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
         chunk = ContinuousAudio(

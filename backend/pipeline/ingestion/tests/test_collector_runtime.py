@@ -181,6 +181,31 @@ class TestPacingHelpers(unittest.TestCase):
         )
 
 
+class TestFeedMediaType(unittest.TestCase):
+    """Every SourceType must resolve to a staged media representation."""
+
+    def test_icecast_stream_sources_stage_as_flac(self) -> None:
+        for source_type in (
+            feed_store.SourceType.BCFY_FEEDS,
+            feed_store.SourceType.GENERIC_ICECAST,
+        ):
+            with self.subTest(source_type=source_type.value):
+                self.assertEqual(
+                    collector_runtime._feed_media_type(source_type),
+                    ("flac", "audio/flac"),
+                )
+
+    def test_every_source_type_is_handled(self) -> None:
+        """Guards the ValueError branch: an unlisted member crashes capture."""
+        for source_type in feed_store.SourceType:
+            with self.subTest(source_type=source_type.value):
+                extension, content_type = collector_runtime._feed_media_type(
+                    source_type
+                )
+                self.assertTrue(extension)
+                self.assertTrue(content_type)
+
+
 class TestSupervisorComposition(unittest.IsolatedAsyncioTestCase):
     """Runtime selects one common supervisor for Feed and SID grants."""
 

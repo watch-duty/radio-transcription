@@ -76,6 +76,46 @@ describe('validationUtils', () => {
       });
     });
 
+    describe('GENERIC_ICECAST validation', () => {
+      it('returns null for http and https stream URLs', () => {
+        expect(
+          validateFeedSourceId(
+            SourceType.GENERIC_ICECAST,
+            'http://tonasket.duckdns.org/okco'
+          )
+        ).toBeNull();
+        expect(
+          validateFeedSourceId(
+            SourceType.GENERIC_ICECAST,
+            'https://stream.example.org:8000/mount'
+          )
+        ).toBeNull();
+      });
+
+      it('returns error for a bare Broadcastify feed ID', () => {
+        expect(validateFeedSourceId(SourceType.GENERIC_ICECAST, '12345')).toBe(
+          'Must be a stream URL starting with http:// or https://.'
+        );
+      });
+
+      it('returns error for other invalid formats', () => {
+        const expectedError =
+          'Must be a stream URL starting with http:// or https://.';
+        expect(
+          validateFeedSourceId(SourceType.GENERIC_ICECAST, 'example.org/mount')
+        ).toBe(expectedError);
+        expect(
+          validateFeedSourceId(
+            SourceType.GENERIC_ICECAST,
+            'ftp://example.org/x'
+          )
+        ).toBe(expectedError);
+        expect(
+          validateFeedSourceId(SourceType.GENERIC_ICECAST, 'http://')
+        ).toBe(expectedError);
+      });
+    });
+
     describe('ECHO validation', () => {
       it('returns null for valid format (letters, numbers, dashes, underscores)', () => {
         expect(

@@ -394,6 +394,40 @@ class TestSourceType(unittest.TestCase):
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 
+    def test_matches_db_seed(self) -> None:
+        """The seeded source_types slugs must match the enum exactly.
+
+        feeds.source_type carries a FOREIGN KEY to source_types(slug), so an
+        enum member with no seeded row fails at INSERT time in production
+        rather than at import or startup.
+        """
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        seed_path = (
+            repo_root
+            / "terraform"
+            / "modules"
+            / "alloydb"
+            / "sql"
+            / "ingestion"
+            / "006_seed_source_types.sql"
+        )
+        self.assertTrue(
+            seed_path.exists(),
+            f"Could not find the source_types seed at {seed_path}",
+        )
+
+        seeded = set(re.findall(r"\(\s*'([a-z_]+)'\s*,", seed_path.read_text()))
+
+        self.assertEqual(
+            seeded,
+            {source.value for source in SourceType},
+            "The slugs seeded by "
+            "terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql "
+            "do not match backend.pipeline.storage.feed_store.SourceType. "
+            "Add the row and the enum member in the same change.",
+        )
+
 
 class TestFeedStatus(unittest.TestCase):
     """Contract tests for FeedStatus enum."""

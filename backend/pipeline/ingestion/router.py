@@ -35,15 +35,17 @@ if TYPE_CHECKING:
 # does not silently remain unclaimed or get claimed without a route.
 #
 # ARCHITECTURAL NOTE:
-# 1. SourceType.BCFY_FEEDS (and future SourceType.ICECAST streams) are
-#    continuous Icecast-protocol streams handled by icecast_collector.py.
-#    Currently, bcfy_feeds is the primary stream source using this collector.
+# 1. SourceType.BCFY_FEEDS and SourceType.GENERIC_ICECAST are continuous
+#    Icecast-protocol streams handled by icecast_collector.py. bcfy_feeds
+#    authenticates against Broadcastify and identifies feeds by numeric ID;
+#    generic_icecast connects anonymously to a self-hosted stream URL.
 # 2. SourceType.BCFY_CALLS is a discrete REST polling API collector
 #    (bcfy_calls_collector.py) that does NOT use Icecast.
-# Continuous streams (bcfy_feeds / icecast) are the ONLY source types
+# Continuous streams (bcfy_feeds / generic_icecast) are the ONLY source types
 # processed by the downstream Dataflow segmentation pipeline.
 _COLLECTORS: dict[SourceType, CollectorFn] = {
     SourceType.BCFY_FEEDS: icecast_collector.capture_icecast_stream,
+    SourceType.GENERIC_ICECAST: icecast_collector.capture_icecast_stream,
     SourceType.BCFY_CALLS: bcfy_calls_collector.capture_bcfy_calls,
     SourceType.OPENMHZ: openmhz_collector_module.openmhz_collector,
     SourceType.FIRE_NOTIFICATIONS: (
