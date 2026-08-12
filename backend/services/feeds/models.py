@@ -37,6 +37,12 @@ class BcfyFeedsCreate(FeedBase):
     source_feed_id: str = Field(pattern=r"^\d+$")
 
 
+class GenericIcecastCreate(FeedBase):
+    source_type: Literal[SourceType.GENERIC_ICECAST]
+    # Full stream URL (e.g., "http://tonasket.duckdns.org/okco")
+    source_feed_id: str = Field(pattern=r"^https?://\S+$")
+
+
 class BcfyCallsCreate(FeedBase):
     source_type: Literal[SourceType.BCFY_CALLS]
     # Broadcastify Calls ID: sid-talkgroup (e.g., "123-456")
@@ -61,9 +67,12 @@ class OpenMhzCreate(FeedBase):
     source_feed_id: str = Field(pattern=r"^\w+$")
 
 
+# Every SourceType needs a variant here or POST /v1/feeds 422s on it before
+# reaching the service. test_feed_create_covers_every_source_type pins that.
 FeedCreate = Annotated[
     Union[
         BcfyFeedsCreate,
+        GenericIcecastCreate,
         BcfyCallsCreate,
         EchoCreate,
         FireNotificationsCreate,

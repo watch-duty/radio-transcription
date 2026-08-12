@@ -400,6 +400,7 @@ class FeedStore:
         if claim_types is None:
             claim_types = [
                 SourceType.BCFY_FEEDS,
+                SourceType.GENERIC_ICECAST,
                 SourceType.OPENMHZ,
                 SourceType.FIRE_NOTIFICATIONS,
             ]

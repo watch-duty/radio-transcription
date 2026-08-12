@@ -1880,13 +1880,14 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             {
                 SourceType.BCFY_FEEDS: 2,
+                SourceType.GENERIC_ICECAST: 3,
                 SourceType.OPENMHZ: 5,
                 SourceType.FIRE_NOTIFICATIONS: 7,
             },
         )
 
         args = pool.fetch.call_args.args
-        self.assertEqual(args[1:], (_WORKER_ID, 2, 5, 7))
+        self.assertEqual(args[1:], (_WORKER_ID, 2, 3, 5, 7))
 
     async def test_returns_list_of_feeds(self) -> None:
         """Multiple feeds are returned as a list of LeasedFeed dicts."""

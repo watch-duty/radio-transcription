@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import inspect
+import typing
 import unittest
 import uuid
 from unittest import mock
+
+import pydantic
 
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.models import (
     BcfyFeedsCreate,
     EchoCreate,
+    FeedCreate,
     FeedUpdate,
+    GenericIcecastCreate,
     Tag,
 )
 from backend.services.feeds.service import FeedService
@@ -307,3 +312,42 @@ class TestFeedServiceCreateEcho(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.source_feed_id, "feed-123_abc")
         self.store.create_feed.assert_awaited_once()
+
+
+class TestFeedCreateUnion(unittest.TestCase):
+    """Contract tests for the FeedCreate discriminated union."""
+
+    def test_feed_create_covers_every_source_type(self) -> None:
+        """Every SourceType needs a variant or POST /v1/feeds 422s on it.
+
+        The union discriminates on source_type, so a missing variant fails
+        validation before the request reaches FeedService.
+        """
+        tagged = {
+            variant.model_fields["source_type"].annotation
+            for variant in typing.get_args(typing.get_args(FeedCreate)[0])
+        }
+
+        self.assertEqual(
+            {typing.get_args(t)[0] for t in tagged},
+            set(SourceType),
+        )
+
+    def test_generic_icecast_requires_a_url(self) -> None:
+        with self.assertRaises(pydantic.ValidationError):
+            GenericIcecastCreate(
+                name="Bad Feed",
+                source_type=SourceType.GENERIC_ICECAST,
+                source_feed_id="12345",
+            )
+
+    def test_generic_icecast_accepts_a_stream_url(self) -> None:
+        feed_in = GenericIcecastCreate(
+            name="Okanogan County",
+            source_type=SourceType.GENERIC_ICECAST,
+            source_feed_id="http://tonasket.duckdns.org/okco",
+        )
+
+        self.assertEqual(
+            feed_in.source_feed_id, "http://tonasket.duckdns.org/okco"
+        )
