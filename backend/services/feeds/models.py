@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime  # noqa: TC003
 import uuid  # noqa: TC003
 from typing import Annotated, Literal, Union
+from urllib.parse import urlparse, urlunparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.pipeline.storage.feed_store import (
     FeedStatus,  # noqa: TC001
@@ -41,6 +42,27 @@ class GenericIcecastCreate(FeedBase):
     source_type: Literal[SourceType.GENERIC_ICECAST]
     # Full stream URL (e.g., "http://tonasket.duckdns.org/okco")
     source_feed_id: str = Field(pattern=r"^https?://\S+$")
+
+    @field_validator("source_feed_id")
+    @classmethod
+    def _normalize_stream_url(cls, value: str) -> str:
+        """Fold case-insensitive URL parts so one stream is one row.
+
+        feed_properties has a unique index on (source_type, source_feed_id).
+        Unlike a numeric bcfy id, a URL has spellings that differ as text but
+        name the same mount, so without this two rows pass the constraint and
+        both get claimed and captured. The host is case-insensitive per RFC
+        3986; the path is not, so only a trailing slash is dropped. The scheme
+        needs no folding -- the pattern above already pins it lowercase.
+        """
+        parsed = urlparse(value)
+        # Userinfo is case-sensitive, so leave netloc alone when it carries any.
+        netloc = (
+            parsed.netloc if "@" in parsed.netloc else parsed.netloc.lower()
+        )
+        return urlunparse(
+            parsed._replace(netloc=netloc, path=parsed.path.rstrip("/"))
+        )
 
 
 class BcfyCallsCreate(FeedBase):

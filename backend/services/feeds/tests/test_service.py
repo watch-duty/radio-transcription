@@ -351,3 +351,37 @@ class TestFeedCreateUnion(unittest.TestCase):
         self.assertEqual(
             feed_in.source_feed_id, "http://tonasket.duckdns.org/okco"
         )
+
+    def test_generic_icecast_normalizes_equivalent_urls(self) -> None:
+        """Spellings of one mount must collapse, or the unique index misses.
+
+        An uppercase scheme never reaches here -- the pattern rejects it, at
+        both this layer and the UI.
+        """
+        spellings = (
+            "http://tonasket.duckdns.org/okco",
+            "http://Tonasket.DuckDNS.org/okco",
+            "http://tonasket.duckdns.org/okco/",
+        )
+
+        normalized = {
+            GenericIcecastCreate(
+                name="Okanogan County",
+                source_type=SourceType.GENERIC_ICECAST,
+                source_feed_id=spelling,
+            ).source_feed_id
+            for spelling in spellings
+        }
+
+        self.assertEqual(normalized, {"http://tonasket.duckdns.org/okco"})
+
+    def test_generic_icecast_keeps_path_case_and_port(self) -> None:
+        feed_in = GenericIcecastCreate(
+            name="Mixed Case Mount",
+            source_type=SourceType.GENERIC_ICECAST,
+            source_feed_id="http://Example.org:8000/LiveMount",
+        )
+
+        self.assertEqual(
+            feed_in.source_feed_id, "http://example.org:8000/LiveMount"
+        )

@@ -2239,7 +2239,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         os.environ.pop("BROADCASTIFY_USERNAME", None)
         os.environ.pop("BROADCASTIFY_PASSWORD", None)
 
-        with self.assertRaises(Exception) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             icecast_collector._build_auth_and_url(
                 url_base="https://audio.example.com",
                 source_feed_id="12345",
@@ -2310,11 +2310,29 @@ class TestBuildAuthAndUrlGenericIcecast(unittest.TestCase):
         self.assertEqual(auth_header, "")
         self.assertEqual(url, "http://example.org/mount")
 
+    def test_unregistered_source_type_fails_closed(self) -> None:
+        """An unbranched type must raise, not inherit Broadcastify auth.
+
+        Falling through would return the third-party URL with our Basic-Auth
+        header attached, since urljoin leaves an absolute URL alone.
+        """
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        with self.assertRaises(FeedFailure) as ctx:
+            icecast_collector._build_auth_and_url(
+                url_base="https://audio.example.com",
+                source_feed_id="http://example.org/mount",
+                source_type=SourceType.OPENMHZ,
+            )
+
+        self.assertIn("unsupported_icecast_source_type", str(ctx.exception))
+
     def test_non_url_source_feed_id_is_rejected(self) -> None:
         """A numeric id on a generic feed is a misconfigured row, not a stream."""
         for bad_id in ("12345", "tonasket.duckdns.org/okco", "ftp://x/y"):
             with self.subTest(source_feed_id=bad_id):
-                with self.assertRaises(Exception) as ctx:
+                with self.assertRaises(FeedFailure) as ctx:
                     self._build(bad_id)
                 self.assertIn(
                     "invalid_generic_icecast_url",
@@ -2368,7 +2386,7 @@ class TestValidateFeedAndBuildUrl(unittest.TestCase):
     def test_missing_source_feed_id_still_fails(self) -> None:
         feed = _make_feed("Broken", None, SourceType.GENERIC_ICECAST)
 
-        with self.assertRaises(Exception) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             icecast_collector._validate_feed_and_build_url(
                 feed=feed,
                 url_base="",

@@ -94,13 +94,13 @@ describe('validationUtils', () => {
 
       it('returns error for a bare Broadcastify feed ID', () => {
         expect(validateFeedSourceId(SourceType.GENERIC_ICECAST, '12345')).toBe(
-          'Must be a stream URL starting with http:// or https://.'
+          'Must be a stream/mount URL starting with http:// or https:// — not a .m3u or .pls playlist link.'
         );
       });
 
       it('returns error for other invalid formats', () => {
         const expectedError =
-          'Must be a stream URL starting with http:// or https://.';
+          'Must be a stream/mount URL starting with http:// or https:// — not a .m3u or .pls playlist link.';
         expect(
           validateFeedSourceId(SourceType.GENERIC_ICECAST, 'example.org/mount')
         ).toBe(expectedError);

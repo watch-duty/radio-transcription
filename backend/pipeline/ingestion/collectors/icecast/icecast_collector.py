@@ -203,8 +203,9 @@ def _build_auth_and_url(
     branch here instead of inheriting Broadcastify auth by omission.
 
     Raises:
-        FeedFailure: Broadcastify credentials are missing, or a generic feed's
-            source_feed_id is not an http(s) URL.
+        FeedFailure: Broadcastify credentials are missing, a generic feed's
+            source_feed_id is not an http(s) URL, or the source type has no
+            branch here.
     """
     if source_type is SourceType.GENERIC_ICECAST:
         # The UI validates this on entry, but the row is still external input.
@@ -215,6 +216,15 @@ def _build_auth_and_url(
                 "invalid_generic_icecast_url",
             )
         return "", stream_url
+
+    # Everything below is Broadcastify-specific. Falling through with an
+    # unrecognized type would hand a third-party URL back with our Basic-Auth
+    # header attached, since urljoin returns an absolute URL unchanged.
+    if source_type is not SourceType.BCFY_FEEDS:
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            f"unsupported_icecast_source_type:{source_type}",
+        )
 
     xan_token = os.getenv("BROADCASTIFY_XAN_TOKEN")
     params: dict[str, int | str] = {"burst": 0}
