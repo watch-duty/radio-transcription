@@ -64,11 +64,15 @@ class IncrementalClock:
         return ret
 
 
-def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
+def _make_feed(
+    name: str,
+    source_feed_id: str | None,
+    source_type: SourceType = SourceType.BCFY_FEEDS,
+) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        source_type=SourceType.BCFY_FEEDS,
+        source_type=source_type,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=1,
@@ -2151,6 +2155,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base="https://audio.example.com",
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         self.assertEqual(auth_header, "")
@@ -2168,6 +2173,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base="https://audio.example.com",
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         # Basic auth header for "test-user:test-password" is:
@@ -2190,6 +2196,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         self.assertEqual(
@@ -2213,6 +2220,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
             auth_header, url = icecast_collector._build_auth_and_url(
                 url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
                 source_feed_id="12345",
+                source_type=SourceType.BCFY_FEEDS,
             )
             self.assertEqual(
                 auth_header,
@@ -2231,12 +2239,160 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         os.environ.pop("BROADCASTIFY_USERNAME", None)
         os.environ.pop("BROADCASTIFY_PASSWORD", None)
 
-        with self.assertRaises(Exception) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             icecast_collector._build_auth_and_url(
                 url_base="https://audio.example.com",
                 source_feed_id="12345",
+                source_type=SourceType.BCFY_FEEDS,
             )
         self.assertIn("missing_broadcastify_credentials", str(ctx.exception))
+
+
+class TestBuildAuthAndUrlGenericIcecast(unittest.TestCase):
+    """generic_icecast connects anonymously to the stored stream URL."""
+
+    def setUp(self) -> None:
+        self.original_env = os.environ.copy()
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def _build(self, source_feed_id: str) -> tuple[str, str]:
+        return icecast_collector._build_auth_and_url(
+            url_base="",
+            source_feed_id=source_feed_id,
+            source_type=SourceType.GENERIC_ICECAST,
+        )
+
+    def test_returns_stored_url_verbatim_without_auth(self) -> None:
+        auth_header, url = self._build("http://tonasket.duckdns.org/okco")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://tonasket.duckdns.org/okco")
+
+    def test_https_is_accepted(self) -> None:
+        _auth_header, url = self._build("https://stream.example.org/mount")
+
+        self.assertEqual(url, "https://stream.example.org/mount")
+
+    def test_surrounding_whitespace_is_stripped(self) -> None:
+        _auth_header, url = self._build("  http://example.org/mount  ")
+
+        self.assertEqual(url, "http://example.org/mount")
+
+    def test_never_sends_broadcastify_credentials(self) -> None:
+        """A third-party host must not receive Watch Duty's credentials."""
+        os.environ["BROADCASTIFY_XAN_TOKEN"] = "mock-xan-token"
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        auth_header, url = self._build("http://example.org/mount")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://example.org/mount")
+        self.assertNotIn("xan", url)
+
+    def test_does_not_append_broadcastify_suffix(self) -> None:
+        _auth_header, url = self._build("http://example.org/mount")
+
+        self.assertNotIn(".mp3", url)
+        self.assertNotIn("burst=0", url)
+
+    def test_missing_credentials_is_not_an_error(self) -> None:
+        """Anonymous streams must not require Broadcastify credentials."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ.pop("BROADCASTIFY_USERNAME", None)
+        os.environ.pop("BROADCASTIFY_PASSWORD", None)
+
+        auth_header, url = self._build("http://example.org/mount")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://example.org/mount")
+
+    def test_unregistered_source_type_fails_closed(self) -> None:
+        """An unbranched type must raise, not inherit Broadcastify auth.
+
+        Falling through would return the third-party URL with our Basic-Auth
+        header attached, since urljoin leaves an absolute URL alone.
+        """
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        with self.assertRaises(FeedFailure) as ctx:
+            icecast_collector._build_auth_and_url(
+                url_base="https://audio.example.com",
+                source_feed_id="http://example.org/mount",
+                source_type=SourceType.OPENMHZ,
+            )
+
+        self.assertIn("unsupported_icecast_source_type", str(ctx.exception))
+
+    def test_non_url_source_feed_id_is_rejected(self) -> None:
+        """A numeric id on a generic feed is a misconfigured row, not a stream."""
+        for bad_id in ("12345", "tonasket.duckdns.org/okco", "ftp://x/y"):
+            with self.subTest(source_feed_id=bad_id):
+                with self.assertRaises(FeedFailure) as ctx:
+                    self._build(bad_id)
+                self.assertIn(
+                    "invalid_generic_icecast_url",
+                    str(ctx.exception),
+                )
+
+
+class TestValidateFeedAndBuildUrl(unittest.TestCase):
+    """The leased feed's own source_type must pick the connection path."""
+
+    def setUp(self) -> None:
+        self.original_env = os.environ.copy()
+        os.environ["BROADCASTIFY_XAN_TOKEN"] = "mock-xan-token"
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def test_generic_feed_row_yields_anonymous_stream_url(self) -> None:
+        feed = _make_feed(
+            "Okanogan County",
+            "http://tonasket.duckdns.org/okco",
+            SourceType.GENERIC_ICECAST,
+        )
+
+        _id, _name, auth_header, url = (
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="",
+            )
+        )
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://tonasket.duckdns.org/okco")
+
+    def test_bcfy_feed_row_still_authenticates(self) -> None:
+        feed = _make_feed("Hood River", "12345", SourceType.BCFY_FEEDS)
+
+        _id, _name, _auth_header, url = (
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="https://audio.example.com",
+            )
+        )
+
+        self.assertEqual(
+            url,
+            "https://audio.example.com/12345.mp3?burst=0&xan=mock-xan-token",
+        )
+
+    def test_missing_source_feed_id_still_fails(self) -> None:
+        feed = _make_feed("Broken", None, SourceType.GENERIC_ICECAST)
+
+        with self.assertRaises(FeedFailure) as ctx:
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="",
+            )
+
+        self.assertIn("missing_source_feed_id", str(ctx.exception))
 
 
 class TestIcecastTimelineManager(unittest.TestCase):

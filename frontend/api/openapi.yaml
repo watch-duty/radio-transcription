@@ -299,6 +299,7 @@ components:
     SourceType:
       enum:
         - bcfy_feeds
+        - generic_icecast
         - bcfy_calls
         - echo
         - openmhz

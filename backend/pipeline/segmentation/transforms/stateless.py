@@ -79,6 +79,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from opentelemetry import context as otel_context
 
 from backend.pipeline.common.constants import (
+    CONTINUOUS_SOURCE_TYPES,
     MICROSECONDS_PER_MS,
     MS_PER_SECOND,
     NANOS_PER_MS,
@@ -221,7 +222,10 @@ class ParseAndKeyFn(beam.DoFn):
                     if element.attributes
                     else None
                 )
-                if source_type and source_type != "bcfy_feeds":
+                if (
+                    source_type
+                    and source_type.lower() not in CONTINUOUS_SOURCE_TYPES
+                ):
                     msg = f"Received segmented source type '{source_type}' on continuous subscription"
                     _raise(msg)
 

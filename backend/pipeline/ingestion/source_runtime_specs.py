@@ -50,6 +50,14 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
             url_base_env="BCFY_FEEDS_URL_BASE",
             url_base_default=constants.BCFY_FEEDS_PARTNER_URL_BASE,
         ),
+        feed_store.SourceType.GENERIC_ICECAST: SourceRuntimeSpec(
+            source_type=feed_store.SourceType.GENERIC_ICECAST,
+            topic_kind=TopicKind.CONTINUOUS,
+            feed_claimable=True,
+            # Same collector and stream profile as bcfy_feeds, so it reuses that
+            # cap. No url_base: source_feed_id is already the full stream URL.
+            default_feed_cap=240,
+        ),
         feed_store.SourceType.BCFY_CALLS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.BCFY_CALLS,
             topic_kind=TopicKind.SEGMENTED,

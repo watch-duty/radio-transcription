@@ -1,11 +1,11 @@
 """Icecast Protocol Ingestion Collector.
 
 Handles continuous audio stream capture for Icecast-protocol streams
-(source_type="bcfy_feeds" or "icecast"). Currently, Broadcastify Stream Feeds
-("bcfy_feeds") is the primary active source type using this collector, though
-other/future Icecast-protocol streams ("icecast") are also handled by this
-identical implementation. Emits continuous FLAC audio chunks that feed the
-downstream Dataflow segmentation pipeline.
+(source_type="bcfy_feeds" or "generic_icecast"). "bcfy_feeds" is a numeric
+Broadcastify feed id and authenticates; "generic_icecast" is a full self-hosted
+stream URL and connects anonymously. Everything after the connection is
+identical. Emits continuous FLAC audio chunks that feed the downstream Dataflow
+segmentation pipeline.
 
 Note: Do not confuse with "bcfy_calls", which is a separate REST-based polling
 collector (bcfy_calls_collector.py) for discrete calls that does NOT pass
@@ -57,7 +57,7 @@ from backend.pipeline.ingestion.models import (
     CaptureResources,
     FeedFailure,
 )
-from backend.pipeline.storage.feed_store import FeedStatusReason
+from backend.pipeline.storage.feed_store import FeedStatusReason, SourceType
 
 _CHUNK_DURATION = int(
     os.environ.get("INGESTION_SEGMENT_TIME_SEC", str(CHUNK_DURATION_SECONDS))
@@ -190,8 +190,42 @@ class _StreamProbeResult:
     failure: FeedFailure | None = None
 
 
-def _build_auth_and_url(url_base: str, source_feed_id: str) -> tuple[str, str]:
-    """Build the auth header and stream URL, supporting both XAN token and Basic Auth."""
+def _build_auth_and_url(
+    url_base: str,
+    source_feed_id: str,
+    *,
+    source_type: SourceType,
+) -> tuple[str, str]:
+    """Build the auth header and stream URL, supporting both XAN token and Basic Auth.
+
+    generic_icecast stores the full stream URL and connects anonymously, so it
+    skips both. source_type has no default: a new continuous source must pick a
+    branch here instead of inheriting Broadcastify auth by omission.
+
+    Raises:
+        FeedFailure: Broadcastify credentials are missing, a generic feed's
+            source_feed_id is not an http(s) URL, or the source type has no
+            branch here.
+    """
+    if source_type is SourceType.GENERIC_ICECAST:
+        # The UI validates this on entry, but the row is still external input.
+        stream_url = source_feed_id.strip()
+        if not stream_url.startswith(("http://", "https://")):
+            raise collector_failure(
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                "invalid_generic_icecast_url",
+            )
+        return "", stream_url
+
+    # Everything below is Broadcastify-specific. Falling through with an
+    # unrecognized type would hand a third-party URL back with our Basic-Auth
+    # header attached, since urljoin returns an absolute URL unchanged.
+    if source_type is not SourceType.BCFY_FEEDS:
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            f"unsupported_icecast_source_type:{source_type}",
+        )
+
     xan_token = os.getenv("BROADCASTIFY_XAN_TOKEN")
     params: dict[str, int | str] = {"burst": 0}
 
@@ -575,7 +609,8 @@ def _validate_feed_and_build_url(
         A tuple of (feed_id, feed_name, auth_header, url).
 
     Raises:
-        FeedFailure: If source_feed_id is missing.
+        FeedFailure: If source_feed_id is missing, or the auth and URL cannot
+            be built for this feed's source type.
     """
     source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
@@ -588,7 +623,11 @@ def _validate_feed_and_build_url(
         )
         raise missing_source_feed_id_failure()
 
-    auth_header, url = _build_auth_and_url(url_base, source_feed_id)
+    auth_header, url = _build_auth_and_url(
+        url_base,
+        source_feed_id,
+        source_type=feed["source_type"],
+    )
     return feed_id, feed_name, auth_header, url
 
 
