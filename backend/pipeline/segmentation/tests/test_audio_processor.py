@@ -14,6 +14,7 @@ from backend.pipeline.segmentation.audio.processor import (
     SegmentationAudioProcessor,
 )
 from backend.pipeline.segmentation.audio.vad import SpeechDetectionResult
+from backend.pipeline.segmentation.datatypes import AudioSignal
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,45 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(result.duration_ms, 100)  # 1600 / 16 = 100
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor."
+        "cpu_time.read_thread_cpu_ns",
+        side_effect=[1_000, 6_000, 7_000, 16_000],
+    )
+    def test_download_records_fetch_and_analysis_cpu(
+        self, _mock_thread_cpu: MagicMock
+    ) -> None:
+        """Records synchronous fetch and analysis as separate CPU scopes."""
+        mock_vad = MagicMock()
+        mock_vad.detect_speech_segments.return_value = SpeechDetectionResult(
+            segments=[], preprocessed_audio=None
+        )
+        processor = SegmentationAudioProcessor(
+            gcs_client_instance=MagicMock(),
+            vad_instance=mock_vad,
+        )
+        audio_signal = AudioSignal(
+            samples=np.zeros(1600, dtype=np.int16),
+            sample_rate=16000,
+        )
+        fetch_recorder = MagicMock()
+        analysis_recorder = MagicMock()
+
+        with patch.object(
+            processor,
+            "fetch_and_decode_audio",
+            return_value=audio_signal,
+        ):
+            processor.download_audio_and_detect(
+                "gs://bucket/chunk.flac",
+                0,
+                record_fetch_cpu_us=fetch_recorder,
+                record_analysis_cpu_us=analysis_recorder,
+            )
+
+        fetch_recorder.assert_called_once_with(5)
+        analysis_recorder.assert_called_once_with(9)
 
     @patch("backend.pipeline.segmentation.audio.processor.get_vad_engine")
     def test_download_audio_not_found(self, mock_get_vad: MagicMock) -> None:

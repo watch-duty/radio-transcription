@@ -5264,6 +5264,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
             )
             engine.processor = MagicMock()
             engine.processor.download_audio_and_detect.return_value = chunk_data
+            engine.fsm_actions_thread_cpu_us = MagicMock()
 
             curr_ctx = ActiveStitchingState(
                 session_id="sess1",
@@ -5289,6 +5290,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
             _, kwargs = engine.processor.download_audio_and_detect.call_args
             self.assertEqual(kwargs["prior_audio"], expected_prior_audio)
+            engine.fsm_actions_thread_cpu_us.update.assert_called_once()
 
     def test_manage_out_of_order_timers_clamped_advancement(self) -> None:
         """Verifies that _manage_out_of_order_timers advances timers by physical audio duration when clamped."""

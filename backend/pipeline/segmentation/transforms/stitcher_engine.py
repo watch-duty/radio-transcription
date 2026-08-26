@@ -28,13 +28,13 @@ from opentelemetry import context as otel_context
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.segmentation import constants as trans_constants
-from backend.pipeline.segmentation import datatypes, log_helper
+from backend.pipeline.segmentation import cpu_time, datatypes, log_helper
 from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.audio import processor as audio_processor
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.datatypes import (
     AudioFutureMap,
-    AudioSignal,
+    TimedAudioSignal,
 )
 from backend.pipeline.segmentation.state import stitcher_state
 
@@ -111,6 +111,16 @@ class StitcherEngine:
             self.__class__, "oversized_audio_chunks"
         )
 
+        self.input_fetch_decode_thread_cpu_us = Metrics.distribution(
+            self.__class__, "input_fetch_decode_thread_cpu_us"
+        )
+        self.input_analysis_thread_cpu_us = Metrics.distribution(
+            self.__class__, "input_analysis_thread_cpu_us"
+        )
+        self.fsm_actions_thread_cpu_us = Metrics.distribution(
+            self.__class__, "fsm_actions_thread_cpu_us"
+        )
+
         # Instantiate the stateless AudioProcessor
         self.processor = audio_processor.SegmentationAudioProcessor(
             vad_config=vad_config,
@@ -151,13 +161,15 @@ class StitcherEngine:
 
         parent_context = otel_context.get_current()
 
-        def _fetch_one() -> AudioSignal:
+        def _fetch_one() -> TimedAudioSignal:
             token = otel_context.attach(parent_context)
             try:
                 task_logger.debug(
                     f"[Prefetch] Background fetch starting for {uri}"
                 )
+                fetch_start_ns = cpu_time.read_thread_cpu_ns()
                 res = self.processor.fetch_and_decode_audio(uri)
+                fetch_cpu_us = cpu_time.elapsed_thread_cpu_us(fetch_start_ns)
                 task_logger.debug(
                     f"[Prefetch] Background fetch completed for {uri}"
                 )
@@ -167,7 +179,10 @@ class StitcherEngine:
                 )
                 raise
             else:
-                return res
+                return TimedAudioSignal(
+                    signal=res,
+                    thread_cpu_us=fetch_cpu_us,
+                )
             finally:
                 otel_context.detach(token)
 
@@ -185,7 +200,8 @@ class StitcherEngine:
             task_logger: Contextual logger instance for recording task execution details.
 
         Returns:
-            A mapping of GCS URI to future AudioSignal results, or None if pre-fetching is bypassed.
+            A mapping of GCS URI to timed audio results, or None when
+            pre-fetching is bypassed.
         """
         if not self.executor or len(chunks) <= 1:
             return None
@@ -459,6 +475,33 @@ class StitcherEngine:
             if chunk_data.skip_reason == "stationarity":
                 self.vad_stationarity_skipped_chunks.inc()
 
+    def _resolve_prefetched_audio(
+        self,
+        chunk: datatypes.BufferedChunk,
+        prefetched_futures: AudioFutureMap | None,
+        task_logger: Any,
+    ) -> datatypes.AudioSignal | None:
+        """Resolves prefetched audio and records executor-thread CPU."""
+        if (
+            prefetched_futures is None
+            or chunk.gcs_uri not in prefetched_futures
+        ):
+            return None
+
+        try:
+            timed_audio = prefetched_futures[chunk.gcs_uri].result()
+        except Exception as error:
+            task_logger.warning(
+                "[Prefetch Fallback] Background fetch failed for %s: %s. "
+                "Retrying synchronously.",
+                chunk.gcs_uri,
+                error,
+            )
+            return None
+
+        self.input_fetch_decode_thread_cpu_us.update(timed_audio.thread_cpu_us)
+        return timed_audio.signal
+
     def _process_single_stitch_chunk(
         self,
         chunk: datatypes.BufferedChunk,
@@ -531,19 +574,11 @@ class StitcherEngine:
                     # watermark contiguous gap, clear prior tail primordial state
                     curr_context = replace(curr_context, prior_audio_tail=None)
 
-                prefetched_audio = None
-                if (
-                    prefetched_futures is not None
-                    and chunk.gcs_uri in prefetched_futures
-                ):
-                    try:
-                        prefetched_audio = prefetched_futures[
-                            chunk.gcs_uri
-                        ].result()
-                    except Exception as e:
-                        task_logger.warning(
-                            f"[Prefetch Fallback] Background fetch failed for {chunk.gcs_uri}: {e}. Retrying synchronously."
-                        )
+                prefetched_audio = self._resolve_prefetched_audio(
+                    chunk,
+                    prefetched_futures,
+                    task_logger,
+                )
 
                 # 1. Download audio and run speech detection
                 task_logger.debug(
@@ -554,12 +589,19 @@ class StitcherEngine:
                     chunk.timestamp_ms,
                     prior_audio=curr_context.prior_audio_tail,
                     prefetched_audio=prefetched_audio,
+                    record_fetch_cpu_us=(
+                        self.input_fetch_decode_thread_cpu_us.update
+                    ),
+                    record_analysis_cpu_us=(
+                        self.input_analysis_thread_cpu_us.update
+                    ),
                 )
                 self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
+                fsm_start_ns = cpu_time.read_thread_cpu_ns()
                 payload = datatypes.DownloadedChunkPayload(
                     chunk.gcs_uri,
                     chunk_data,
@@ -623,6 +665,9 @@ class StitcherEngine:
                         is_backfill=is_backfill,
                         clear_buffer=clear_buffer,
                     )
+                )
+                self.fsm_actions_thread_cpu_us.update(
+                    cpu_time.elapsed_thread_cpu_us(fsm_start_ns)
                 )
 
                 return datatypes.StitcherChunkResult(
