@@ -1,2 +1,3 @@
--- Drop unique composite index on feed_properties(source_type, source_feed_id) to allow duplicate synthetic load-test feeds and multiple feeds sharing a source.
-DROP INDEX CONCURRENTLY IF EXISTS idx_feed_properties_source_lookup;
+-- Disabled: temporary load-test change (#1017), reverted in 039 (#1080).
+--
+-- DROP INDEX CONCURRENTLY IF EXISTS idx_feed_properties_source_lookup;

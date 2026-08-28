@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS annotations (
 CREATE INDEX IF NOT EXISTS idx_audio_segments_feed_pagination
     ON audio_segments (feed_id, end_timestamp DESC, id DESC);
 
--- GIN index on data column to quickly query JSON parameters inside annotations.
-CREATE INDEX IF NOT EXISTS idx_annotations_data
-    ON annotations USING GIN (data);
+-- Disabled: dropped in 037 (GOO-761).
+--
+-- CREATE INDEX IF NOT EXISTS idx_annotations_data
+--     ON annotations USING GIN (data);
