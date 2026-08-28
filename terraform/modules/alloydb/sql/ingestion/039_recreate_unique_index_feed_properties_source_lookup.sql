@@ -1,5 +1,0 @@
--- AUTOCOMMIT
--- Disabled: reverted 038, which is also disabled. The index is created in 013.
---
--- CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_feed_properties_source_lookup
--- ON feed_properties(source_type, source_feed_id);

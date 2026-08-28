@@ -45,8 +45,3 @@ CREATE TABLE IF NOT EXISTS annotations (
 -- Composite index on audio_segments for high-performance feed-based keyset pagination.
 CREATE INDEX IF NOT EXISTS idx_audio_segments_feed_pagination
     ON audio_segments (feed_id, end_timestamp DESC, id DESC);
-
--- Disabled: dropped in 037 (GOO-761).
---
--- CREATE INDEX IF NOT EXISTS idx_annotations_data
---     ON annotations USING GIN (data);

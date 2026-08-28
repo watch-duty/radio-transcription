@@ -1,4 +1,0 @@
--- Disabled: superseded by 009 and dropped in 018.
---
--- CREATE INDEX IF NOT EXISTS idx_feeds_leasing ON feeds (status, last_heartbeat)
---     WHERE status IN ('unclaimed'::feed_status, 'failing'::feed_status, 'active'::feed_status);

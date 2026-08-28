@@ -1,5 +1,0 @@
--- Disabled: dropped in 018.
---
--- DROP INDEX IF EXISTS idx_feeds_leasing;
--- CREATE INDEX idx_feeds_leasing ON feeds (status, retry_after, last_heartbeat)
--- WHERE status IN ('unclaimed'::feed_status, 'failing'::feed_status, 'active'::feed_status);
