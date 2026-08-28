@@ -24,9 +24,21 @@ class TestSchemaHelper(unittest.IsolatedAsyncioTestCase):
         mock_file_autocommit.name = "027_autocommit.sql"
         mock_file_autocommit.read_text.return_value = "-- AUTOCOMMIT\nALTER TYPE a ADD VALUE 'B';\nALTER TYPE a ADD VALUE 'C';"
 
+        mock_file_disabled = MagicMock()
+        mock_file_disabled.name = "005_disabled.sql"
+        mock_file_disabled.read_text.return_value = (
+            "-- Disabled: dropped in 018.\n--\n-- CREATE INDEX idx ON a (id);\n"
+        )
+
+        mock_file_disabled_autocommit = MagicMock()
+        mock_file_disabled_autocommit.name = "039_disabled_autocommit.sql"
+        mock_file_disabled_autocommit.read_text.return_value = "-- AUTOCOMMIT\n-- Disabled.\n-- CREATE INDEX CONCURRENTLY idx ON a (id);\n"
+
         mock_sql_dir.glob.return_value = [
             mock_file_normal,
             mock_file_autocommit,
+            mock_file_disabled,
+            mock_file_disabled_autocommit,
         ]
 
         mock_conn = AsyncMock()
@@ -39,6 +51,9 @@ class TestSchemaHelper(unittest.IsolatedAsyncioTestCase):
             "-- AUTOCOMMIT\nALTER TYPE a ADD VALUE 'B'"
         )
         mock_conn.execute.assert_any_call("ALTER TYPE a ADD VALUE 'C'")
+        # Comment-only files and chunks are skipped: asyncpg cannot execute
+        # an empty query.
+        self.assertEqual(mock_conn.execute.await_count, 3)
 
     @patch("backend.pipeline.common.test_schema_helper._SQL_DIR")
     def test_sync_apply_test_schema(self, mock_sql_dir: MagicMock) -> None:
@@ -50,9 +65,16 @@ class TestSchemaHelper(unittest.IsolatedAsyncioTestCase):
         mock_file_autocommit.name = "027_autocommit.sql"
         mock_file_autocommit.read_text.return_value = "-- AUTOCOMMIT\nALTER TYPE a ADD VALUE 'B';\nALTER TYPE a ADD VALUE 'C';"
 
+        mock_file_disabled = MagicMock()
+        mock_file_disabled.name = "005_disabled.sql"
+        mock_file_disabled.read_text.return_value = (
+            "-- Disabled: dropped in 018.\n--\n-- CREATE INDEX idx ON a (id);\n"
+        )
+
         mock_sql_dir.glob.return_value = [
             mock_file_normal,
             mock_file_autocommit,
+            mock_file_disabled,
         ]
 
         mock_conn = MagicMock()
@@ -63,3 +85,4 @@ class TestSchemaHelper(unittest.IsolatedAsyncioTestCase):
             b"-- AUTOCOMMIT\nALTER TYPE a ADD VALUE 'B'"
         )
         mock_conn.execute.assert_any_call(b"ALTER TYPE a ADD VALUE 'C'")
+        self.assertEqual(mock_conn.execute.call_count, 3)
