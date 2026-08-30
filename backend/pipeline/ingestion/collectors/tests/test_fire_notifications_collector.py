@@ -81,24 +81,24 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     async def test_fetch_file_list_deduplicates(self) -> None:
         payload = {
-            "files": [
+            "file_list": [
                 {
-                    "name": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+                    "file": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
                     "uuid": "f66bcfae-c1bf-4abc-8def-1234567890ab",
-                    "type": "file",
-                    "size": 1000,
+                    "filetype": "file",
+                    "filesize": 1000,
                 },
                 {
-                    "name": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+                    "file": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
                     "uuid": "6a21ba3b-c1bf-4abc-8def-1234567890ab",
-                    "type": "file",
-                    "size": 2000,
+                    "filetype": "file",
+                    "filesize": 2000,
                 },
                 {
-                    "name": "SAN-JOSE-DISP 2026-06-15 17-50-00.mp3",
+                    "file": "SAN-JOSE-DISP 2026-06-15 17-50-00.mp3",
                     "uuid": "3bc21da2-c1bf-4abc-8def-1234567890ab",
-                    "type": "file",
-                    "size": 1500,
+                    "filetype": "file",
+                    "filesize": 1500,
                 },
             ]
         }
@@ -110,6 +110,14 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
             source_feed_id="SAN-JOSE-DISP",
             feed_id="feed-id",
             shutdown_event=self.shutdown,
+        )
+
+        # Verify query URL passes source_feed_id as dir parameter
+        self.session.get.assert_called_once()
+        called_url = self.session.get.call_args[0][0]
+        self.assertEqual(
+            called_url,
+            "http://mock-api/api/audio_file?dir=SAN-JOSE-DISP",
         )
 
         # It should only return 2 files (uuid1 and uuid3), with uuid2 filtered out as a duplicate name.
