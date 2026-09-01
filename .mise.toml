@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:python", "lint:terraform", "lint:frontend", "lint:schemas"]
+depends = ["lint:python", "lint:terraform", "lint:frontend", "lint:schemas", "lint:migrations"]
 
 [tasks."lint:ruff:check"]
 description = "Run ruff linter check"
@@ -99,6 +99,10 @@ uv run ruff format --check model/colabs
 [tasks."lint:schemas"]
 description = "Validate that Pub/Sub schemas contain exactly one top-level message type"
 run = "uv run python scripts/validate_schemas.py"
+
+[tasks."lint:migrations"]
+description = "Fail if a migration creates an index a later migration drops (replay churn)"
+run = "uv run python scripts/check_migration_churn.py"
 
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
