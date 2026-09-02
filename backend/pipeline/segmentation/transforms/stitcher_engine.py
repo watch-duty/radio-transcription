@@ -96,6 +96,9 @@ class StitcherEngine:
         self.vad_silence_chunks = Metrics.counter(
             self.__class__, "vad_silence_chunks"
         )
+        self.vad_stationarity_skipped_chunks = Metrics.counter(
+            self.__class__, "vad_stationarity_skipped_chunks"
+        )
 
         # Total speech utterances/segments count
         self.speech_segments_count = Metrics.counter(
@@ -453,6 +456,8 @@ class StitcherEngine:
             self.speech_segments_count.inc(len(chunk_data.speech_segments))
         else:
             self.vad_silence_chunks.inc()
+            if chunk_data.skip_reason == "stationarity":
+                self.vad_stationarity_skipped_chunks.inc()
 
     def _process_single_stitch_chunk(
         self,

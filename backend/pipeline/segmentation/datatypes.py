@@ -67,6 +67,7 @@ class AudioChunkData:
     duration_ms: int
     sample_rate: int
     denoised_audio: np.ndarray | None = None
+    skip_reason: str | None = None
 
 
 FeedMetadata = bp_state.FeedMetadataProto
@@ -262,6 +263,25 @@ class StitcherDlqPayload(TypedDict):
     session_id: str
     error_message: str
     traceparent: str | None
+
+
+class PendingPubSubMessage(TypedDict):
+    """A Pub/Sub message awaiting its turn in PubSubOrderRestorerFn.
+
+    Carries the PubsubMessage fields rather than a PubsubMessage because
+    instances of this are held in Beam BagState between bundles, and a plain
+    mapping keeps that state encoding independent of any class definition.
+
+    A tombstone marks a segment whose upload failed. It carries no payload and
+    is never published, but still occupies its sequence number so a failed
+    upload advances the sequence instead of blocking the feed behind a gap that
+    will never fill.
+    """
+
+    data: bytes
+    attributes: dict[str, str]
+    ordering_key: str
+    is_tombstone: bool
 
 
 @dataclass(frozen=True)

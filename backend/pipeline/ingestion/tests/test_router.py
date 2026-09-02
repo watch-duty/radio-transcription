@@ -11,6 +11,7 @@ from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.models import CaptureResources
 from backend.pipeline.ingestion.router import (
     _COLLECTORS,
+    resolve_topic_path,
     route_capturer,
     supported_source_types,
 )
@@ -100,6 +101,36 @@ class TestSupportedSourceTypes(unittest.TestCase):
         self.assertNotIn(SourceType.ECHO.value, result)
 
 
+class TestResolveTopicPath(unittest.TestCase):
+    """Tests that topic routing follows each source spec's topic kind."""
+
+    @staticmethod
+    def _settings() -> mock.Mock:
+        return mock.Mock(
+            continuous_pubsub_topic_path="projects/p/topics/continuous",
+            segmented_pubsub_topic_path="projects/p/topics/segmented",
+        )
+
+    def test_continuous_sources_share_one_topic(self) -> None:
+        """Verifies both Icecast types resolve to the one continuous topic."""
+        settings = self._settings()
+        for source_type in (
+            SourceType.BCFY_FEEDS,
+            SourceType.GENERIC_ICECAST,
+        ):
+            with self.subTest(source_type=source_type.value):
+                self.assertEqual(
+                    resolve_topic_path(source_type, settings),
+                    "projects/p/topics/continuous",
+                )
+
+    def test_segmented_source_uses_segmented_topic(self) -> None:
+        self.assertEqual(
+            resolve_topic_path(SourceType.OPENMHZ, self._settings()),
+            "projects/p/topics/segmented",
+        )
+
+
 class TestCollectorRegistryIntegrity(unittest.TestCase):
     """Sanity checks on the registry itself."""
 
@@ -113,7 +144,11 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
                 url_base = source_runtime_specs.url_base_for(source_type)
                 self.assertIsInstance(url_base, str)
                 # FIRE_NOTIFICATIONS may have empty default to fail lazily on claim due to api secret
-                if source_type != SourceType.FIRE_NOTIFICATIONS:
+                # GENERIC_ICECAST has none because source_feed_id is the URL
+                if source_type not in (
+                    SourceType.FIRE_NOTIFICATIONS,
+                    SourceType.GENERIC_ICECAST,
+                ):
                     self.assertTrue(url_base)
 
 
