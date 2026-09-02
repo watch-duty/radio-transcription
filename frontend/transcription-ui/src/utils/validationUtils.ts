@@ -38,6 +38,11 @@ export function validateFeedSourceId(
         return 'Must be a number.';
       }
       break;
+    case SourceType.GENERIC_ICECAST:
+      if (!/^https?:\/\/\S+$/.test(trimmedId)) {
+        return 'Must be a stream/mount URL starting with http:// or https:// — not a .m3u or .pls playlist link.';
+      }
+      break;
     case SourceType.ECHO:
       if (!/^[a-zA-Z0-9_-]+$/.test(trimmedId)) {
         return 'Must only contain letters, numbers, and the following special characters: - _';
