@@ -2,7 +2,7 @@ google-genai>=2.3,<3
 google-cloud-aiplatform>=1.158.0
 google-cloud-storage>=2.19
 google-cloud-speech
-transformers===5.8.0
+transformers===5.10.1
 huggingface_hub
 python-dotenv
 loguru
