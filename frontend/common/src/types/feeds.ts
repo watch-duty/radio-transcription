@@ -1,5 +1,6 @@
 export enum SourceType {
   BCFY_FEEDS = 'bcfy_feeds',
+  GENERIC_ICECAST = 'generic_icecast',
   BCFY_CALLS = 'bcfy_calls',
   ECHO = 'echo',
   OPENMHZ = 'openmhz',

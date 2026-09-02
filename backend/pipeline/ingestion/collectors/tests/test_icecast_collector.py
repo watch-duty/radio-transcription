@@ -1,4 +1,6 @@
 import asyncio
+import collections
+import contextlib
 import datetime
 import io
 import itertools
@@ -62,11 +64,15 @@ class IncrementalClock:
         return ret
 
 
-def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
+def _make_feed(
+    name: str,
+    source_feed_id: str | None,
+    source_type: SourceType = SourceType.BCFY_FEEDS,
+) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        source_type=SourceType.BCFY_FEEDS,
+        source_type=source_type,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=1,
@@ -1895,6 +1901,172 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].receipt_time, fixed_time)
 
 
+class TestDrainStderrReconnectTelemetry(unittest.IsolatedAsyncioTestCase):
+    """ffmpeg reconnect attempts must be surfaced, bounded, and accurate."""
+
+    # Verbatim ffmpeg output; the collector sets no -loglevel, so ffmpeg's
+    # default `info` level emits this AV_LOG_WARNING line. ffmpeg emits one per
+    # *attempt*, backing off up to -reconnect_delay_max.
+    RECONNECT_LINE = (
+        "[http @ 0x55d1c8a1e400] Will reconnect at 4194304 in 0 second(s), "
+        "error=Connection reset by peer."
+    )
+
+    async def _drain(
+        self, lines: list[str]
+    ) -> tuple[collections.deque[str], list[str]]:
+        reader = asyncio.StreamReader()
+        for line in lines:
+            reader.feed_data(line.encode() + b"\n")
+        reader.feed_eof()
+        tail: collections.deque[str] = collections.deque(
+            maxlen=icecast_collector.STDERR_TAIL_LINES
+        )
+        with self.assertLogs(
+            icecast_collector.logger, level="WARNING"
+        ) as captured:
+            await icecast_collector._drain_stderr(
+                reader,
+                tail,
+                collections.deque(maxlen=8),
+                uuid.uuid4(),
+                "test-feed",
+            )
+        reconnects = [
+            line
+            for line in captured.output
+            if "[Ingestion Stream Reconnect]" in line
+        ]
+        return tail, reconnects
+
+    async def test_first_attempt_is_logged_immediately(self) -> None:
+        _, reconnects = await self._drain([self.RECONNECT_LINE])
+
+        self.assertEqual(len(reconnects), 1)
+        self.assertIn("attempts=1 (+0 earlier", reconnects[0])
+
+    async def test_attempt_burst_is_rate_limited(self) -> None:
+        """A sustained outage must not emit one warning per retry line."""
+        _, reconnects = await self._drain([self.RECONNECT_LINE] * 50)
+
+        # First attempt logs; the rest fall inside the suppression window and
+        # are folded into the end-of-capture summary.
+        self.assertEqual(len(reconnects), 2)
+        self.assertIn("attempts=1 (+0 earlier", reconnects[0])
+        self.assertIn(
+            "capture ended after 50 reconnect attempt(s)", reconnects[1]
+        )
+        self.assertIn("+49 never individually logged", reconnects[1])
+
+    async def test_no_summary_when_every_attempt_was_logged(self) -> None:
+        _, reconnects = await self._drain([self.RECONNECT_LINE])
+
+        self.assertNotIn("capture ended after", reconnects[0])
+
+    async def test_summary_survives_task_cancellation(self) -> None:
+        """_cleanup_capture_tasks always cancels the drain task.
+
+        A capture torn down while ffmpeg is still running -- the normal path
+        for a healthy long capture -- never reaches stderr EOF, so the summary
+        has to survive CancelledError or every deferred attempt is lost.
+        """
+        reader = asyncio.StreamReader()
+        for _ in range(50):
+            reader.feed_data(self.RECONNECT_LINE.encode() + b"\n")
+        tail: collections.deque[str] = collections.deque(
+            maxlen=icecast_collector.STDERR_TAIL_LINES
+        )
+
+        with self.assertLogs(
+            icecast_collector.logger, level="WARNING"
+        ) as captured:
+            task = asyncio.create_task(
+                icecast_collector._drain_stderr(
+                    reader,
+                    tail,
+                    collections.deque(maxlen=8),
+                    uuid.uuid4(),
+                    "test-feed",
+                )
+            )
+            for _ in range(20):
+                await asyncio.sleep(0)
+            # Exactly how _cleanup_capture_tasks tears this down.
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        summary = [
+            line for line in captured.output if "capture ended after" in line
+        ]
+        self.assertEqual(len(summary), 1)
+        self.assertIn("50 reconnect attempt(s)", summary[0])
+        self.assertIn("+49 never individually logged", summary[0])
+
+    async def test_rate_limit_window_expiry_emits_another_line(self) -> None:
+        """Once the suppression window passes, logging resumes."""
+        reader = asyncio.StreamReader()
+        for _ in range(2):
+            reader.feed_data(self.RECONNECT_LINE.encode() + b"\n")
+        reader.feed_eof()
+        clock = [0.0, icecast_collector._RECONNECT_LOG_INTERVAL_SEC + 1.0]
+
+        with (
+            patch.object(
+                icecast_collector.time, "monotonic", side_effect=clock
+            ),
+            self.assertLogs(
+                icecast_collector.logger, level="WARNING"
+            ) as captured,
+        ):
+            await icecast_collector._drain_stderr(
+                reader,
+                collections.deque(maxlen=8),
+                collections.deque(maxlen=8),
+                uuid.uuid4(),
+                "test-feed",
+            )
+
+        throttled = [line for line in captured.output if "attempts=" in line]
+        self.assertEqual(len(throttled), 2)
+        self.assertIn("attempts=1 (+0 earlier", throttled[0])
+        self.assertIn("attempts=2 (+0 earlier", throttled[1])
+        self.assertFalse(
+            [ln for ln in captured.output if "capture ended after" in ln],
+            "nothing was deferred, so no summary should be emitted",
+        )
+
+    async def test_lowercase_reconnect_variant_is_matched(self) -> None:
+        """The pattern accepts either case; pin that breadth with a test."""
+        _, reconnects = await self._drain(
+            [self.RECONNECT_LINE.replace("Will reconnect", "will reconnect")]
+        )
+
+        self.assertEqual(len(reconnects), 1)
+
+    async def test_reconnect_line_still_reaches_the_tail(self) -> None:
+        """Logging must not replace the existing failure-diagnostic path."""
+        tail, _ = await self._drain([self.RECONNECT_LINE])
+
+        self.assertIn(self.RECONNECT_LINE, tail)
+
+    async def test_ordinary_stderr_is_not_flagged_as_a_reconnect(self) -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"size=    1024kB time=00:00:15.00 bitrate=N/A\n")
+        reader.feed_eof()
+        tail: collections.deque[str] = collections.deque(maxlen=8)
+
+        with self.assertNoLogs(icecast_collector.logger, level="WARNING"):
+            await icecast_collector._drain_stderr(
+                reader,
+                tail,
+                collections.deque(maxlen=8),
+                uuid.uuid4(),
+                "test-feed",
+            )
+        self.assertEqual(len(tail), 1)
+
+
 class TestEncodePcmSegmentToFlac(unittest.IsolatedAsyncioTestCase):
     """Guards the contract that no segment leaves ingestion unreadable.
 
@@ -1983,6 +2155,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base="https://audio.example.com",
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         self.assertEqual(auth_header, "")
@@ -2000,6 +2173,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base="https://audio.example.com",
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         # Basic auth header for "test-user:test-password" is:
@@ -2022,6 +2196,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         auth_header, url = icecast_collector._build_auth_and_url(
             url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
             source_feed_id="12345",
+            source_type=SourceType.BCFY_FEEDS,
         )
 
         self.assertEqual(
@@ -2045,6 +2220,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
             auth_header, url = icecast_collector._build_auth_and_url(
                 url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
                 source_feed_id="12345",
+                source_type=SourceType.BCFY_FEEDS,
             )
             self.assertEqual(
                 auth_header,
@@ -2063,12 +2239,160 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         os.environ.pop("BROADCASTIFY_USERNAME", None)
         os.environ.pop("BROADCASTIFY_PASSWORD", None)
 
-        with self.assertRaises(Exception) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             icecast_collector._build_auth_and_url(
                 url_base="https://audio.example.com",
                 source_feed_id="12345",
+                source_type=SourceType.BCFY_FEEDS,
             )
         self.assertIn("missing_broadcastify_credentials", str(ctx.exception))
+
+
+class TestBuildAuthAndUrlGenericIcecast(unittest.TestCase):
+    """generic_icecast connects anonymously to the stored stream URL."""
+
+    def setUp(self) -> None:
+        self.original_env = os.environ.copy()
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def _build(self, source_feed_id: str) -> tuple[str, str]:
+        return icecast_collector._build_auth_and_url(
+            url_base="",
+            source_feed_id=source_feed_id,
+            source_type=SourceType.GENERIC_ICECAST,
+        )
+
+    def test_returns_stored_url_verbatim_without_auth(self) -> None:
+        auth_header, url = self._build("http://tonasket.duckdns.org/okco")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://tonasket.duckdns.org/okco")
+
+    def test_https_is_accepted(self) -> None:
+        _auth_header, url = self._build("https://stream.example.org/mount")
+
+        self.assertEqual(url, "https://stream.example.org/mount")
+
+    def test_surrounding_whitespace_is_stripped(self) -> None:
+        _auth_header, url = self._build("  http://example.org/mount  ")
+
+        self.assertEqual(url, "http://example.org/mount")
+
+    def test_never_sends_broadcastify_credentials(self) -> None:
+        """A third-party host must not receive Watch Duty's credentials."""
+        os.environ["BROADCASTIFY_XAN_TOKEN"] = "mock-xan-token"
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        auth_header, url = self._build("http://example.org/mount")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://example.org/mount")
+        self.assertNotIn("xan", url)
+
+    def test_does_not_append_broadcastify_suffix(self) -> None:
+        _auth_header, url = self._build("http://example.org/mount")
+
+        self.assertNotIn(".mp3", url)
+        self.assertNotIn("burst=0", url)
+
+    def test_missing_credentials_is_not_an_error(self) -> None:
+        """Anonymous streams must not require Broadcastify credentials."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ.pop("BROADCASTIFY_USERNAME", None)
+        os.environ.pop("BROADCASTIFY_PASSWORD", None)
+
+        auth_header, url = self._build("http://example.org/mount")
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://example.org/mount")
+
+    def test_unregistered_source_type_fails_closed(self) -> None:
+        """An unbranched type must raise, not inherit Broadcastify auth.
+
+        Falling through would return the third-party URL with our Basic-Auth
+        header attached, since urljoin leaves an absolute URL alone.
+        """
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        with self.assertRaises(FeedFailure) as ctx:
+            icecast_collector._build_auth_and_url(
+                url_base="https://audio.example.com",
+                source_feed_id="http://example.org/mount",
+                source_type=SourceType.OPENMHZ,
+            )
+
+        self.assertIn("unsupported_icecast_source_type", str(ctx.exception))
+
+    def test_non_url_source_feed_id_is_rejected(self) -> None:
+        """A numeric id on a generic feed is a misconfigured row, not a stream."""
+        for bad_id in ("12345", "tonasket.duckdns.org/okco", "ftp://x/y"):
+            with self.subTest(source_feed_id=bad_id):
+                with self.assertRaises(FeedFailure) as ctx:
+                    self._build(bad_id)
+                self.assertIn(
+                    "invalid_generic_icecast_url",
+                    str(ctx.exception),
+                )
+
+
+class TestValidateFeedAndBuildUrl(unittest.TestCase):
+    """The leased feed's own source_type must pick the connection path."""
+
+    def setUp(self) -> None:
+        self.original_env = os.environ.copy()
+        os.environ["BROADCASTIFY_XAN_TOKEN"] = "mock-xan-token"
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def test_generic_feed_row_yields_anonymous_stream_url(self) -> None:
+        feed = _make_feed(
+            "Okanogan County",
+            "http://tonasket.duckdns.org/okco",
+            SourceType.GENERIC_ICECAST,
+        )
+
+        _id, _name, auth_header, url = (
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="",
+            )
+        )
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(url, "http://tonasket.duckdns.org/okco")
+
+    def test_bcfy_feed_row_still_authenticates(self) -> None:
+        feed = _make_feed("Hood River", "12345", SourceType.BCFY_FEEDS)
+
+        _id, _name, _auth_header, url = (
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="https://audio.example.com",
+            )
+        )
+
+        self.assertEqual(
+            url,
+            "https://audio.example.com/12345.mp3?burst=0&xan=mock-xan-token",
+        )
+
+    def test_missing_source_feed_id_still_fails(self) -> None:
+        feed = _make_feed("Broken", None, SourceType.GENERIC_ICECAST)
+
+        with self.assertRaises(FeedFailure) as ctx:
+            icecast_collector._validate_feed_and_build_url(
+                feed=feed,
+                url_base="",
+            )
+
+        self.assertIn("missing_source_feed_id", str(ctx.exception))
 
 
 class TestIcecastTimelineManager(unittest.TestCase):
@@ -2282,6 +2606,199 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res_burst[3].chunk_end_time,
             now + datetime.timedelta(seconds=75),
         )
+
+    def _slew_manager(
+        self, anchor: datetime.datetime
+    ) -> "icecast_collector.IcecastTimelineManager":
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=anchor,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        manager.in_burst = False
+        return manager
+
+    def test_slew_cap_stays_below_segmentation_split_threshold(self) -> None:
+        """The slew cap must never read as a transmission boundary."""
+        # segmentation.constants.DEFAULT_SIGNIFICANT_GAP_MS
+        self.assertLess(icecast_collector.MAX_TIMELINE_SLEW_SEC, 0.800)
+
+    def test_ordinary_drift_slews_without_stepping(self) -> None:
+        """Sub-threshold drift is absorbed gradually, never stepped."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=45)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        # error = 45s lag - 15s chunk = 30s, capped to MAX_TIMELINE_SLEW_SEC
+        shift = (manager.stream_anchor_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            shift, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_slew_is_bounded_per_chunk(self) -> None:
+        """A large error is not absorbed in one chunk while below step bound."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=100)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 0)
+        gap_sec = (res[0].chunk_start_time - initial_anchor).total_seconds()
+        self.assertAlmostEqual(
+            gap_sec, icecast_collector.MAX_TIMELINE_SLEW_SEC, places=6
+        )
+
+    def test_discontinuity_beyond_bound_steps(self) -> None:
+        """Error past the step bound is corrected in full, and counted."""
+        now = datetime.datetime.now(datetime.UTC)
+        lag = icecast_collector.MAX_CUMULATIVE_STREAM_DRIFT_SECS + 60.0
+        initial_anchor = now - datetime.timedelta(seconds=lag)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.timeline_step_count, 1)
+        # Step aligns chunk_end with receipt exactly.
+        self.assertEqual(res[0].chunk_end_time, now)
+        self.assertEqual(
+            manager.stream_anchor_time, now - datetime.timedelta(seconds=15)
+        )
+
+    def test_slew_through_connection_burst_stays_contiguous(self) -> None:
+        """Drive the burst path, which slew now touches on nearly every chunk.
+
+        A manager starts in_burst=True, so the connection burst is the first
+        thing every capture exercises. The old re-anchor only fired here on a
+        rare interval-drift trigger; slew fires whenever the timeline is
+        behind, so this path went from almost never corrected to corrected
+        continuously. Assert the emitted timeline stays well formed and
+        converges rather than drifting or splitting transmissions.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=now,
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        chunk_sec = 15.0
+        samples = int(chunk_sec * 16000)
+        cumulative = 0
+        receipt = now
+        emitted: list[CapturedChunk] = []
+
+        # Five chunks arriving far faster than real time (the catch-up burst
+        # seen at connect), then steady arrivals slightly slower than the
+        # audio they carry.
+        for interval in [2.0] * 5 + [15.6] * 12:
+            start = manager.stream_anchor_time + datetime.timedelta(
+                seconds=cumulative / 16000
+            )
+            cumulative += samples
+            receipt += datetime.timedelta(seconds=interval)
+            emitted.extend(
+                manager.process_chunk(
+                    chunk=CapturedChunk(
+                        audio_bytes=b"data",
+                        chunk_start_time=start,
+                        chunk_end_time=start
+                        + datetime.timedelta(seconds=chunk_sec),
+                        session_id="session",
+                        receipt_time=receipt,
+                        stream_interval_lag_sec=None,
+                    ),
+                    cumulative_pcm_samples=cumulative,
+                    process_done=False,
+                )
+            )
+
+        self.assertEqual(manager.timeline_step_count, 0)
+        self.assertGreater(len(emitted), 10)
+
+        for chunk in emitted:
+            duration = (
+                chunk.chunk_end_time - chunk.chunk_start_time
+            ).total_seconds()
+            self.assertAlmostEqual(duration, chunk_sec, places=6)
+
+        gaps = [
+            (
+                emitted[i + 1].chunk_start_time - emitted[i].chunk_end_time
+            ).total_seconds()
+            for i in range(len(emitted) - 1)
+        ]
+        self.assertGreaterEqual(min(gaps), 0.0, "timeline went backwards")
+        self.assertLessEqual(
+            max(gaps),
+            icecast_collector.MAX_TIMELINE_SLEW_SEC + 1e-6,
+            "a correction exceeded the slew cap",
+        )
+        # Every gap must stay under the segmentation split threshold.
+        self.assertLess(max(gaps), 0.800)
+
+        # Lag introduced by the burst is worked off, converging on the one
+        # chunk of lag a healthy feed carries.
+        lags = [
+            (chunk.receipt_time - chunk.chunk_start_time).total_seconds()
+            for chunk in emitted
+            if chunk.receipt_time is not None
+        ]
+        self.assertGreater(lags[0], 2 * chunk_sec, "burst should start behind")
+        self.assertAlmostEqual(lags[-1], chunk_sec, delta=1.0)
+
+    def test_timeline_ahead_of_receipt_is_left_alone(self) -> None:
+        """No correction when the timeline is not behind receipt time."""
+        now = datetime.datetime.now(datetime.UTC)
+        initial_anchor = now - datetime.timedelta(seconds=10)
+        manager = self._slew_manager(initial_anchor)
+        manager.last_receipt_time = now - datetime.timedelta(seconds=16)
+
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=initial_anchor,
+            chunk_end_time=initial_anchor + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+            stream_interval_lag_sec=0.6,
+        )
+        res = manager.process_chunk(chunk, 16000 * 15, process_done=False)
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(manager.stream_anchor_time, initial_anchor)
+        self.assertEqual(manager.timeline_step_count, 0)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
