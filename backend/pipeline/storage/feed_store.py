@@ -77,6 +77,10 @@ class SourceType(enum.StrEnum):
     # using the Icecast collector; feeds into Dataflow segmentation.
     # Note: Do not confuse with BCFY_CALLS (discrete REST polling collector).
     BCFY_FEEDS = "bcfy_feeds"
+    # Self-hosted Icecast stream on the same collector, also continuous. Unlike
+    # BCFY_FEEDS, source_feed_id is the full stream URL and no credentials are
+    # sent.
+    GENERIC_ICECAST = "generic_icecast"
     # Discrete call REST polling API collector for Broadcastify Calls
     # (bcfy_calls_collector.py). Does NOT pass through Dataflow segmentation.
     BCFY_CALLS = "bcfy_calls"
@@ -396,6 +400,7 @@ class FeedStore:
         if claim_types is None:
             claim_types = [
                 SourceType.BCFY_FEEDS,
+                SourceType.GENERIC_ICECAST,
                 SourceType.OPENMHZ,
                 SourceType.FIRE_NOTIFICATIONS,
             ]

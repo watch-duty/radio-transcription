@@ -333,6 +333,7 @@ def _feed_media_type(source_type: SourceType) -> tuple[str, str]:
         return ("mp3", "audio/mpeg")
     if source_type in (
         SourceType.BCFY_FEEDS,
+        SourceType.GENERIC_ICECAST,
         SourceType.BCFY_CALLS,
     ):
         return ("flac", "audio/flac")
