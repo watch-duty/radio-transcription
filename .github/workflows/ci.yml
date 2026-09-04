@@ -356,6 +356,8 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - name: Check migrations for index create/drop churn
+        run: python3 scripts/check_migration_churn.py
       - name: Apply ingestion SQL migrations twice (excluding pg_cron jobs)
         env:
           PGHOST: localhost
