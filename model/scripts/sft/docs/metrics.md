@@ -1,85 +1,106 @@
 ---
 type: reference
-title: Gemini SFT Metric Glossary
-description: Canonical report columns and metric semantics for Gemini SFT eval reports.
+title: Gemini SFT Metric Interpretation
+description: Stable interpretation of quality and execution signals in Gemini SFT reports.
 tags: [gemini-sft, metrics, reports]
+sources:
+  - resource: ../../../src/gemini_sft/reporting.py
+    title: Report schema and metric calculations
 ---
 
-# Gemini SFT Metric Glossary
+# Gemini SFT Metric Interpretation
 
-Gemini SFT eval reports expose one target row per configured `[eval.model]`.
-The public row columns are the values in `REPORT_COLUMNS`.
+[`reporting.py`](../../../src/gemini_sft/reporting.py) defines the current
+serialized schema, report columns, normalization, and calculations. Generated
+JSON is the machine-readable contract; this document explains how to interpret
+the main concepts.
+
+## Public Report Columns
+
+This table is machine-checked against `reporting.REPORT_COLUMNS`; the code
+remains authoritative for serialization and calculation.
 
 | Column | Meaning |
 | --- | --- |
-| `target_label` | Artifact-safe label from `[eval.model].label`; this names the report row and target artifact directory. |
-| `model` | Publisher model ID, tuned endpoint, or checkpoint endpoint from `[eval.model].model`. |
-| `wer` | Word error rate percentage after the shared dispatch normalizer is applied to references and hypotheses. |
-| `cer` | Character error rate percentage after the same shared normalization pass. |
-| `keyword_accuracy` | Occurrence-weighted percentage of configured dispatch keywords found in the paired hypothesis when they appear in the reference. |
-| `empty_or_unintelligible_rate` | Percentage over all eval rows whose scored hypothesis is empty after stripping whitespace or equals `[UNINTELLIGIBLE]` under a case-insensitive comparison. Missing provider rows and unresolved online errors are scored as empty hypotheses and count in the numerator. |
-| `insertions` | Word insertion count from the WER alignment. |
-| `deletions` | Word deletion count from the WER alignment. |
-| `substitutions` | Word substitution count from the WER alignment. |
-| `total_reference_words` | WER denominator for the target row: matched reference words plus substitutions plus deletions. |
-| `missing_prediction_count` | Count of eval rows where the provider output did not include a successful prediction for that audio URI. |
-| `artifacts` | Object containing durable artifact URIs for the row. |
+| `target_label` | Operator-facing label for the evaluated target. |
+| `model` | Publisher model, tuned endpoint, or checkpoint endpoint. |
+| `wer` | Word error rate percentage after shared normalization. |
+| `cer` | Character error rate percentage after shared normalization. |
+| `keyword_accuracy` | Occurrence-weighted accuracy for configured dispatch keywords. |
+| `empty_or_unintelligible_rate` | Percentage of scored hypotheses that are empty or explicitly unintelligible. |
+| `insertions` | Word insertions in the WER alignment. |
+| `deletions` | Word deletions in the WER alignment. |
+| `substitutions` | Word substitutions in the WER alignment. |
+| `total_reference_words` | Reference-word denominator used for WER. |
+| `missing_prediction_count` | Eval rows without a successful provider prediction. |
+| `artifacts` | Durable artifact URIs associated with the result. |
 
-Reports expose the evaluated row count as report metadata named
-`n_eval_examples`, not as a target-table column.
+## Quality Metrics
 
-## Empty Output Metrics
+Word error rate is the sum of word insertions, deletions, and substitutions
+divided by reference words after the shared normalizer. Character error rate
+applies the corresponding character-level comparison.
 
-`empty_or_unintelligible_rate` is the metric for scored hypotheses that are
-empty after stripping whitespace or equal `[UNINTELLIGIBLE]` under a
-case-insensitive comparison. The scored hypothesis is either successful
-provider prediction text or the empty-string fallback used when no successful
-prediction exists.
+Keyword accuracy measures configured dispatch-keyword recovery. Read its exact
+aggregation in current code before comparing it with a differently produced
+metric.
 
-Missing provider rows are scored as empty hypotheses for WER/CER so they remain
-in the WER/CER denominator. They also count in
-`empty_or_unintelligible_rate`. Use `missing_prediction_count` and
-backend-specific metadata such as `online_error_count` to distinguish execution
-gaps from successful empty model responses.
+Always compare counts and denominators alongside percentages. A lower rate on a
+different row population is not necessarily an improvement.
 
-Use this column when deciding whether a target failed to answer or produced the
-explicit unusable-audio token.
+## Empty Output
 
-## Missing Predictions
+The packaged empty-or-unintelligible metric captures scored hypotheses that are
+empty after normalization or equal the implementation's explicit
+unintelligible token. The token comparison is case-insensitive after surrounding
+whitespace is stripped. Missing predictions are represented as empty scored
+hypotheses, so they count in this rate.
 
-Provider outputs are matched back to eval rows by audio URI. If no successful
-provider prediction exists for an individual row, `gemini-sft eval` supplies
-an empty hypothesis for scoring so the reference row remains in the WER/CER
-denominator. If every online request fails, evaluation exits nonzero without
-publishing a scoring report; this distinguishes total provider failure from a
-partially successful run.
+Keep three cases distinct:
 
-`missing_prediction_count` stays operationally separate from exact empty model
-responses. A missing provider row means no successful prediction record was
-returned for that audio URI. An exact empty response means the provider
-successfully returned a prediction record whose stripped text was empty.
+1. a successful provider response with empty text;
+2. a successful response containing the explicit unusable-audio token;
+3. no successful prediction because execution failed or output was missing.
 
-For online endpoint eval, errored rows are retried on resume. If a partially
-successful eval report is generated while errors remain unresolved, those rows
-count in both `missing_prediction_count` and metadata `online_error_count`.
+They may contribute similarly to a quality rate while requiring different
+operational action. Use provider-error and missing-prediction evidence to
+separate them.
 
-## Artifact URI Fields
+## Execution Completeness
 
-The `artifacts` object can include:
+Quality metrics are interpretable only after confirming the report covers the
+intended target and row population. Review:
 
-| Key | Meaning |
-| --- | --- |
-| `raw_output_uri` | Durable GCS prefix for raw Vertex batch output when the target used batch inference. |
-| `online_predictions_uri` | Durable GCS JSONL for online endpoint prediction attempts when the target used online inference. It can include the latest errored attempt rows for diagnosis. |
-| `rolling_history_index_uri` | Durable transcript-free index of causal waves and their online prediction artifacts for nonzero-context evaluation. |
-| `rolling_history_audit_uri` | Durable transcript-free per-row audit of eligible, supplied, and omitted prior-prediction dependencies. |
-| `normalized_manifest_uri` | Durable normalized inference manifest with source rows and successful prediction fields. |
-| `summary_json_uri` | Stable GCS URI for the target run's JSON report summary. |
-| `summary_markdown_uri` | Stable GCS URI for the target run's Markdown report summary. |
+- evaluated row count;
+- missing predictions;
+- unresolved provider errors;
+- target and manifest identity;
+- row-level normalized predictions.
 
-These fields point to durable GCS artifacts. Local files under `results/` are a
-cache or mirror, not the source of truth for report reuse.
+The exact metadata fields and failure behavior are code-owned. A summary
+artifact alone does not prove complete inference.
 
-Rolling-history audits never contain transcript or reference text. Evaluation
-references are unavailable to provider requests and are joined only after
-inference finalizes for scoring.
+## Packaged And Derived Metrics
+
+Only metrics emitted by
+[`reporting.py`](../../../src/gemini_sft/reporting.py) are packaged CLI metrics.
+Common downstream analyses—such as source, sample-rate, duration, word-count,
+or cross-slice breakdowns—are derived from the normalized row-level manifest.
+
+A derived report must:
+
+- name the source manifest and prediction artifact;
+- define each slice and missing-metadata policy;
+- preserve the parent evaluation membership;
+- reconcile row counts and denominators to the parent report;
+- avoid changing predictions while slicing.
+
+Total evaluation duration is also derived unless present in the current report
+schema. Compute it from the frozen manifest and bind it to that manifest's
+identity.
+
+## Comparing Checkpoints
+
+Use identical rows, request geometry, normalization, and slicing rules for every
+checkpoint. Report execution gaps next to quality metrics, and do not rank a
+checkpoint whose required evaluation lanes are incomplete.
