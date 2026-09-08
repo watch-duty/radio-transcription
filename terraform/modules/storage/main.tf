@@ -259,7 +259,8 @@ module "dataflow_staging_bucket" {
         type = "Delete"
       }
       condition = {
-        age = 30 # Temporary files only need to live 30 days
+        age            = 30 # Only purge temp scratch files; preserve long-lived staged packages
+        matches_prefix = ["temp/"]
       }
     }
   ]
