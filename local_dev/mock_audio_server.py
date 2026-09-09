@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DATA_SOURCE_BCFY_CALLS = "broadcastify_calls"
 DATA_SOURCE_FIRE_NOTIFICATIONS = "fire_notifications"
 PATH_BCFY_CALLS = "/calls"
-PATH_FIRE_NOTIFICATIONS_PREFIX = "/api/audio/"
+PATH_FIRE_NOTIFICATIONS_PREFIX = "/api/audio_file"
 DEFAULT_DATA_DIR = "/data"
 
 # Pre-populated default mock feed IDs.
@@ -85,7 +85,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if parsed_url.path in (PATH_BCFY_CALLS, f"{PATH_BCFY_CALLS}/"):
             self._handle_bcfy_calls(parsed_url)
-        elif parsed_url.path.startswith(PATH_FIRE_NOTIFICATIONS_PREFIX):
+        elif (
+            parsed_url.path == PATH_FIRE_NOTIFICATIONS_PREFIX
+            or parsed_url.path.startswith(f"{PATH_FIRE_NOTIFICATIONS_PREFIX}/")
+        ):
             self._handle_fire_notifications(parsed_url)
         else:
             self._handle_file_download(parsed_url)
@@ -149,15 +152,25 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "application/json")
         self.end_headers()
 
-        # Unquote needed to process space in fire notifications test audio file
-        source_feed_id = unquote(
-            parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) :]
-        )
+        qs = parse_qs(parsed_url.query)
+        dir_param = qs.get("dir", [""])[0]
+        dir_param = unquote(dir_param)
+        if dir_param.startswith("RECORDINGS/"):
+            source_feed_id = dir_param[len("RECORDINGS/") :]
+        else:
+            source_feed_id = dir_param
+        if not source_feed_id and parsed_url.path.startswith(
+            f"{PATH_FIRE_NOTIFICATIONS_PREFIX}/"
+        ):
+            source_feed_id = unquote(
+                parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) + 1 :]
+            )
+
         current_file = self._get_next_audio_file(
             parsed_url, DATA_SOURCE_FIRE_NOTIFICATIONS, source_feed_id
         )
 
-        files_payload = []
+        file_list_payload = []
         if current_file:
             relative_path_no_ext = (
                 current_file.relative_to(Path(DEFAULT_DATA_DIR))
@@ -165,20 +178,24 @@ class RequestHandler(BaseHTTPRequestHandler):
                 .as_posix()
             )
 
-            files_payload.append(
+            file_list_payload.append(
                 {
-                    "type": "file",
-                    "name": f"{current_file.stem}.mp3",
+                    "filetype": "file",
+                    "file": f"{current_file.stem}.mp3",
                     "uuid": f"{relative_path_no_ext}",
-                    "size": current_file.stat().st_size
-                    if current_file.exists()
-                    else 10240,
+                    "filesize": str(
+                        current_file.stat().st_size
+                        if current_file.exists()
+                        else 10240
+                    ),
+                    "path": f"RECORDINGS/{source_feed_id}",
+                    "primary": True,
                 }
             )
 
         payload = {
-            "files": files_payload,
-            "directories": [],
+            "file_list": file_list_payload,
+            "dir_list": [],
         }
         self.wfile.write(json.dumps(payload).encode("utf-8"))
 
