@@ -88,3 +88,20 @@ export interface DryRunRequest {
   feedIds?: string[];
   daysLookback?: number;
 }
+
+export interface RuleAuditEvent {
+  id: string;
+  ruleId: string;
+  action: string;
+  actorId: string;
+  occurredAt: string;
+  ruleRevision: number;
+  beforeValues: Record<string, unknown>;
+  afterValues: Record<string, unknown>;
+}
+
+export interface PaginatedRuleAuditEvents {
+  auditEvents: RuleAuditEvent[];
+  nextToken: string | null;
+  total: number;
+}

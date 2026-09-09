@@ -26,6 +26,7 @@ import type { Feed, Rule, RuleConditions } from '@transcription/common';
 
 import { useIsNarrow } from '../../hooks/useIsNarrow';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
+import { RuleHistoryModal } from './RuleHistoryModal';
 import { RuleRow } from './RuleRow';
 
 export interface RuleTableProps {
@@ -90,6 +91,7 @@ function VirtuosoTableRow(
       editingRuleId?: string;
       allowEdit?: boolean;
       isNarrow?: boolean;
+      onViewHistory?: (rule: Rule) => void;
     };
   }
 ) {
@@ -159,6 +161,7 @@ export function RuleTable({
   const isNarrow = useIsNarrow();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [historyRule, setHistoryRule] = useState<Rule | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
@@ -502,7 +505,12 @@ export function RuleTable({
                 <VirtuosoTableRow
                   key={rule.ruleId}
                   item={rule}
-                  context={{ editingRuleId, allowEdit, isNarrow: true }}
+                  context={{
+                    editingRuleId,
+                    allowEdit,
+                    isNarrow: true,
+                    onViewHistory: setHistoryRule,
+                  }}
                 >
                   <RuleRow
                     rule={rule}
@@ -511,6 +519,7 @@ export function RuleTable({
                     editingRuleId={editingRuleId}
                     allowEdit={allowEdit}
                     onEditRule={onEditRule}
+                    onViewHistory={setHistoryRule}
                     isSubmitting={isSubmitting}
                     isNarrow={true}
                   />
@@ -522,7 +531,12 @@ export function RuleTable({
       ) : (
         <TableVirtuoso
           data={filteredAndSortedRules}
-          context={{ editingRuleId, allowEdit, isNarrow: false }}
+          context={{
+            editingRuleId,
+            allowEdit,
+            isNarrow: false,
+            onViewHistory: setHistoryRule,
+          }}
           computeItemKey={(_index, rule) => rule.ruleId}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
@@ -535,10 +549,19 @@ export function RuleTable({
               editingRuleId={editingRuleId}
               allowEdit={allowEdit}
               onEditRule={onEditRule}
+              onViewHistory={setHistoryRule}
               isSubmitting={isSubmitting}
               isNarrow={false}
             />
           )}
+        />
+      )}
+
+      {historyRule && (
+        <RuleHistoryModal
+          rule={historyRule}
+          open={!!historyRule}
+          onClose={() => setHistoryRule(null)}
         />
       )}
     </Card>
