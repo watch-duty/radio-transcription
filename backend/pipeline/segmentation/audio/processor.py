@@ -12,6 +12,7 @@ from google.cloud import storage
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.schema_types import streaming_state as bp_state
+from backend.pipeline.segmentation import cpu_time
 from backend.pipeline.segmentation import storage as audio_storage
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
@@ -114,13 +115,21 @@ class SegmentationAudioProcessor:
         prior_audio: bytes | None = None,
         *,
         prefetched_audio: AudioSignal | None = None,
+        record_fetch_cpu_us: Callable[[int], None] | None = None,
+        record_analysis_cpu_us: Callable[[int], None] | None = None,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS (or uses pre-fetched decoded samples) and runs speech segment detection natively."""
         if prefetched_audio is not None:
             audio_signal = prefetched_audio
         else:
+            fetch_start_ns = cpu_time.read_thread_cpu_ns()
             audio_signal = self.fetch_and_decode_audio(gcs_path)
+            if record_fetch_cpu_us is not None:
+                record_fetch_cpu_us(
+                    cpu_time.elapsed_thread_cpu_us(fetch_start_ns)
+                )
 
+        analysis_start_ns = cpu_time.read_thread_cpu_ns()
         samples, sr = audio_signal.samples, audio_signal.sample_rate
 
         # Safeguard: Reject extremely long audio files (e.g. >300s) to prevent memory exhaustion
@@ -187,7 +196,7 @@ class SegmentationAudioProcessor:
 
         duration_ms = duration_ms or int(len(samples) * MS_PER_SECOND / sr)
 
-        return AudioChunkData(
+        chunk_data = AudioChunkData(
             start_ms=start_ms,
             audio=samples,
             sample_rate=sr,
@@ -197,6 +206,11 @@ class SegmentationAudioProcessor:
             denoised_audio=denoised_arr,
             skip_reason=skip_reason,
         )
+        if record_analysis_cpu_us is not None:
+            record_analysis_cpu_us(
+                cpu_time.elapsed_thread_cpu_us(analysis_start_ns)
+            )
+        return chunk_data
 
     def _open_container(
         self, in_mem_file: io.BytesIO

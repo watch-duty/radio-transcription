@@ -98,7 +98,7 @@ from backend.pipeline.schema_types.continuous_audio_pb2 import (
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
-from backend.pipeline.segmentation import log_helper
+from backend.pipeline.segmentation import cpu_time, log_helper
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
     GCS_DOWNLOAD_TIMEOUT_SEC,
@@ -311,6 +311,11 @@ class UploadRawSegmentFn(beam.DoFn):
     stitched_segments_uploaded: Counter
     download_latency_ms: Distribution
     stitch_latency_ms: Distribution
+    post_flush_download_decode_thread_cpu_us: Distribution
+    post_flush_stitch_thread_cpu_us: Distribution
+    post_flush_encode_thread_cpu_us: Distribution
+    post_flush_upload_thread_cpu_us: Distribution
+    post_flush_message_thread_cpu_us: Distribution
 
     def __init__(
         self, staging_audio_bucket: str | None, project_id: str
@@ -319,6 +324,22 @@ class UploadRawSegmentFn(beam.DoFn):
         self.project_id = project_id
         self.gcs_client = None
         self._executor = None
+        self.post_flush_download_decode_thread_cpu_us = Metrics.distribution(
+            self.__class__,
+            "post_flush_download_decode_thread_cpu_us",
+        )
+        self.post_flush_stitch_thread_cpu_us = Metrics.distribution(
+            self.__class__, "post_flush_stitch_thread_cpu_us"
+        )
+        self.post_flush_encode_thread_cpu_us = Metrics.distribution(
+            self.__class__, "post_flush_encode_thread_cpu_us"
+        )
+        self.post_flush_upload_thread_cpu_us = Metrics.distribution(
+            self.__class__, "post_flush_upload_thread_cpu_us"
+        )
+        self.post_flush_message_thread_cpu_us = Metrics.distribution(
+            self.__class__, "post_flush_message_thread_cpu_us"
+        )
 
     @override
     def setup(self) -> None:
@@ -375,10 +396,11 @@ class UploadRawSegmentFn(beam.DoFn):
 
         def _download_and_decode(
             chunk: Any,
-        ) -> tuple[str, tuple[np.ndarray, int, int]]:
+        ) -> tuple[str, tuple[np.ndarray, int, int], int]:
             # Propagate and activate the parent thread's context in this thread
             token = otel_context.attach(parent_context)
             try:
+                download_cpu_start_ns = cpu_time.read_thread_cpu_ns()
                 task_logger.debug(
                     "[Stateless Stitch] Downloading GCS chunk: %s",
                     chunk.gcs_uri,
@@ -406,7 +428,14 @@ class UploadRawSegmentFn(beam.DoFn):
                 raise RuntimeError(err_msg) from e
             else:
                 self.gcs_chunks_downloaded.inc()
-                return chunk.gcs_uri, (samples, sr, chunk.timestamp_ms)
+                download_cpu_us = cpu_time.elapsed_thread_cpu_us(
+                    download_cpu_start_ns
+                )
+                return (
+                    chunk.gcs_uri,
+                    (samples, sr, chunk.timestamp_ms),
+                    download_cpu_us,
+                )
             finally:
                 # Clean up the context on this thread
                 otel_context.detach(token)
@@ -422,8 +451,11 @@ class UploadRawSegmentFn(beam.DoFn):
             }
             try:
                 for future in concurrent.futures.as_completed(futures):
-                    gcs_uri, val = future.result()
+                    gcs_uri, val, download_cpu_us = future.result()
                     decoded_chunks[gcs_uri] = val
+                    self.post_flush_download_decode_thread_cpu_us.update(
+                        download_cpu_us
+                    )
             except Exception:
                 # Staff-Level defensive purge: immediately cancel all
                 # remaining pending download tasks to save network bandwidth
@@ -436,8 +468,11 @@ class UploadRawSegmentFn(beam.DoFn):
             # Fallback to sequential to avoid thread context-switching
             # for a single chunk
             for chunk in request.contributing_chunks:
-                gcs_uri, val = _download_and_decode(chunk)
+                gcs_uri, val, download_cpu_us = _download_and_decode(chunk)
                 decoded_chunks[gcs_uri] = val
+                self.post_flush_download_decode_thread_cpu_us.update(
+                    download_cpu_us
+                )
 
         download_duration_ms = (
             time.perf_counter_ns() - download_start
@@ -453,6 +488,7 @@ class UploadRawSegmentFn(beam.DoFn):
     ) -> bytes:
         """Slices, concatenates, and converts the entire continuous segment time range to FLAC bytes."""
         stitch_start = time.perf_counter_ns()
+        stitch_cpu_start_ns = cpu_time.read_thread_cpu_ns()
 
         segment_start = request.time_range.start_ms
         segment_end = request.time_range.end_ms
@@ -494,7 +530,15 @@ class UploadRawSegmentFn(beam.DoFn):
             )
 
         final_pcm_bytes = final_pcm_arr.tobytes()
+        self.post_flush_stitch_thread_cpu_us.update(
+            cpu_time.elapsed_thread_cpu_us(stitch_cpu_start_ns)
+        )
+
+        encode_cpu_start_ns = cpu_time.read_thread_cpu_ns()
         flac_bytes = self._pcm_to_flac(final_pcm_bytes, request.sample_rate)
+        self.post_flush_encode_thread_cpu_us.update(
+            cpu_time.elapsed_thread_cpu_us(encode_cpu_start_ns)
+        )
 
         stitch_duration_ms = (
             time.perf_counter_ns() - stitch_start
@@ -516,11 +560,15 @@ class UploadRawSegmentFn(beam.DoFn):
             raise RuntimeError(err_msg)
 
         upload_start = time.perf_counter_ns()
+        upload_cpu_start_ns = cpu_time.read_thread_cpu_ns()
 
         flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
         bucket = gcs_client.bucket(self.staging_audio_bucket)
         blob = bucket.blob(flac_path)
         blob.upload_from_string(flac_bytes, content_type="audio/flac")
+        self.post_flush_upload_thread_cpu_us.update(
+            cpu_time.elapsed_thread_cpu_us(upload_cpu_start_ns)
+        )
         self.stitched_segments_uploaded.inc()
 
         upload_duration_ms = (
@@ -653,19 +701,24 @@ class UploadRawSegmentFn(beam.DoFn):
                 )
 
                 gcs_uri = self._upload_raw_audio(request, start_datetime)
+                message_cpu_start_ns = cpu_time.read_thread_cpu_ns()
                 segmented_audio_pb = self._build_segmented_audio_proto(
                     request, gcs_uri
                 )
 
                 pubsub_attributes: dict[str, str] = {}
                 inject_otel_context(pubsub_attributes)
+                serialized_audio = segmented_audio_pb.SerializeToString()
+                self.post_flush_message_thread_cpu_us.update(
+                    cpu_time.elapsed_thread_cpu_us(message_cpu_start_ns)
+                )
 
                 yield (
                     session_key,
                     (
                         seq_num,
                         {
-                            "data": segmented_audio_pb.SerializeToString(),
+                            "data": serialized_audio,
                             "attributes": pubsub_attributes,
                             "ordering_key": request.feed_id,
                             "is_tombstone": False,

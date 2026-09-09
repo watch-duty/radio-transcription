@@ -11,6 +11,7 @@ from backend.pipeline.segmentation.datatypes import (
     AudioSignal,
     BufferedChunk,
     OrderRestorerConfig,
+    TimedAudioSignal,
 )
 from backend.pipeline.segmentation.storage import (
     acquire_shared_download_executor,
@@ -83,9 +84,11 @@ class GcsPrefetchingTest(unittest.TestCase):
 
         # Resolve futures
         for future in futures_map.values():  # type: ignore
-            sig = future.result()
+            timed_audio = future.result()
+            sig = timed_audio.signal
             self.assertEqual(len(sig.samples), 1600)
             self.assertEqual(sig.sample_rate, 16000)
+            self.assertGreaterEqual(timed_audio.thread_cpu_us, 0)
 
         self.assertTrue(len(execution_threads) > 0)
         self.assertNotIn(main_thread_name, execution_threads)
@@ -129,6 +132,33 @@ class GcsPrefetchingTest(unittest.TestCase):
                     tp.startswith("00-4bf92f3577b34da6a3ce929d0e0e4736-"),
                     f"Expected trace ID 4bf92f3577b34da6a3ce929d0e0e4736 to propagate, got: {tp}",
                 )
+
+    def test_resolve_prefetch_records_executor_cpu(self) -> None:
+        """Reports executor CPU from the Beam processing thread."""
+        signal = AudioSignal(
+            samples=np.zeros(1600, dtype=np.int16),
+            sample_rate=16000,
+        )
+        future: concurrent.futures.Future[TimedAudioSignal] = (
+            concurrent.futures.Future()
+        )
+        future.set_result(TimedAudioSignal(signal=signal, thread_cpu_us=37))
+        self.engine.input_fetch_decode_thread_cpu_us = MagicMock()
+        chunk = BufferedChunk(
+            gcs_uri="gs://bucket/1.flac",
+            timestamp_ms=1000,
+        )
+
+        resolved = self.engine._resolve_prefetched_audio(
+            chunk,
+            {chunk.gcs_uri: future},
+            self.logger,
+        )
+
+        self.assertIs(resolved, signal)
+        self.engine.input_fetch_decode_thread_cpu_us.update.assert_called_once_with(
+            37
+        )
 
 
 class SharedDownloadExecutorTest(unittest.TestCase):

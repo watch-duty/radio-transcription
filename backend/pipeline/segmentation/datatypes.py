@@ -53,7 +53,15 @@ class AudioSignal:
         )
 
 
-AudioFutureMap = dict[str, concurrent.futures.Future[AudioSignal]]
+@dataclass(frozen=True)
+class TimedAudioSignal:
+    """A decoded signal with CPU consumed by its executor thread."""
+
+    signal: AudioSignal
+    thread_cpu_us: int
+
+
+AudioFutureMap = dict[str, concurrent.futures.Future[TimedAudioSignal]]
 
 
 @dataclass(frozen=True)
