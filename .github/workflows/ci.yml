@@ -381,7 +381,25 @@ jobs:
               echo "Pass $pass: applying $f..."
               psql -v ON_ERROR_STOP=1 -f "$f"
             done
+            # Snapshot table and index identity after each pass. A migration
+            # that rewrites a table or rebuilds an index on replay changes a
+            # relfilenode or OID here even though it applies without error.
+            psql -v ON_ERROR_STOP=1 -t -A -F '|' \
+              -f ../ci/relation_identity_snapshot.sql \
+              > "${RUNNER_TEMP}/relation_identity_pass_${pass}.txt"
           done
+      - name: Fail if the second replay pass rewrote a table or rebuilt an index
+        run: |
+          set -euo pipefail
+          if ! diff \
+              "${RUNNER_TEMP}/relation_identity_pass_1.txt" \
+              "${RUNNER_TEMP}/relation_identity_pass_2.txt"; then
+            echo "::error::Relation identity changed between migration replay passes."
+            echo "A migration in sql/ingestion rewrites a table or recreates an index"
+            echo "every time the schema job runs. Guard it so replay is a no-op."
+            echo "See sql/ci/relation_identity_snapshot.sql for what is compared."
+            exit 1
+          fi
       - name: Run Phase 1 behavior smoke check
         env:
           PGHOST: localhost
