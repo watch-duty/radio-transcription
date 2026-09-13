@@ -272,6 +272,10 @@ class PendingPubSubMessage(TypedDict):
     instances of this are held in Beam BagState between bundles, and a plain
     mapping keeps that state encoding independent of any class definition.
 
+    Does NOT carry an ordering_key: Dataflow's native Pub/Sub sink batches
+    pending messages across feeds into single PublishRequest RPCs, which
+    Pub/Sub rejects with FAILED_PRECONDITION if ordering keys differ.
+
     A tombstone marks a segment whose upload failed. It carries no payload and
     is never published, but still occupies its sequence number so a failed
     upload advances the sequence instead of blocking the feed behind a gap that
@@ -280,7 +284,6 @@ class PendingPubSubMessage(TypedDict):
 
     data: bytes
     attributes: dict[str, str]
-    ordering_key: str
     is_tombstone: bool
 
 
