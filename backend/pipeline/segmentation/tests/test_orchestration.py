@@ -6,6 +6,7 @@ from types import ModuleType
 
 import apache_beam as beam
 import pytest
+from apache_beam.io.gcp.pubsub import WriteToPubSub
 from apache_beam.pipeline import AppliedPTransform, PipelineVisitor
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
@@ -15,7 +16,10 @@ from backend.pipeline.segmentation.constants import (
 )
 from backend.pipeline.segmentation.datatypes import FlushRequest
 from backend.pipeline.segmentation.options import SegmentationOptions
-from backend.pipeline.segmentation.orchestration import get_pipeline
+from backend.pipeline.segmentation.orchestration import (
+    format_dlq_message,
+    get_pipeline,
+)
 from backend.pipeline.segmentation.transforms import (
     stateful as stateful_module,
 )
@@ -335,4 +339,70 @@ def test_dofns_live_in_the_module_matching_their_statefulness() -> None:
             f"{cls.__name__} is in stateless.py but declares Beam state or "
             "timers, so Beam will serialize its processing per key. It belongs "
             "in stateful.py."
+        )
+
+
+def test_format_dlq_message_has_no_ordering_key() -> None:
+    """format_dlq_message MUST NOT set an ordering_key on the returned PubsubMessage.
+
+    Dataflow's native Pub/Sub sink batches pending messages across keys into
+    a single PublishRequest, which Pub/Sub rejects with FAILED_PRECONDITION if
+    ordering keys differ. DLQ messages must never fail to publish or deadlock.
+    """
+    msg = format_dlq_message({"feed_id": "feed-123", "error": "test_failure"})
+    assert msg.ordering_key == ""
+    assert msg.attributes.get("feed_id") == "feed-123"
+
+
+def test_pipeline_pubsub_sinks_disable_ordering_keys() -> None:
+    """All WriteToPubSub transforms in the DAG MUST have publish_with_ordering_key=False.
+
+    Dataflow's native Pub/Sub sink does not support message ordering keys.
+    When worker threads batch publish requests across keys under latency,
+    Pub/Sub rejects multi-key batches with FAILED_PRECONDITION and retries forever.
+    """
+    options = SegmentationOptions(
+        flags=[
+            "--project",
+            "test-project",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
+            "--output_topic",
+            "projects/test-project/topics/out",
+            "--dlq_topic",
+            "projects/test-project/topics/dlq",
+            "--staging_audio_bucket",
+            "test-staging-bucket",
+        ]
+    )
+    pipeline = get_pipeline(options)
+
+    class _SinkCollector(PipelineVisitor):
+        def __init__(self) -> None:
+            self.nodes: list[AppliedPTransform] = []
+
+        def enter_composite_transform(
+            self, transform_node: AppliedPTransform
+        ) -> None:
+            self.nodes.append(transform_node)
+
+        def visit_transform(self, transform_node: AppliedPTransform) -> None:
+            self.nodes.append(transform_node)
+
+    collector = _SinkCollector()
+    pipeline.visit(collector)
+
+    pubsub_sinks = [
+        n for n in collector.nodes if isinstance(n.transform, WriteToPubSub)
+    ]
+    assert len(pubsub_sinks) >= 2, (
+        f"expected at least 2 WriteToPubSub transforms (main + dlq), found {len(pubsub_sinks)}"
+    )
+    for sink_node in pubsub_sinks:
+        sink = sink_node.transform
+        assert isinstance(sink, WriteToPubSub)
+        assert not sink.publish_with_ordering_key, (
+            f"Transform '{sink_node.full_label}' has publish_with_ordering_key=True. "
+            "Dataflow does not support ordering keys via WriteToPubSub and will "
+            "fail with multi-key FAILED_PRECONDITION publish loops."
         )
