@@ -1,7 +1,5 @@
-data "google_project" "project" {}
-
 locals {
-  project_id = data.google_project.project.project_id
+  project_id = var.project_id
 }
 
 # =============================================================================

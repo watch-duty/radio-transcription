@@ -24,3 +24,13 @@ variable "deployer_service_account_email" {
   default     = null
   nullable    = true
 }
+
+variable "project_id" {
+  description = "The GCP project ID."
+  type        = string
+}
+
+variable "project_number" {
+  description = "The GCP project number."
+  type        = string
+}
