@@ -2210,7 +2210,6 @@ class PubSubOrderRestorerFn(beam.DoFn):
             yield PubsubMessage(
                 data=item_dict["data"],
                 attributes=item_dict["attributes"],
-                ordering_key=item_dict["ordering_key"],
             )
         expected_seq += 1
 
@@ -2221,7 +2220,6 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 yield PubsubMessage(
                     data=next_item["data"],
                     attributes=next_item["attributes"],
-                    ordering_key=next_item["ordering_key"],
                 )
             expected_seq += 1
 
@@ -2248,6 +2246,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
     def _process_future(
         self,
         seq_num: int,
+        key: str,
         item_dict: datatypes.PendingPubSubMessage,
         buffered_items: list[tuple[int, datatypes.PendingPubSubMessage]],
         buffer_state: BagRuntimeState,
@@ -2269,15 +2268,15 @@ class PubSubOrderRestorerFn(beam.DoFn):
         else:
             PUBSUB_ORDER_FUTURE_RETRIES_SUPPRESSED.inc()
             logger.debug(
-                "Deduplicated future segment retry seq=%d for feed_id=%s already in buffer",
+                "Deduplicated future segment retry seq=%d for key=%s already in buffer",
                 seq_num,
-                item_dict.get("ordering_key", ""),
+                key,
             )
 
     def _process_late_or_duplicate(
         self,
         seq_num: int,
-        feed_id: str,
+        key: str,
         item_dict: datatypes.PendingPubSubMessage,
         expected_seq: int,
         skipped_seqs_state: ReadModifyWriteRuntimeState,
@@ -2294,27 +2293,26 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 logger.debug(
                     "Retired skipped seq=%d for key=%s; it arrived as a tombstone, nothing to publish",
                     seq_num,
-                    feed_id,
+                    key,
                 )
             else:
                 yield PubsubMessage(
                     data=item_dict["data"],
                     attributes=item_dict["attributes"],
-                    ordering_key=item_dict["ordering_key"],
                 )
                 PUBSUB_ORDER_LATE_ARRIVALS_EMITTED.inc()
                 logger.info(
                     "[PubSub Order] Emitted late segment seq=%d for key=%s (skipped by fallback timer earlier)",
                     seq_num,
-                    feed_id,
+                    key,
                 )
         else:
             PUBSUB_ORDER_POST_PUBLISH_RETRIES_SUPPRESSED.inc()
             logger.debug(
-                "Ignoring duplicate retry segment seq=%d (already emitted, expected=%d) for feed_id=%s",
+                "Ignoring duplicate retry segment seq=%d (already emitted, expected=%d) for key=%s",
                 seq_num,
                 expected_seq,
-                item_dict.get("ordering_key", ""),
+                key,
             )
 
     @override
@@ -2328,7 +2326,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         stall_since_state: ReadModifyWriteRuntimeState = PUB_STALL_SINCE_STATE,  # type: ignore
         stall_probe_timer: RuntimeTimer = PUB_STALL_PROBE_TIMER,  # type: ignore
     ) -> Iterator[PubsubMessage]:
-        _feed_id, (seq_num, item_dict) = element
+        key, (seq_num, item_dict) = element
         expected_seq = expected_seq_state.read() or 1
         buffered_items = list(buffer_state.read())
 
@@ -2346,6 +2344,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         elif seq_num > expected_seq:
             self._process_future(
                 seq_num,
+                key,
                 item_dict,
                 buffered_items,
                 buffer_state,
@@ -2356,7 +2355,7 @@ class PubSubOrderRestorerFn(beam.DoFn):
         else:
             yield from self._process_late_or_duplicate(
                 seq_num,
-                _feed_id,
+                key,
                 item_dict,
                 expected_seq,
                 skipped_seqs_state,
@@ -2462,7 +2461,6 @@ class PubSubOrderRestorerFn(beam.DoFn):
                 yield PubsubMessage(
                     data=next_item["data"],
                     attributes=next_item["attributes"],
-                    ordering_key=next_item["ordering_key"],
                 )
             curr_seq += 1
 
