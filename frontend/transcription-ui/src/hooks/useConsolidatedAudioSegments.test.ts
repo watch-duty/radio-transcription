@@ -177,6 +177,41 @@ describe('useConsolidatedAudioSegments', () => {
       expect(result[2].id).toBe('s1');
     });
 
+    it('injects outage bundle for generic_icecast, which is also a continuous source', () => {
+      const start1 = '2026-07-08T12:00:00.000Z';
+      const end1 = '2026-07-08T12:00:10.000Z';
+      const start2 = '2026-07-08T12:00:20.000Z';
+      const end2 = '2026-07-08T12:00:30.000Z';
+
+      const segments = [
+        createSegment('s1', start1, end1),
+        createSegment('s2', start2, end2),
+      ];
+
+      const historyEvents: FeedHistoryEvent[] = [
+        createHistoryEvent(
+          'e1',
+          new Date('2026-07-08T12:00:10.000Z').getTime(),
+          'failing',
+          'source_offline'
+        ),
+        createHistoryEvent(
+          'e2',
+          new Date('2026-07-08T12:00:20.000Z').getTime(),
+          'active'
+        ),
+      ];
+
+      const result = consolidateAudioSegments(
+        segments,
+        SourceType.GENERIC_ICECAST,
+        historyEvents
+      );
+
+      expect(result).toHaveLength(3);
+      expect(result[1].isOutageBundle).toBe(true);
+    });
+
     it('flushes silence bundle without injecting outage when minor gap (15s) occurs during active feed status', () => {
       const start1 = '2026-07-08T12:00:00.000Z';
       const end1 = '2026-07-08T12:00:10.000Z';

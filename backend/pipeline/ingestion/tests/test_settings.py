@@ -203,6 +203,7 @@ class TestCollectorSettings(unittest.TestCase):
             set(settings.feed_claim_caps),
             {
                 SourceType.BCFY_FEEDS,
+                SourceType.GENERIC_ICECAST,
                 SourceType.OPENMHZ,
                 SourceType.FIRE_NOTIFICATIONS,
             },
@@ -269,6 +270,7 @@ class TestCollectorSettings(unittest.TestCase):
             set(settings.feed_claim_caps),
             {
                 SourceType.BCFY_FEEDS,
+                SourceType.GENERIC_ICECAST,
                 SourceType.OPENMHZ,
                 SourceType.FIRE_NOTIFICATIONS,
             },

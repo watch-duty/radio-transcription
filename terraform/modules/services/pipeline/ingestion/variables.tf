@@ -202,6 +202,12 @@ variable "collector_machine_type" {
   default     = "n2-standard-2"
 }
 
+variable "project_id" {
+  description = "The GCP project ID."
+  type        = string
+}
 
-
-
+variable "project_number" {
+  description = "The GCP project number."
+  type        = string
+}

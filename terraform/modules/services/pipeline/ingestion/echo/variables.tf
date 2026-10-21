@@ -75,3 +75,13 @@ variable "echo_ingestion_max_instances" {
   type        = number
   default     = 50
 }
+
+variable "project_id" {
+  description = "The GCP project ID."
+  type        = string
+}
+
+variable "project_number" {
+  description = "The GCP project number."
+  type        = string
+}

@@ -2,11 +2,9 @@
 # ECHO AUDIO INGESTION
 # =============================================================================
 
-data "google_project" "project" {}
-
 locals {
-  project_id     = data.google_project.project.project_id
-  project_number = data.google_project.project.number
+  project_id     = var.project_id
+  project_number = var.project_number
 }
 
 # -----------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import concurrent.futures
 import datetime
 import sys
 import unittest
+import warnings
 from pathlib import Path
 from typing import Final, NamedTuple
 
@@ -592,6 +593,26 @@ class TestVadEngine(unittest.TestCase):
         # segment before noise floor settles.
         self.assertEqual(padded_segments, [(0.16, 1.216)])
 
+    def test_integration_idle_line_noise_with_speech(self) -> None:
+        """Integration test to verify VAD detects speech while stationarity skips idle noise.
+
+        Verifies that on a 30s stream with active dispatch speech in chunk 1 (0-15s)
+        and stationary ADC soundcard line-in hiss in chunk 2 (15-30s), speech is
+        reliably detected in chunk 1 and chunk 2 is skipped without false positives.
+        """
+        self._run_integration_test(
+            "test_idle_line_noise_with_speech.flac",
+            [
+                (0.080, 1.150),
+                (3.450, 4.600),
+                (8.050, 8.950),
+                (9.850, 10.850),
+            ],
+            baseline_f1=0.940,
+            min_recall=0.90,
+            chunk_len_sec=15.0,
+        )
+
     def test_vad_priming_contiguous_chunk(self) -> None:
         """Verifies that passing a prior_audio tail primes VAD state and shifts time coordinates correctly."""
         # 1. Generate 1 second of voice-frequency-like sine wave
@@ -926,6 +947,123 @@ class TestVadEngine(unittest.TestCase):
         ).preprocessed_audio
         assert expected_preprocessed is not None
         np.testing.assert_array_equal(preprocessed, expected_preprocessed)
+
+    def test_stationarity_gating_stationary_noise_vs_speech(self) -> None:
+        """Verifies stationarity gating skips stationary noise but preserves speech."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+        rng = np.random.default_rng(12345)
+
+        # 1. Stationary Gaussian line-in noise (RMS ~ 0.020, Peak ~ 0.060)
+        # Without stationarity gating, RMS > 0.015 would fail legacy skip checks.
+        noise = (rng.normal(0.0, 0.020, sample_rate * 2)).astype(np.float32)
+        skip, reason = detector._should_skip_vad(noise, sample_rate)
+        self.assertTrue(
+            skip,
+            "Stationary line-in noise was not skipped by stationarity gating.",
+        )
+        self.assertEqual(reason, "stationarity")
+
+        # 2. Dynamic modulated signal scaled below the 0.040 ceiling (amplitude 0.03)
+        # mean_rms is ~0.0072 (below ceiling), so high CV and peak/median is what
+        # exercises and guards the non-skip decision.
+        t = np.linspace(0, 2.0, sample_rate * 2, endpoint=False)
+        carrier = np.sin(2 * np.pi * 500 * t).astype(np.float32)
+        modulator = np.maximum(0.0, np.sin(2 * np.pi * 3 * t)).astype(
+            np.float32
+        )
+        speech_like = carrier * modulator * 0.03
+        skip, reason = detector._should_skip_vad(speech_like, sample_rate)
+        self.assertFalse(
+            skip,
+            "Modulated speech-like signal was incorrectly skipped.",
+        )
+        self.assertIsNone(reason)
+
+    def test_stationarity_gating_dilution_protection(self) -> None:
+        """Verifies short speech bursts over a stationary floor are not averaged away."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+        rng = np.random.default_rng(42)
+
+        # 15s stationary floor at RMS 0.020
+        floor_15s = (rng.normal(0.0, 0.020, 15 * sample_rate)).astype(
+            np.float32
+        )
+        burst_samples = int(0.3 * sample_rate)
+        burst_start = int(7.0 * sample_rate)
+        t = np.linspace(0, 0.3, burst_samples, endpoint=False)
+        burst = (np.sin(2 * np.pi * 500 * t) * 0.042).astype(np.float32)
+        floor_15s[burst_start : burst_start + burst_samples] += burst
+
+        skip, reason = detector._should_skip_vad(floor_15s, sample_rate)
+        self.assertFalse(
+            skip,
+            "0.3s speech burst was diluted away and incorrectly skipped.",
+        )
+        self.assertIsNone(reason)
+
+    def test_stationarity_gating_edge_cases(self) -> None:
+        """Verifies boundary conditions for stationarity gating."""
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        sample_rate = 16000
+
+        # Short signal (< 4 frames / < 0.20s): should not trigger stationarity
+        short_noise = np.ones(int(0.10 * sample_rate), dtype=np.float32) * 0.02
+        skip, _ = detector._should_skip_vad(short_noise, sample_rate)
+        self.assertFalse(
+            skip,
+            "Short signal under 4 frames was incorrectly evaluated.",
+        )
+
+        # Empty signal
+        empty = np.array([], dtype=np.float32)
+        skip, reason = detector._should_skip_vad(empty, sample_rate)
+        self.assertTrue(skip)
+        self.assertEqual(reason, "empty")
+
+    def test_stationarity_gating_energy_only_in_dropped_remainder(
+        self,
+    ) -> None:
+        """Verifies a zero mean sub-frame RMS neither divides by zero nor skips.
+
+        The stationarity reshape analyzes only whole 50ms frames, so a chunk
+        whose entire signal sits in the dropped remainder leaves every analyzed
+        frame at exactly zero. The step 1 peak check still passes (the loud
+        samples are in the remainder) and step 3 is bypassed because a zero p10
+        trips the 999.0 ratio sentinel, so this reaches the stationarity math.
+        """
+        detector = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        detector.setup()
+
+        # 22050Hz matches the native rate of the Broadcastify fixtures, where
+        # a 15s chunk leaves a 150 sample (6.8ms) remainder after reshaping.
+        sample_rate = 22050
+        frame_samples = int(0.05 * sample_rate)
+        total_samples = 15 * sample_rate
+        remainder = (
+            total_samples - (total_samples // frame_samples) * frame_samples
+        )
+        self.assertGreater(remainder, 0, "Fixture rate must leave a remainder.")
+
+        audio = np.zeros(total_samples, dtype=np.float32)
+        audio[-remainder:] = 0.5
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            skip, reason = detector._should_skip_vad(audio, sample_rate)
+
+        self.assertFalse(
+            skip,
+            "Chunk with unmeasurable stationarity was incorrectly skipped.",
+        )
+        self.assertIsNone(reason)
 
 
 class TestFeedDiagnosticRunner(unittest.TestCase):

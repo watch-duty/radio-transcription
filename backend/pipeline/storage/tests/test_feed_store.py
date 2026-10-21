@@ -394,6 +394,39 @@ class TestSourceType(unittest.TestCase):
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 
+    def test_matches_db_seed(self) -> None:
+        """Seeded source_types slugs must match the enum exactly.
+
+        feeds.source_type has a FK to source_types(slug), so a member with no
+        seeded row fails at INSERT in production, not at startup.
+        """
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        seed_path = (
+            repo_root
+            / "terraform"
+            / "modules"
+            / "alloydb"
+            / "sql"
+            / "ingestion"
+            / "006_seed_source_types.sql"
+        )
+        self.assertTrue(
+            seed_path.exists(),
+            f"Could not find the source_types seed at {seed_path}",
+        )
+
+        seeded = set(re.findall(r"\(\s*'([a-z_]+)'\s*,", seed_path.read_text()))
+
+        self.assertEqual(
+            seeded,
+            {source.value for source in SourceType},
+            "The slugs seeded by "
+            "terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql "
+            "do not match backend.pipeline.storage.feed_store.SourceType. "
+            "Add the row and the enum member in the same change.",
+        )
+
 
 class TestFeedStatus(unittest.TestCase):
     """Contract tests for FeedStatus enum."""
@@ -1847,13 +1880,14 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             {
                 SourceType.BCFY_FEEDS: 2,
+                SourceType.GENERIC_ICECAST: 3,
                 SourceType.OPENMHZ: 5,
                 SourceType.FIRE_NOTIFICATIONS: 7,
             },
         )
 
         args = pool.fetch.call_args.args
-        self.assertEqual(args[1:], (_WORKER_ID, 2, 5, 7))
+        self.assertEqual(args[1:], (_WORKER_ID, 2, 3, 5, 7))
 
     async def test_returns_list_of_feeds(self) -> None:
         """Multiple feeds are returned as a list of LeasedFeed dicts."""

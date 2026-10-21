@@ -54,6 +54,11 @@ from backend.pipeline.segmentation.constants import (
     VAD_NORMALIZATION_TARGET_PEAK,
     VAD_QUALIFYING_GAP_SEC,
     VAD_SPECTRAL_MIN_TOTAL_ENERGY,
+    VAD_STATIONARITY_CV_THRESHOLD,
+    VAD_STATIONARITY_MAX_RMS_THRESHOLD,
+    VAD_STATIONARITY_MIN_FRAMES,
+    VAD_STATIONARITY_PEAK_RATIO_THRESHOLD,
+    VAD_STATIONARITY_WINDOW_SEC,
     VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
     VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
     VAD_VOCAL_ENERGY_MIN_RATIO,
@@ -82,6 +87,7 @@ class SpeechDetectionResult:
 
     segments: list[tuple[float, float]]
     preprocessed_audio: np.ndarray | None
+    skip_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,7 @@ class SpeechDetectionDiagnostics:
     accepted_segments: list[tuple[float, float]]
     rejected_segments: list[tuple[float, float, str]]
     preprocessed_audio: np.ndarray | None
+    skip_reason: str | None = None
 
 
 class VoiceActivityDetector:
@@ -745,16 +752,21 @@ class VoiceActivityDetector:
                 accepted_segments=[],
                 rejected_segments=[],
                 preprocessed_audio=None,
+                skip_reason="empty",
             )
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        if self._should_skip_vad(audio_array, sample_rate):
+        should_skip, skip_reason = self._should_skip_vad(
+            audio_array, sample_rate
+        )
+        if should_skip:
             return SpeechDetectionDiagnostics(
                 accepted_segments=[],
                 rejected_segments=[],
                 preprocessed_audio=None,
+                skip_reason=skip_reason,
             )
 
         if prior_audio is not None and np.issubdtype(
@@ -837,21 +849,34 @@ class VoiceActivityDetector:
 
     def _should_skip_vad(
         self, audio_array: np.ndarray, sample_rate: int
-    ) -> bool:
-        """Applies true RMS and windowed RMS ratio checks to determine if VAD can be skipped."""
-        if len(audio_array) == 0:
-            return True
+    ) -> tuple[bool, str | None]:
+        """Applies true RMS, transient, and stationarity checks to skip VAD.
 
-        # 1. Absolute peak check: if the peak is too quiet to be normalized, VAD won't detect it anyway.
+        Evaluates fast mathematical and acoustic heuristics to short-circuit
+        quiet, transient, or stationary background noise before running heavy
+        neural network inference.
+
+        Args:
+            audio_array: Raw float32 samples in [-1.0, 1.0], pre-normalization.
+            sample_rate: Sample rate in Hz of the audio_array.
+
+        Returns:
+            Tuple of (should_skip, skip_reason).
+        """
+        if len(audio_array) == 0:
+            return True, "empty"
+
+        # 1. Absolute peak check: if peak is too quiet to be normalized,
+        # VAD won't detect it anyway.
         peak = np.max(np.abs(audio_array))
         if peak < self.normalization_min_peak:
-            return True
+            return True, "peak"
 
         # 2. Transient Click / Spike Heuristic:
-        # If the energy is extremely concentrated (high peak, very low RMS), it's a transient click/pop.
+        # If energy is concentrated (high peak, very low RMS), it's a click/pop.
         chunk_rms = np.sqrt(np.mean(audio_array**2))
         if chunk_rms / peak < 0.015:
-            return True
+            return True, "transient"
 
         # 3. Constant Static / Tone-only Heuristic:
         # Analyze 100ms windows to detect constant static or clean flat tones.
@@ -867,12 +892,62 @@ class VoiceActivityDetector:
             p90 = np.percentile(win_rms, 90)
             ratio = p90 / p10 if p10 > 1e-5 else 999.0
 
-            # If the ratio is very low (energy is completely flat) and the overall RMS is below
-            # a safety threshold (0.015), it is classified as constant static/noise and we exit early.
+            # If the ratio is very low (energy is completely flat) and the
+            # overall RMS is below safety threshold, exit early.
             if ratio < 1.8 and chunk_rms < 0.015:
-                return True
+                return True, "static"
 
-        return False
+        # 4. Stationary Floor Gating with Peak-to-Median Dilution Guard:
+        # Evaluates short-time sub-frames (50ms) to detect stationary background
+        # noise (e.g., soundcard line-in ADC hiss or stationary channel squelch).
+        # To prevent averaging away short, quiet speech bursts in long chunks,
+        # we require both low CV_RMS and peak_to_median frame ratio < 1.35.
+        frame_samples = int(VAD_STATIONARITY_WINDOW_SEC * sample_rate)
+        if frame_samples > 0:
+            num_frames = len(audio_array) // frame_samples
+            if num_frames >= VAD_STATIONARITY_MIN_FRAMES:
+                frames = audio_array[: num_frames * frame_samples].reshape(
+                    num_frames, frame_samples
+                )
+                frame_rms = np.sqrt(np.mean(frames**2, axis=1))
+                mean_rms = float(np.mean(frame_rms))
+
+                # mean_rms is only nonzero when the analyzed frames carry
+                # energy, which the step 1 peak check does not guarantee: the
+                # reshape above drops a sub-frame remainder, and a chunk whose
+                # only content lands there leaves every frame at exactly zero.
+                # Step 3 does not catch that case either, because a zero p10
+                # trips the 999.0 ratio sentinel. Skipping the whole block
+                # avoids dividing by zero; stationarity is not measurable, and
+                # declining to skip keeps the recall-first bias documented in
+                # VAD_BENCHMARKS.md.
+                if mean_rms > 0.0:
+                    cv_rms = float(np.std(frame_rms) / mean_rms)
+
+                    # median_rms needs its own epsilon for a different reason:
+                    # it reaches zero whenever more than half the frames are
+                    # silent, which happens with a healthy mean_rms (e.g. one
+                    # loud frame among many quiet ones), so a guard on the mean
+                    # cannot cover it.
+                    median_rms = float(np.median(frame_rms))
+                    max_rms = float(np.max(frame_rms))
+                    peak_ratio = max_rms / (median_rms + 1e-6)
+
+                    if (
+                        cv_rms < VAD_STATIONARITY_CV_THRESHOLD
+                        and mean_rms < VAD_STATIONARITY_MAX_RMS_THRESHOLD
+                        and peak_ratio < VAD_STATIONARITY_PEAK_RATIO_THRESHOLD
+                    ):
+                        logger.debug(
+                            "VAD stationarity gate skipped chunk: "
+                            "mean_rms=%.4f, cv_rms=%.3f, peak_ratio=%.2f",
+                            mean_rms,
+                            cv_rms,
+                            peak_ratio,
+                        )
+                        return True, "stationarity"
+
+        return False, None
 
     def detect_speech_segments(
         self,
@@ -886,13 +961,24 @@ class VoiceActivityDetector:
     ) -> SpeechDetectionResult:
         """Analyzes normalized float32 audio array, returning detected speech segments and the signal VAD judged."""
         if len(audio_array) == 0:
-            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
+            return SpeechDetectionResult(
+                segments=[],
+                preprocessed_audio=None,
+                skip_reason="empty",
+            )
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        if self._should_skip_vad(audio_array, sample_rate):
-            return SpeechDetectionResult(segments=[], preprocessed_audio=None)
+        should_skip, skip_reason = self._should_skip_vad(
+            audio_array, sample_rate
+        )
+        if should_skip:
+            return SpeechDetectionResult(
+                segments=[],
+                preprocessed_audio=None,
+                skip_reason=skip_reason,
+            )
 
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
