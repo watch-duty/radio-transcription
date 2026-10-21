@@ -5440,7 +5440,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item1: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {"k": "v"},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res = list(
@@ -5457,7 +5456,8 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0].data, b"msg1")
         self.assertEqual(res[0].attributes, {"k": "v"})
-        self.assertEqual(res[0].ordering_key, "feed-1")
+        # Ordering key MUST be empty to prevent Dataflow Windmill multi-key batch failures
+        self.assertEqual(res[0].ordering_key, "")
         mock_seq_state.write.assert_called_once_with(2)
 
     def test_pubsub_order_restorer_fn_out_of_order_buffers(self) -> None:
@@ -5470,7 +5470,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res = list(
@@ -5498,7 +5497,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         for _ in range(3):
@@ -5528,7 +5526,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         duplicate_item: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {"k": "v"},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res = list(
@@ -5553,7 +5550,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         mock_buf_state.read.return_value = [(2, item2)]
@@ -5561,7 +5557,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item1: PendingPubSubMessage = {
             "data": b"msg1",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res = list(
@@ -5599,7 +5594,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item_b1: PendingPubSubMessage = {
             "data": b"msg_b1",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res_b = list(
@@ -5615,7 +5609,8 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         )
         self.assertEqual(len(res_b), 1)
         self.assertEqual(res_b[0].data, b"msg_b1")
-        self.assertEqual(res_b[0].ordering_key, "feed-1")
+        # Ordering key MUST be empty to prevent Dataflow Windmill multi-key batch failures
+        self.assertEqual(res_b[0].ordering_key, "")
         seq_state_b.write.assert_called_once_with(2)
 
     def test_pubsub_order_restorer_fn_fallback_timer_and_late_arrival(
@@ -5628,10 +5623,9 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         skipped_state: Any = _FakeValueState()
         fallback_timer = MagicMock()
 
-        item3 = {
+        item3: PendingPubSubMessage = {
             "data": b"msg3",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         buf_state.add((3, item3))
@@ -5657,7 +5651,6 @@ class SequenceAndOrderRestorerTest(unittest.TestCase):
         item2: PendingPubSubMessage = {
             "data": b"msg2",
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
         res_late = list(
@@ -5705,7 +5698,6 @@ class PubSubStallProbeTest(unittest.TestCase):
         return {
             "data": f"msg{seq}".encode(),
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
 
@@ -5961,7 +5953,6 @@ class PubSubGapResolutionMetricTest(unittest.TestCase):
         return {
             "data": f"msg{seq}".encode(),
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": False,
         }
 
@@ -6052,7 +6043,6 @@ class PubSubTombstoneTest(unittest.TestCase):
         return {
             "data": b"" if tombstone else f"msg{seq}".encode(),
             "attributes": {},
-            "ordering_key": "feed-1",
             "is_tombstone": tombstone,
         }
 
