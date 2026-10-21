@@ -1,7 +1,5 @@
-data "google_project" "project" {}
-
 locals {
-  project_id                   = data.google_project.project.project_id
+  project_id                   = var.project_id
   metric_name_suffix           = "_${var.environment}"
   active_feed_count_hash       = substr(sha256("active_feeds-lease_admission_cycle-DISTRIBUTION"), 0, 8)
   resolved_echo_service_name   = coalesce(var.echo_service_name, "echo-audio-ingestion-${var.environment}")

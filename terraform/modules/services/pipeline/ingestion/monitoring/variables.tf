@@ -75,3 +75,8 @@ variable "notification_channel_id" {
   type        = string
   default     = null
 }
+
+variable "project_id" {
+  description = "The GCP project ID."
+  type        = string
+}

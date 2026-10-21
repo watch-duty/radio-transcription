@@ -21,6 +21,7 @@ from tenacity import (
 
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import (
+    CONTINUOUS_SOURCE_TYPES,
     GCS_DOWNLOAD_TIMEOUT_SEC,
     GCS_RETRY_MAX_ATTEMPTS,
     GCS_RETRY_MAX_WAIT_SEC,
@@ -315,7 +316,7 @@ def _build_audio_chunk_payload(
     receipt_time: datetime.datetime | None = None,
 ) -> tuple[bytes, dict[str, str]]:
     if "segmented" in topic_path or (
-        source_type and "bcfy_feeds" not in source_type.lower()
+        source_type and source_type.lower() not in CONTINUOUS_SOURCE_TYPES
     ):
         resolved_segment_id = (
             generate_segment_id(feed_id, external_audio_segment_id)

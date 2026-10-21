@@ -59,7 +59,6 @@ def format_dlq_message(element: dict) -> PubsubMessage:
     return PubsubMessage(
         data=payload,
         attributes={"feed_id": feed_id, "error_type": "pipeline_failure"},
-        ordering_key=feed_id,
     )
 
 
@@ -193,10 +192,13 @@ def get_pipeline(
         >> beam.ParDo(PubSubOrderRestorerFn(timeout_ms=fallback_drain_timeout))
     )
 
+    # Do NOT set publish_with_ordering_key: Dataflow's native Pub/Sub sink
+    # batches pending messages across keys into one PublishRequest, which
+    # Pub/Sub rejects with FAILED_PRECONDITION and then retries forever.
+    # Sequence ordering per session is restored in-pipeline by PubSubOrderRestorerFn.
     ordered_pubsub | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
-        publish_with_ordering_key=True,
     )
 
     # Route all DLQ outputs to a dedicated topic
@@ -204,11 +206,12 @@ def get_pipeline(
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 
+    # Do NOT set publish_with_ordering_key on DLQ: DLQ messages must never
+    # gridlock on poisoned keys, and Dataflow batches across keys.
     dlq_messages = dlq_combined | "FormatDlq" >> beam.Map(format_dlq_message)
     dlq_messages | "WriteDlqToPubSub" >> WriteToPubSub(
         topic=options.dlq_topic or f"{options.output_topic}-dlq",
         with_attributes=True,
-        publish_with_ordering_key=True,
     )
 
     return pipeline

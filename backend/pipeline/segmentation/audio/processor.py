@@ -172,8 +172,10 @@ class SegmentationAudioProcessor:
             )
             speech_segments = detection.segments
             denoised_arr = detection.preprocessed_audio
+            skip_reason = detection.skip_reason
         else:
             denoised_arr = None
+            skip_reason = None
 
         speech_segments_proto = [
             bp_state.TimeRangeProto(
@@ -193,6 +195,7 @@ class SegmentationAudioProcessor:
             gcs_uri=gcs_path,
             duration_ms=duration_ms,
             denoised_audio=denoised_arr,
+            skip_reason=skip_reason,
         )
 
     def _open_container(

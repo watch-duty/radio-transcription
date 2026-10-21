@@ -669,6 +669,61 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         )
 
 
+class TestContinuousVsSegmentedPayload(unittest.TestCase):
+    """source_type decides which proto a chunk is published as.
+
+    A continuous source sent as SegmentedAudio silently skips segmentation.
+    """
+
+    def _publish(self, source_type: str | None) -> bytes:
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-1"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/continuous",
+            feed_id="feed-1",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-1",
+            start_timestamp=datetime.datetime(
+                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+            ),
+            duration_ms=15000,
+            source_type=source_type,
+        )
+        return mock_publisher.publish.call_args.args[1]
+
+    def test_continuous_sources_publish_continuous_audio(self) -> None:
+        for source_type in (
+            SourceType.BCFY_FEEDS.value,
+            SourceType.GENERIC_ICECAST.value,
+        ):
+            with self.subTest(source_type=source_type):
+                chunk = ContinuousAudio()
+                chunk.ParseFromString(self._publish(source_type))
+
+                self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+                self.assertEqual(chunk.session_id, "sess-1")
+                self.assertEqual(chunk.duration_ms, 15000)
+
+    def test_segmented_source_publishes_segmented_audio(self) -> None:
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(self._publish(SourceType.OPENMHZ.value))
+
+        self.assertEqual(chunk.raw_audio_uri, "gs://bucket/audio.flac")
+        self.assertTrue(chunk.segment_id)
+
+    def test_unknown_source_type_stays_segmented(self) -> None:
+        """An unrecognized slug must not be assumed continuous."""
+        chunk = SegmentedAudio()
+        chunk.ParseFromString(self._publish("some_future_source"))
+
+        self.assertTrue(chunk.segment_id)
+
+
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
 

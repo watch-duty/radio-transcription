@@ -96,11 +96,35 @@ Parallel Stage 3 execution causes segments to finish out of order. Before publis
 >
 > The answer also depends on what "ordered" means to them — strictly monotonic on the topic, sortable on arrival, or merely not interleaved across feeds — and on whether the UI **sorts by `start_timestamp` or appends in arrival order**. If it sorts, the fallback is harmless. If it appends, a fallback drain produces visibly out-of-sequence output. Note that `SegmentedAudio` carries no marker distinguishing an out-of-order arrival from a normal one; the only signal is a `start_timestamp` earlier than its predecessor's.
 
-* **Normal Delivery**: Emits contiguous sequence numbers in order and drains buffered items, while setting `ordering_key = feed_id` on the output `PubsubMessage` for downstream Pub/Sub consumers.
+* **Normal Delivery**: Emits contiguous sequence numbers in order and drains buffered items directly to the Pub/Sub sink without setting `ordering_key` on the output `PubsubMessage` (avoiding Dataflow batching rejections across feeds while preserving chronological order emitted from the pipeline).
 * **Tunable Fallback Recovery Timer (`FALLBACK_DRAIN_TIMER`)**: Controlled by `--pubsub_fallback_drain_timeout_ms`, defaulting to `DEFAULT_PUBSUB_FALLBACK_DRAIN_TIMEOUT_MS`. If a missing sequence number is delayed past the timeout, the timer force-drains buffered items out-of-order to prevent feed wedging, while recording skipped numbers in `SKIPPED_SEQS_STATE`. The default is a deliberately conservative starting point, not a tuned value: lower it only against observed `pubsub_order_gap_resolution_seconds` data, since erring long costs no latency on the normal path while erring short publishes out of order silently.
 * **Late Arrival Recovery (`SKIPPED_SEQS_STATE`)**: If a skipped sequence number arrives late after the fallback timer has fired, `PubSubOrderRestorerFn` checks `SKIPPED_SEQS_STATE`. Recognizing it as a late arrival rather than a duplicate retry, it publishes the late segment immediately — behind the segments that overtook it. Retention is capped at `MAX_TRACKED_SKIPPED_SEQS`; eviction past that cap is the one path that discards a segment, and it increments `pubsub_order_skipped_seqs_abandoned`. That counter is the only signal distinguishing audio genuinely lost from audio merely delayed.
 * **Deferred Session Key GC**: Because deployment updates use drain-and-relaunch (which starts with empty state on every release) and continuous Icecast feeds (`bcfy_feeds`) create only ~150–400 new session keys per day, dead session key accumulation is negligible (~1–2 MB between releases). Explicit timer-based key cleanup is deferred to avoid data loss on long disaster recovery backfills (max lag observed across all collector types: 13 hours; not yet re-scoped to `bcfy_feeds`). If it is ever added, note that `TagSequenceNumberFn` must not be cleared before `PubSubOrderRestorerFn`: a reset sequence counter feeding a restorer that still expects a higher number causes late segments to be silently dropped as duplicates.
 
+### D. Dataflow & Pub/Sub Message Ordering Incompatibility
+
+A critical architectural constraint in Apache Beam and Cloud Dataflow is that **native Pub/Sub message ordering is fundamentally incompatible with Dataflow streaming pipelines**.
+
+#### 1. Official Google Cloud & Apache Beam Guidance
+Official GCP documentation ([Dataflow Troubleshooting & Pub/Sub Guidelines](https://cloud.google.com/dataflow/docs/guides/common-troubleshooting-errors)) explicitly advises against enabling message ordering:
+> *"Do not enable message ordering for subscriptions when using them with Dataflow... The Pub/Sub I/O connector may not preserve message ordering. Apache Beam does not define strict guidelines regarding the order in which elements are processed, meaning that even if order is maintained at the source, it may not be preserved in downstream transforms."*
+
+* **On the Read Path (Input Subscriptions)**: Dataflow pipelines consuming from Pub/Sub subscriptions with message ordering enabled can fail on startup or suffer severe latency degradation. Beam's distributed execution model partitions work dynamically across workers, which conflicts with Pub/Sub's key-affinity partition locking.
+* **Within the Pipeline**: Apache Beam does not guarantee element ordering between transforms or runner bundles. Order preservation must always be handled in application logic (e.g., watermarks, windowing, or stateful DoFns like `PubSubOrderRestorerFn`).
+
+#### 2. The Output Sink Failure Mode (`WriteToPubSub` on Dataflow Streaming Engine)
+When writing to Pub/Sub on Dataflow's Streaming Engine (Windmill), `WriteToPubSub` delegates to Windmill's native C++ streaming sink (`GrpcPubsubServiceClient::PublishBatch`).
+* **Cross-Key Batching**: To maximize I/O throughput and checkpoint coordination, Windmill aggregates pending output messages from concurrent worker threads into a single gRPC `PublishRequest` batch before flushing.
+* **Pub/Sub API Contract**: Cloud Pub/Sub requires that *all messages in a single `PublishRequest` either have no ordering key or share the identical ordering key*.
+* **The Poison Batch Death Loop**: If `publish_with_ordering_key=True` is enabled and messages for multiple feeds land in the same flush window (inevitable during worker autoscaling, rebalance, or transient latency spikes), Pub/Sub rejects the batch with:
+  ```text
+  FAILED_PRECONDITION: In a single publish request, all messages must have no ordering key or they must all have the same ordering key. [code=539b]
+  ```
+  Because Dataflow guarantees at-least-once delivery, Windmill continuously retries uncommitted records. On retry, the failed records are batched with incoming records from other feeds, creating an unrecoverable multi-key poison batch retry loop that produces tens of thousands of errors/hour and completely halts downstream publishing.
+
+#### 3. Architectural Rule of Thumb
+* **Inside Dataflow**: Leave `publish_with_ordering_key` at its default (`False`) on all `WriteToPubSub` sinks, and do not provide an `ordering_key` parameter when constructing `PubsubMessage` objects. Sequence output in-memory within the pipeline via stateful DoFns (`PubSubOrderRestorerFn`).
+* **Outside Dataflow**: If downstream services (e.g., event consumers, UIs) require Pub/Sub message ordering, the ordering key must be assigned and published by a single-element or single-key publisher client (such as Cloud Run or Cloud Functions using the standard Google Cloud Pub/Sub client library), as is done in `normalization-service`.
 
 ---
 

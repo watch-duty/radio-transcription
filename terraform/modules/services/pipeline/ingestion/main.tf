@@ -2,10 +2,9 @@
 # INGESTION PIPELINE
 # =============================================================================
 
-data "google_project" "project" {}
-
 locals {
-  project_id              = data.google_project.project.project_id
+  project_id              = var.project_id
+  project_number          = var.project_number
   otel_traces_sampler     = var.environment == "dev" ? "parentbased_traceidratio" : "parentbased_always_on"
   otel_traces_sampler_arg = var.environment == "dev" ? "0.05" : "1.0"
   otel_bsp_max_batch_size = var.environment == "dev" ? "512" : "64"
@@ -112,6 +111,8 @@ module "collector_mig" {
 module "echo" {
   source = "./echo"
 
+  project_id                      = local.project_id
+  project_number                  = local.project_number
   region                          = var.region
   environment                     = var.environment
   echo_recordings_bucket_name     = var.echo_recordings_bucket_name
@@ -136,6 +137,8 @@ module "echo" {
 module "broadcastify_credential_rotation" {
   source = "./broadcastify_credential_rotation"
 
+  project_id              = local.project_id
+  project_number          = local.project_number
   region                  = var.region
   environment             = var.environment
   broadcastify_api_key    = var.broadcastify_api_key
@@ -163,6 +166,8 @@ module "broadcastify_credential_rotation" {
 module "oldest_feed_publisher" {
   source = "./oldest_feed_publisher"
 
+  project_id                      = local.project_id
+  project_number                  = local.project_number
   region                          = var.region
   environment                     = var.environment
   network_name                    = var.network_name
@@ -296,6 +301,7 @@ module "monitoring" {
   count  = var.enable_monitoring ? 1 : 0
   source = "./monitoring"
 
+  project_id              = local.project_id
   region                  = var.region
   environment             = var.environment
   notification_channel_id = var.slack_critical_notification_channel_id
