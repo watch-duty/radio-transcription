@@ -1,8 +1,6 @@
-data "google_project" "project" {}
-
 locals {
-  project_id           = data.google_project.project.project_id
-  project_number       = data.google_project.project.number
+  project_id           = var.project_id
+  project_number       = var.project_number
   relay_push_endpoint  = "${var.relay_service_url}/pubsub/feed-change-notifications"
   pubsub_service_agent = "service-${local.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }

@@ -667,7 +667,6 @@ class UploadRawSegmentFn(beam.DoFn):
                         {
                             "data": segmented_audio_pb.SerializeToString(),
                             "attributes": pubsub_attributes,
-                            "ordering_key": request.feed_id,
                             "is_tombstone": False,
                         },
                     ),
@@ -687,7 +686,6 @@ class UploadRawSegmentFn(beam.DoFn):
                     {
                         "data": b"",
                         "attributes": {},
-                        "ordering_key": feed_id,
                         "is_tombstone": True,
                     },
                 ),
