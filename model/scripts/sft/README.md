@@ -1,28 +1,46 @@
 # Watch Duty Gemini SFT CLI
 
-Gemini supervised fine-tuning is exposed as the packaged `gemini-sft` command
-from the `radio-transcription-model` distribution under `model/`.
+This directory is the operator entry point for Gemini supervised fine-tuning
+and evaluation. The implementation is always authoritative; the documentation
+explains workflow and intent without duplicating schemas or state machines.
 
 ## Runtime
 
-Use the lightweight ASR Docker service from the repo root. It mounts the repo at
-`/workspace` and installs `/workspace/model[scoring,vertex]` in editable mode on
-container startup.
+Run the packaged CLI from the repository's lightweight ASR container:
 
 ```bash
 docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
   bash -lc 'gemini-sft --help'
 ```
 
-## Operator Docs
+Use command help for the current command surface:
 
-- [Operator runbook](docs/runbook.md)
-- [Config examples](docs/configs.md)
-- [Metric glossary](docs/metrics.md)
-- [Artifact reference](docs/artifacts.md)
-- [Artifact hygiene](docs/hygiene.md)
+```bash
+gemini-sft prepare --help
+gemini-sft tune --help
+gemini-sft eval --help
+```
 
-## Command Summary
+## Code Ownership
+
+| Behavior | Source of truth |
+| --- | --- |
+| Commands and flags | [`cli.py`](../../src/gemini_sft/cli.py) |
+| TOML fields, defaults, and validation | [`config.py`](../../src/gemini_sft/config.py) and [`run_config.example.toml`](run_config.example.toml) |
+| Manifest preparation and preflight | [`prepare.py`](../../src/gemini_sft/prepare.py), [`preflight.py`](../../src/gemini_sft/preflight.py), and [`records.py`](../../src/gemini_sft/records.py) |
+| Tuning submission and recovery | [`tune.py`](../../src/gemini_sft/tune.py) |
+| Evaluation orchestration | [`evaluate.py`](../../src/gemini_sft/evaluate.py) |
+| Provider execution, retries, and reuse | [`target_execution.py`](../../src/gemini_sft/target_execution.py) |
+| Report schema and metric calculations | [`reporting.py`](../../src/gemini_sft/reporting.py) |
+| Durable and local artifact locations | [`artifacts.py`](../../src/gemini_sft/artifacts.py) |
+
+If documentation and code disagree, follow code and correct the documentation.
+Avoid copying implementation constants or exhaustive field lists into Markdown.
+
+## Operator Workflow
+
+Copy [`run_config.example.toml`](run_config.example.toml) outside version
+control, replace its placeholders, and use a unique `round_id`.
 
 ```bash
 gemini-sft prepare --config /path/to/run.toml
@@ -30,29 +48,25 @@ gemini-sft tune --config /path/to/run.toml --confirm
 gemini-sft eval --config /path/to/run.toml
 ```
 
-`prepare` creates either a training round or an eval-only round. `tune`
-submits or resumes a paid Vertex tuning job. `eval` can spend money through
-Vertex batch inference or online endpoint prediction and evaluates exactly the
-one target recorded for the prepared round. See the runbook for command order,
-recovery behavior, GCS artifacts, report inspection, checkpoint endpoint evals,
-masked/unmasked evals, and artifact hygiene.
+`prepare` performs no tuning submission. `tune` and `eval` can create paid
+Vertex work. Read the [operator runbook](docs/runbook.md) before either command.
 
-Evaluation never uses reference transcripts as prior context. With nonzero
-`[context].prior_turn_count`, `eval` runs causally online and supplies only the
-same target model's finalized predictions for strictly earlier, non-overlapping
-clips from the same split and source. The current clip is the only audio input.
-References are joined back only after provider inference has finalized, for
-scoring. Batch evaluation is therefore limited to zero prior turns.
+## Documentation
 
-## Standalone Scripts
+- [Operator runbook](docs/runbook.md)
+- [Configuration guidance](docs/configs.md)
+- [Evaluation methodology](docs/evaluation-methodology.md)
+- [Metric interpretation](docs/metrics.md)
+- [Artifact ownership](docs/artifacts.md)
+- [Artifact hygiene](docs/hygiene.md)
 
-- [`build_validation_manifest_from_eval.py`](build_validation_manifest_from_eval.py) -
-  builds a canonical `validation.jsonl` by sampling `eval.jsonl` and
-  relabeling `split`. See the runbook's
-  [Build A Validation Manifest](docs/runbook.md#build-a-validation-manifest)
-  section for why this exists.
+## Supporting Script
+
+[`build_validation_manifest_from_eval.py`](build_validation_manifest_from_eval.py)
+creates a validation manifest using the repository's current validation-set
+convention. Its command help is authoritative.
 
 ## Verification Boundary
 
-Unit tests mock GCS and Vertex boundaries. They must not submit paid Vertex
-tuning, run Vertex batch inference, execute notebooks, or run end-to-end evals.
+Unit tests mock GCS and Vertex boundaries. They must not submit tuning, run
+provider inference, or execute end-to-end evaluations.
