@@ -62,3 +62,6 @@ from backend.pipeline.segmentation.audio.vad import VoiceActivityDetector
 
 VoiceActivityDetector.is_speech_segment
 
+# RuleAuditEvent fields are serialized by Pydantic; Vulture misses their usage.
+rule_revision
+

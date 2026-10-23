@@ -2,7 +2,9 @@ import type {
   DryRunRequest,
   DryRunResponse,
   LogicalOperator,
+  PaginatedRuleAuditEvents,
   Rule,
+  RuleAuditEvent,
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
@@ -144,6 +146,39 @@ function convertDryRunResponse(
   };
 }
 
+interface RuleAuditEventBackend {
+  id: string;
+  rule_id: string;
+  action: string;
+  actor_id: string;
+  occurred_at: string;
+  rule_revision: number;
+  before_values: Record<string, unknown>;
+  after_values: Record<string, unknown>;
+}
+
+interface PaginatedRuleAuditEventsBackend {
+  audit_events: RuleAuditEventBackend[];
+  next_token: string | null;
+  total: number;
+}
+
+function convertRuleAuditEvent(
+  backendEvent: RuleAuditEventBackend
+): RuleAuditEvent {
+  return toCamel<RuleAuditEvent>(backendEvent);
+}
+
+function convertPaginatedRuleAuditEvents(
+  backendData: PaginatedRuleAuditEventsBackend
+): PaginatedRuleAuditEvents {
+  return {
+    auditEvents: backendData.audit_events.map(convertRuleAuditEvent),
+    nextToken: backendData.next_token,
+    total: backendData.total,
+  };
+}
+
 export class ListRulesQueryParams {
   /**
    * Optional list of rule IDs to filter by.
@@ -208,6 +243,45 @@ export class RulesController extends Controller {
       const { status, message } = handleBackendError(
         error,
         `fetching rule ${ruleId}`
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Get('{ruleId}/history')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async listRuleHistory(
+    @Path() ruleId: string,
+    @Queries() query: { limit?: number; nextToken?: string }
+  ): Promise<PaginatedRuleAuditEvents> {
+    try {
+      const client = await this.getClient();
+      const params = new URLSearchParams();
+      if (query.limit !== undefined) {
+        params.append('limit', query.limit.toString());
+      }
+      if (query.nextToken !== undefined) {
+        params.append('next_token', query.nextToken);
+      }
+
+      const response = await client.request({
+        url: `${RULES_API_URL}/${ruleId}/history`,
+        method: 'GET',
+        params,
+      });
+
+      return convertPaginatedRuleAuditEvents(
+        response.data as PaginatedRuleAuditEventsBackend
+      );
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `fetching rule history for ${ruleId}`
       );
       throw new HttpError(status, message);
     }

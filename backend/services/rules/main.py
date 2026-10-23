@@ -14,6 +14,7 @@ from backend.pipeline.common.actor_identity import (
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.common.rules.models import (
+    PaginatedRuleAuditEvents,
     Rule,
     RuleCreate,
     RuleUpdate,
@@ -177,3 +178,20 @@ async def dry_run_rule(
 ) -> DryRunResponse:
     """Test a prospective rule against recent historical transcripts."""
     return await execute_dry_run(request, audio_store)
+
+
+@app.get(
+    "/v1/rules/{rule_id}/history",
+    response_model=PaginatedRuleAuditEvents,
+    tags=["rules"],
+)
+async def get_rule_history(
+    rule_id: str,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    next_token: Annotated[str | None, Query()] = None,
+) -> PaginatedRuleAuditEvents:
+    """Fetch paginated audit history for a specific transcription rule."""
+    return await service.get_rule_history(
+        rule_id, limit=limit, next_token=next_token
+    )
