@@ -16,7 +16,7 @@ dependencies = [
     "functions-framework>=3.8.1",
     "radio-transcription-common",
     # OpenTelemetry lower-bound pins derived from existing root repository lockfile dependencies configurations
-    "opentelemetry-api>=1.41.1",
+    "opentelemetry-api>=1.45.1",
     "opentelemetry-sdk>=1.41.1",
     "opentelemetry-exporter-gcp-trace>=1.12.0",
 ]
