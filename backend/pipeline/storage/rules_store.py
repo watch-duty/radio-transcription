@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import base64
+import datetime
 import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+from backend.pipeline.common.rules.models import (
+    PaginatedRuleAuditEvents,
+    Rule,
+    RuleAuditEvent,
+    RuleCreate,
+    RuleUpdate,
+)
 
 if TYPE_CHECKING:
     import asyncpg
@@ -175,3 +183,79 @@ class RulesStore:
             rules_queries.DELETE_RULE_SQL, uid, actor_id
         )
         return row is not None
+
+    async def get_rule_history(
+        self, rule_id: str, limit: int = 50, next_token: str | None = None
+    ) -> PaginatedRuleAuditEvents:
+        """Fetch paginated audit history for a rule."""
+        try:
+            uid = uuid.UUID(rule_id)
+        except ValueError:
+            return PaginatedRuleAuditEvents(
+                audit_events=[], next_token=None, total=0
+            )
+
+        cursor_time: datetime.datetime | None = None
+        cursor_id: uuid.UUID | None = None
+
+        if next_token:
+            try:
+                decoded = base64.b64decode(next_token.encode("utf-8")).decode(
+                    "utf-8"
+                )
+                parts = decoded.split(",")
+                if len(parts) == 2:
+                    cursor_time = datetime.datetime.fromisoformat(parts[0])
+                    cursor_id = uuid.UUID(parts[1])
+            except (ValueError, UnicodeDecodeError):
+                pass
+
+        rows = await self._pool.fetch(
+            rules_queries.GET_RULE_AUDIT_EVENTS_SQL,
+            uid,
+            cursor_time,
+            cursor_id,
+            limit,
+        )
+
+        total_row = await self._pool.fetchrow(
+            rules_queries.COUNT_RULE_AUDIT_EVENTS_SQL, uid
+        )
+        total = total_row["count"] if total_row else 0
+
+        events = []
+        for row in rows:
+            events.append(
+                RuleAuditEvent(
+                    id=str(row["id"]),
+                    rule_id=str(row["rule_id"]),
+                    action=row["action"],
+                    actor_id=row["actor_id"],
+                    occurred_at=row["occurred_at"],
+                    rule_revision=row["rule_revision"],
+                    before_values=(
+                        json.loads(row["before_values"])
+                        if isinstance(row["before_values"], str)
+                        else row["before_values"]
+                    ),
+                    after_values=(
+                        json.loads(row["after_values"])
+                        if isinstance(row["after_values"], str)
+                        else row["after_values"]
+                    ),
+                )
+            )
+
+        new_next_token = None
+        if len(events) == limit:
+            last_event = events[-1]
+            token_str = f"{last_event.occurred_at.isoformat()},{last_event.id}"
+            new_next_token = base64.b64encode(token_str.encode("utf-8")).decode(
+                "utf-8"
+            )
+
+        return PaginatedRuleAuditEvents(
+            audit_events=events,
+            next_token=new_next_token,
+            total=total,
+        )

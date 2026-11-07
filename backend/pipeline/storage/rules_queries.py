@@ -64,3 +64,25 @@ WITH deleted_rule AS (
 )
 SELECT id FROM deleted_rule
 """
+
+GET_RULE_AUDIT_EVENTS_SQL = """\
+SELECT
+    id, rule_id, action, actor_id, occurred_at, rule_revision,
+    before_values, after_values
+FROM rule_audit_events
+WHERE rule_id = $1
+
+  AND (
+      $2::timestamp with time zone IS NULL
+      OR occurred_at < $2
+      OR (occurred_at = $2 AND id < $3)
+  )
+ORDER BY occurred_at DESC, id DESC
+LIMIT $4
+"""
+
+COUNT_RULE_AUDIT_EVENTS_SQL = """\
+SELECT count(*)
+FROM rule_audit_events
+WHERE rule_id = $1
+"""

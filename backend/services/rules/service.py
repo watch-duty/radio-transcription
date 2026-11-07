@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.pipeline.common.rules.models import (
+        PaginatedRuleAuditEvents,
         Rule,
         RuleCreate,
         RuleUpdate,
@@ -37,6 +38,12 @@ class BaseRulesService(ABC):
     async def delete_rule(self, rule_id: str, actor_id: str) -> bool:
         """Delete a transcription rule."""
 
+    @abstractmethod
+    async def get_rule_history(
+        self, rule_id: str, limit: int = 50, next_token: str | None = None
+    ) -> PaginatedRuleAuditEvents:
+        """Fetch paginated audit history for a rule."""
+
 
 class AlloyRulesService(BaseRulesService):
     """Implementation of the Rules Service using AlloyDB."""
@@ -62,3 +69,10 @@ class AlloyRulesService(BaseRulesService):
 
     async def delete_rule(self, rule_id: str, actor_id: str) -> bool:
         return await self._store.delete_rule(rule_id, actor_id=actor_id)
+
+    async def get_rule_history(
+        self, rule_id: str, limit: int = 50, next_token: str | None = None
+    ) -> PaginatedRuleAuditEvents:
+        return await self._store.get_rule_history(
+            rule_id, limit=limit, next_token=next_token
+        )
