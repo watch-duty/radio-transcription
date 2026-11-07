@@ -21,7 +21,7 @@ scoring = ["jiwer>=3.1,<4", "nemo_text_processing==1.1.0"]
 hf = [
     "torchaudio>=2.5",
     "soundfile>=0.13,<0.14",
-    "datasets>=4.0,<5",
+    "datasets>=4.0,<6",
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
 ]
@@ -32,7 +32,7 @@ all = [
     "torchaudio>=2.5",
     "jiwer>=3.1,<4",
     "nemo_text_processing==1.1.0",
-    "datasets>=4.0,<5",
+    "datasets>=4.0,<6",
     "soundfile>=0.13,<0.14",
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
